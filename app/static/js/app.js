@@ -53,6 +53,47 @@ function bindCreateFileUpload(scope = document) {
   fileInput.addEventListener("change", () => uploadSelectedDocuments(fileInput, previewPanel));
 }
 
+function enforceCreateInputLength(scope = document) {
+  const fields = scope.querySelectorAll("#section-create input:not([type='file']), #section-create textarea");
+  const clamp = (field) => {
+    if (!(field instanceof HTMLInputElement) && !(field instanceof HTMLTextAreaElement)) {
+      return;
+    }
+    if (field.value.length > 50) {
+      field.value = field.value.slice(0, 50);
+    }
+  };
+
+  fields.forEach((field) => {
+    if (!(field instanceof HTMLInputElement) && !(field instanceof HTMLTextAreaElement)) {
+      return;
+    }
+    if (!(field instanceof HTMLInputElement && field.type === "number")) {
+      field.maxLength = 50;
+    }
+    clamp(field);
+    if (field.dataset.lengthBound === "1") {
+      return;
+    }
+    field.dataset.lengthBound = "1";
+    field.addEventListener("input", () => clamp(field));
+    field.addEventListener("paste", () => setTimeout(() => clamp(field), 0));
+  });
+
+  const createForm = scope.querySelector("#section-create form[hx-post='/ui/create/upload']");
+  if (createForm instanceof HTMLFormElement && createForm.dataset.lengthBound !== "1") {
+    createForm.dataset.lengthBound = "1";
+    createForm.addEventListener(
+      "submit",
+      () => {
+        const submitFields = createForm.querySelectorAll("input:not([type='file']), textarea");
+        submitFields.forEach((item) => clamp(item));
+      },
+      true
+    );
+  }
+}
+
 document.body.addEventListener("htmx:afterSwap", (event) => {
   const target = event.target;
   if (target && target.id === "chat-messages") {
@@ -62,6 +103,7 @@ document.body.addEventListener("htmx:afterSwap", (event) => {
     stepGate.syncStepConnectionState(target);
   }
   bindCreateFileUpload(document);
+  enforceCreateInputLength(document);
 });
 
 function setProgressState(button, loading) {
@@ -195,4 +237,5 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   registerHtmxProgressButtons();
   bindCreateFileUpload(document);
+  enforceCreateInputLength(document);
 });

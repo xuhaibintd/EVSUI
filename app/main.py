@@ -55,8 +55,8 @@ CREATE_FIELDS: list[dict[str, str]] = [
     {"name": "document_files", "label": "Document Files", "group": "Notebook Core", "kind": "textarea", "placeholder": "Leave empty to use uploaded files"},
     {"name": "chunk_size", "label": "Chunk Size", "group": "Notebook Core", "kind": "number", "placeholder": "500"},
     {"name": "optimized_chunking", "label": "Optimized Chunking", "group": "Notebook Core", "kind": "select", "placeholder": "false,true"},
-    {"name": "embeddings_model", "label": "Embeddings Model", "group": "Notebook Core", "kind": "select", "placeholder": "amazon.titan-embed-text-v1,amazon.titan-embed-text-v2:0,text-embedding-3-small,text-embedding-3-large,text-embedding-ada-002"},
-    {"name": "search_algorithm", "label": "Search Algorithm", "group": "Notebook Core", "kind": "select", "placeholder": "VECTORDISTANCE,HNSW,KMEANS"},
+    {"name": "embeddings_model", "label": "Embeddings Model", "group": "Notebook Core", "kind": "select", "placeholder": "amazon.titan-embed-text-v1,amazon.titan-embed-image-v1,amazon.titan-embed-text-v2:0,text-embedding-ada-002,text-embedding-3-small,text-embedding-3-large"},
+    {"name": "search_algorithm", "label": "Search Algorithm", "group": "Notebook Core", "kind": "select", "placeholder": "VECTORDISTANCE,KMEANS,HNSW"},
     {"name": "top_k", "label": "Top K", "group": "Notebook Core", "kind": "number", "placeholder": "5"},
     {"name": "metric", "label": "Metric", "group": "Embedding & Search", "kind": "select", "placeholder": "COSINE,EUCLIDEAN,DOTPRODUCT"},
     {"name": "search_threshold", "label": "Search Threshold", "group": "Embedding & Search", "kind": "text", "placeholder": "0.75"},
@@ -97,6 +97,8 @@ CREATE_FIELDS: list[dict[str, str]] = [
 ]
 
 BOOL_FIELDS = {"optimized_chunking", "delay_jitter", "ignore_embedding_errors", "batch", "apply_heuristics"}
+CREATE_FIELD_MAX_LEN = 50
+ALLOWED_VALIDATION_TARGETS = {"vectorstore.ask", "vectorstore.similarity_search"}
 INT_FIELDS = {
     "chunk_size",
     "header_height",
@@ -300,22 +302,29 @@ def _cleanup_result_detail(cleanup_result: dict[str, str]) -> str:
     )
 
 
-def _format_preview(value, max_chars: int = 900) -> str:
+def _format_preview(value, max_chars: int | None = 900) -> str:
     if value is None:
         return "None"
     if hasattr(value, "columns") and hasattr(value, "head") and hasattr(value, "shape"):
         try:
             total_rows = int(value.shape[0])
-            preview_rows = min(total_rows, 10)
-            preview_df = value.head(preview_rows)
-            try:
-                text = preview_df.to_string(index=False, max_colwidth=48)
-            except TypeError:
-                text = preview_df.to_string(index=False)
-            if total_rows > preview_rows:
-                text = f"rows={total_rows}\n{text}\n... ({total_rows - preview_rows} more rows)"
-            else:
+            if max_chars is None:
+                try:
+                    text = value.to_string(index=False, max_colwidth=48)
+                except TypeError:
+                    text = value.to_string(index=False)
                 text = f"rows={total_rows}\n{text}"
+            else:
+                preview_rows = min(total_rows, 10)
+                preview_df = value.head(preview_rows)
+                try:
+                    text = preview_df.to_string(index=False, max_colwidth=48)
+                except TypeError:
+                    text = preview_df.to_string(index=False)
+                if total_rows > preview_rows:
+                    text = f"rows={total_rows}\n{text}\n... ({total_rows - preview_rows} more rows)"
+                else:
+                    text = f"rows={total_rows}\n{text}"
         except Exception:
             text = str(value)
     elif hasattr(value, "to_string"):
@@ -331,7 +340,7 @@ def _format_preview(value, max_chars: int = 900) -> str:
     else:
         text = str(value)
     text = text.strip()
-    if len(text) > max_chars:
+    if max_chars is not None and len(text) > max_chars:
         return f"{text[:max_chars]}... (truncated)"
     return text
 
@@ -447,9 +456,10 @@ def _default_create_values() -> dict[str, str]:
     data = {
         "vector_store_name": "TokioMarine",
         "create_preset": "vectordistance",
+        "search_algorithm": "VECTORDISTANCE",
     }
     for field in CREATE_FIELDS:
-        data[field["name"]] = ""
+        data.setdefault(field["name"], "")
     return data
 
 
@@ -460,7 +470,7 @@ def _apply_create_preset(payload: dict, preset: str, vector_store_name: str):
     payload.setdefault("vector_column", "Embedding")
     payload.setdefault("chunk_size", 500)
     payload.setdefault("optimized_chunking", False)
-    payload.setdefault("embeddings_model", "amazon.titan-embed-text-v1")
+    payload.setdefault("embeddings_model", "amazon.titan-embed-text-v2:0")
     payload.setdefault("top_k", 5)
 
     if preset == "vectordistance":
@@ -532,26 +542,94 @@ app.state.document_upload_notices: list[str] = []
 app.state.chat_history: list[dict] = [
     {
         "role": "assistant",
-        "content": "EVS Validation Chat is ready. You can verify ask/similarity_search/status logic here.",
+        "content": "EVS Validation Chat is ready. You can verify ask/similarity_search here.",
         "time": datetime.now().strftime("%H:%M"),
     }
 ]
 
 
-def _build_evs_reply(message: str, validation_target: str) -> str:
-    msg = message.lower()
-    if "status" in msg:
-        return "Notebook flow: run pdf_vs.status() after create/destroy to verify async state."
-    if "similar" in msg or "search" in msg:
-        return "Notebook flow: response = pdf_vs.similarity_search(question='...'), then inspect response.similar_objects."
-    if "ask" in msg:
-        return "Notebook flow: pdf_vs.ask(question='...', prompt='...'). Verify grounding from uploaded PDF chunks."
-    if "destroy" in msg or "disconnect" in msg:
-        return "Cleanup flow: pdf_vs.destroy() -> pdf_vs.status() -> VSManager.disconnect() -> remove_context()."
+def _active_vector_store_name() -> str:
+    last = app.state.last_create_operation or {}
+    name = str(last.get("vector_store_name", "")).strip()
+    if name:
+        return name
+    current = app.state.create_form_values or {}
+    return str(current.get("vector_store_name", "")).strip() or "TokioMarine"
+
+
+def _detect_message_language(text: str) -> str:
+    if re.search(r"[\u3040-\u30ff]", text):
+        return "ja"
+    if re.search(r"[\uac00-\ud7a3]", text):
+        return "ko"
+    if re.search(r"[\u4e00-\u9fff]", text):
+        return "zh"
+    return "en"
+
+
+def _ask_prompt_for_language(lang: str) -> str:
+    if lang == "ja":
+        return (
+            "文書の根拠に基づいて回答してください。"
+            "質問と同じ言語（日本語）で回答し、他の言語に切り替えないでください。"
+            "文書内に根拠がない場合は、その旨を日本語で明確に回答してください。"
+        )
+    if lang == "zh":
+        return (
+            "请仅依据检索到的文档内容回答。"
+            "必须使用与提问完全一致的语言（中文）作答，不要切换到其他语言。"
+            "如果文档中没有依据，请用中文明确说明。"
+        )
+    if lang == "ko":
+        return (
+            "문서 근거만 사용해 답변하세요."
+            "질문과 동일한 언어(한국어)로만 답변하고 다른 언어로 바꾸지 마세요."
+            "문서 근거가 없으면 한국어로 명확히 알려주세요."
+        )
     return (
-        f"Recorded validation question for [{validation_target}]. "
-        "Map it to notebook steps: create -> status -> ask/similarity -> destroy."
+        "Answer only with evidence from retrieved documents. "
+        "Use exactly the same language as the user's question. "
+        "If evidence is missing, state that clearly in the same language."
     )
+
+
+def _build_evs_reply(message: str, validation_target: str) -> str:
+    if VectorStore is None:
+        return "Validation failed: VectorStore runtime is unavailable."
+
+    question = message.strip()
+    lang = _detect_message_language(question)
+    ask_prompt = _ask_prompt_for_language(lang)
+    target = validation_target.strip().lower()
+    vs_name = _active_vector_store_name()
+
+    try:
+        vector_store = VectorStore(vs_name)
+    except Exception as ex:
+        return f"Validation failed: cannot open VectorStore('{vs_name}'): {ex}"
+
+    try:
+        if target == "vectorstore.similarity_search":
+            try:
+                result = vector_store.similarity_search(question=question)
+            except TypeError:
+                result = vector_store.similarity_search(question)
+            return _format_preview(result, max_chars=None)
+
+        try:
+            result = vector_store.ask(question=question, prompt=ask_prompt)
+        except TypeError:
+            try:
+                result = vector_store.ask(question, ask_prompt)
+            except TypeError:
+                try:
+                    result = vector_store.ask(question=question)
+                except TypeError:
+                    result = vector_store.ask(question)
+        return _format_preview(result, max_chars=None)
+    except Exception as ex:
+        method_name = "similarity_search" if target == "vectorstore.similarity_search" else "ask"
+        return f"{method_name} failed on '{vs_name}': {ex}"
 
 
 def _current_user(request: Request) -> str:
@@ -1027,6 +1105,9 @@ async def upload_and_prepare_create(request: Request):
     warnings: list[str] = list(upload_notices)
     for field in CREATE_FIELDS:
         raw = str(form.get(field["name"], "")).strip()
+        if len(raw) > CREATE_FIELD_MAX_LEN:
+            raw = raw[:CREATE_FIELD_MAX_LEN]
+            warnings.append(f"Field [{field['name']}] exceeded {CREATE_FIELD_MAX_LEN} chars and was truncated.")
         create_values[field["name"]] = raw
         if not raw:
             continue
@@ -1119,6 +1200,9 @@ async def chat_send(
         )
 
     clean = message.strip()
+    selected_target = validation_target.strip().lower()
+    if selected_target not in ALLOWED_VALIDATION_TARGETS:
+        selected_target = "vectorstore.ask"
     if clean:
         app.state.chat_history.append(
             {
@@ -1130,7 +1214,7 @@ async def chat_send(
         app.state.chat_history.append(
             {
                 "role": "assistant",
-                "content": _build_evs_reply(clean, validation_target),
+                "content": _build_evs_reply(clean, selected_target),
                 "time": datetime.now().strftime("%H:%M"),
             }
         )

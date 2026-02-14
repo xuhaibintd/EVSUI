@@ -12,9 +12,6 @@
     <select name="validation_target" id="validation-target" {% if not evs.connected %}disabled{% endif %}>
       <option value="vectorstore.ask">VectorStore.ask</option>
       <option value="vectorstore.similarity_search">VectorStore.similarity_search</option>
-      <option value="vectorstore.status">VectorStore.status</option>
-      <option value="vectorstore.destroy">VectorStore.destroy</option>
-      <option value="vsmanager.disconnect">VSManager.disconnect</option>
     </select>
     <textarea name="message" rows="4" placeholder="Ask notebook-based EVS validation question..." required {% if not evs.connected %}disabled{% endif %}></textarea>
     <div class="stack-inline">

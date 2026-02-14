@@ -1,13 +1,7 @@
 ﻿@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600&family=Manrope:wght@400;500;600;700;800&family=Sora:wght@500;600;700;800&display=swap");
 
 :root {
-  --ui-stage-w: 1920;
-  --ui-stage-h: 1080;
   --ui-topbar-h: 76px;
-  --ui-stage-scale: min(
-    calc(100vw / (var(--ui-stage-w) * 1px)),
-    calc(100vh / (var(--ui-stage-h) * 1px))
-  );
   --bg-root: #040b1b;
   --bg-grad-a: #0a1733;
   --bg-grad-b: #111f45;
@@ -52,27 +46,13 @@ body {
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   font-feature-settings: "kern" 1, "liga" 1;
+  display: flex;
+  flex-direction: column;
   min-height: 100%;
   background:
     radial-gradient(1000px 400px at 15% -20%, #27447e 0%, transparent 70%),
     radial-gradient(600px 300px at 90% -10%, #1e3f83 0%, transparent 75%),
     linear-gradient(180deg, var(--bg-grad-b) 0%, var(--bg-grad-a) 35%, var(--bg-root) 100%);
-}
-
-.viewport-shell {
-  position: fixed;
-  inset: 0;
-  overflow: hidden;
-}
-
-.viewport-stage {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: calc(var(--ui-stage-w) * 1px);
-  height: calc(var(--ui-stage-h) * 1px);
-  transform-origin: top left;
-  transform: translate(-50%, -50%) scale(var(--ui-stage-scale));
 }
 
 .topbar,
@@ -206,8 +186,12 @@ p {
 
 .page {
   padding: 1rem;
-  height: calc((var(--ui-stage-h) * 1px) - var(--ui-topbar-h));
-  max-height: calc((var(--ui-stage-h) * 1px) - var(--ui-topbar-h));
+  flex: 1 1 auto;
+  min-height: 0;
+  height: calc(100vh - var(--ui-topbar-h));
+  max-height: calc(100vh - var(--ui-topbar-h));
+  height: calc(100dvh - var(--ui-topbar-h));
+  max-height: calc(100dvh - var(--ui-topbar-h));
   overflow: hidden;
 }
 
@@ -664,7 +648,45 @@ button.ghost {
 }
 
 .selected-files-panel {
-  margin-top: 0.5rem;
+  margin-top: 0;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.select-docs-layout {
+  display: grid;
+  grid-template-columns: minmax(22rem, 30rem) minmax(0, 1fr);
+  gap: 0.85rem;
+  align-items: start;
+}
+
+.select-docs-left {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.select-docs-options {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.basic-layout {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.basic-row {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.basic-row-first {
+  grid-template-columns: minmax(20ch, 28ch);
+}
+
+.basic-row-second {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
 }
 
 .feature-layout {
@@ -709,7 +731,36 @@ button.ghost {
 .param-grid.compact.compact-tight .field > input,
 .param-grid.compact.compact-tight .field > textarea,
 .param-grid.compact.compact-tight .field > select {
-  width: min(100%, 80ch);
+  width: min(100%, 20ch);
+}
+
+#section-create .param-grid.compact.compact-tight {
+  grid-template-columns: repeat(auto-fit, minmax(20ch, 20ch));
+  justify-content: space-between;
+}
+
+#section-create .param-grid.compact.compact-tight .field {
+  width: 20ch;
+  max-width: 20ch;
+}
+
+#section-create .param-grid.compact.compact-tight .field > input,
+#section-create .param-grid.compact.compact-tight .field > textarea,
+#section-create .param-grid.compact.compact-tight .field > select {
+  width: 100%;
+  max-width: 100%;
+}
+
+#section-create .param-grid.compact.compact-tight .field.field-file-auto {
+  justify-self: start;
+  width: fit-content;
+  max-width: 34ch;
+  min-width: 24ch;
+  grid-column: auto;
+}
+
+#section-create .param-grid.compact.compact-tight .field.field-file-auto > input[type="file"] {
+  width: 100%;
 }
 
 @media (max-width: 1680px) {
@@ -729,6 +780,42 @@ button.ghost {
 
   .menu-section#section-create .param-grid.compact {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  #section-create .param-grid.compact.compact-tight {
+    grid-template-columns: repeat(auto-fit, minmax(20ch, 1fr));
+    justify-content: stretch;
+  }
+
+  #section-create .param-grid.compact.compact-tight .field {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  #section-create .param-grid.compact.compact-tight .field.field-file-auto {
+    min-width: 20ch;
+    width: 100%;
+    max-width: 100%;
+    grid-column: auto;
+  }
+
+  .select-docs-layout {
+    grid-template-columns: minmax(18rem, 1fr) minmax(0, 1fr);
+  }
+
+  .basic-row-second {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1100px) {
+  .select-docs-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .basic-row-first,
+  .basic-row-second {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -1175,6 +1262,12 @@ button.ghost {
   background: rgba(10, 27, 61, 0.9);
 }
 
+.chat-content {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .msg.user {
   border-color: #2f7048;
   background: rgba(18, 58, 39, 0.75);
@@ -1203,8 +1296,16 @@ button.ghost {
     grid-template-columns: 1fr;
   }
 
+  .menu-layout {
+    grid-template-rows: auto minmax(0, 1fr);
+    height: 100%;
+    min-height: 0;
+  }
+
   .left-menu {
     min-height: auto;
+    max-height: 34vh;
+    overflow: auto;
   }
 
   .wizard-nav {
@@ -1220,15 +1321,16 @@ button.ghost {
 
   .menu-section {
     max-height: none;
-    overflow: visible;
+    height: 100%;
+    overflow: hidden;
   }
 
   .menu-section.active {
-    display: block;
+    display: flex;
   }
 
   .menu-section .panel-content {
-    overflow: visible;
+    overflow: auto;
     padding-right: 0;
   }
 
@@ -1248,7 +1350,7 @@ button.ghost {
   .workflow-rail .panel,
   .workflow-main .panel {
     max-height: none;
-    overflow: visible;
+    overflow: auto;
   }
 
   .chat-window {
@@ -1258,6 +1360,10 @@ button.ghost {
   .param-grid,
   .param-grid.compact,
   .param-grid.compact.compact-tight {
+    grid-template-columns: 1fr;
+  }
+
+  #section-create .param-grid.compact.compact-tight {
     grid-template-columns: 1fr;
   }
 
@@ -1285,7 +1391,7 @@ button.ghost {
   .connect-fields,
   .connect-monitor {
     height: auto;
-    overflow: visible;
+    overflow: auto;
   }
 
   .connect-userpass-row {
@@ -1311,88 +1417,8 @@ button.ghost {
     display: flex;
     flex-direction: column;
     gap: 0.65rem;
-    overflow: visible;
+    overflow: auto;
   }
-}
-
-/* Fixed desktop spec on every screen size */
-.viewport-stage .topbar {
-  grid-template-columns: 240px 1fr auto !important;
-}
-
-.viewport-stage .brand-block {
-  border-right: 1px solid #203564 !important;
-  border-bottom: 0 !important;
-  padding-right: 1rem !important;
-  padding-bottom: 0 !important;
-}
-
-.viewport-stage .menu-layout {
-  grid-template-columns: 260px minmax(0, 1fr) !important;
-}
-
-.viewport-stage .workflow-layout {
-  grid-template-columns: 380px minmax(0, 1fr) !important;
-}
-
-.viewport-stage .grid-layout {
-  grid-template-columns: 1fr 1.6fr 1fr !important;
-}
-
-.viewport-stage .left-menu {
-  min-height: 0 !important;
-}
-
-.viewport-stage .wizard-nav {
-  flex-direction: row !important;
-  align-items: center !important;
-}
-
-.viewport-stage .wizard-actions {
-  width: auto !important;
-  display: flex !important;
-  grid-template-columns: none !important;
-}
-
-.viewport-stage .menu-section {
-  max-height: none !important;
-  overflow: hidden !important;
-}
-
-.viewport-stage .menu-section.active {
-  display: flex !important;
-}
-
-.viewport-stage .menu-section .panel-content {
-  overflow: auto !important;
-  padding-right: 0.15rem !important;
-}
-
-.viewport-stage .panel-span2 {
-  grid-column: span 2 !important;
-}
-
-.viewport-stage .panel {
-  min-height: auto !important;
-}
-
-.viewport-stage .workflow-rail .panel,
-.viewport-stage .workflow-main .panel {
-  max-height: none !important;
-  overflow: auto !important;
-}
-
-.viewport-stage .param-grid,
-.viewport-stage .param-grid.compact,
-.viewport-stage .param-grid.compact.compact-tight {
-  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
-}
-
-.viewport-stage .connect-grid {
-  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) !important;
-  height: 100% !important;
-  min-height: 0 !important;
-  max-height: none !important;
 }
 
 

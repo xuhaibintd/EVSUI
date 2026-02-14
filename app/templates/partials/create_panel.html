@@ -10,91 +10,96 @@
 >
   <section class="param-group">
     <h3>Select Documents</h3>
-    <div class="param-grid compact compact-tight">
-      <label class="field">
-        <span>Upload PDF / Documents</span>
-        <input type="file" name="files" multiple {% if not evs.connected %}disabled{% endif %} />
-      </label>
-      <label class="field">
-        <span>chunk_size</span>
-        <input type="number" name="chunk_size" value="{{ create_values.get('chunk_size', '') }}" placeholder="500" {% if not evs.connected %}disabled{% endif %} />
-      </label>
-      <label class="field">
-        <span>optimized_chunking</span>
-        <select name="optimized_chunking" {% if not evs.connected %}disabled{% endif %}>
-          <option value="">(not set)</option>
-          <option value="false" {% if create_values.get('optimized_chunking', '') == 'false' %}selected{% endif %}>false</option>
-          <option value="true" {% if create_values.get('optimized_chunking', '') == 'true' %}selected{% endif %}>true</option>
-        </select>
-      </label>
-    </div>
-    <div class="selected-files-panel" data-selected-doc-paths>
-      {% include "partials/selected_documents.html" %}
+    <div class="select-docs-layout">
+      <div class="select-docs-left">
+        <label class="field field-file-auto">
+          <span>Upload PDF / Documents</span>
+          <input type="file" name="files" multiple {% if not evs.connected %}disabled{% endif %} />
+        </label>
+        <div class="select-docs-options">
+          <label class="field">
+            <span>chunk_size</span>
+            <input type="number" name="chunk_size" value="{{ create_values.get('chunk_size', '') }}" placeholder="500" {% if not evs.connected %}disabled{% endif %} />
+          </label>
+          <label class="field">
+            <span>optimized_chunking</span>
+            <select name="optimized_chunking" {% if not evs.connected %}disabled{% endif %}>
+              <option value="">(not set)</option>
+              <option value="false" {% if create_values.get('optimized_chunking', '') == 'false' %}selected{% endif %}>false</option>
+              <option value="true" {% if create_values.get('optimized_chunking', '') == 'true' %}selected{% endif %}>true</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <div class="selected-files-panel" data-selected-doc-paths>
+        {% include "partials/selected_documents.html" %}
+      </div>
     </div>
   </section>
 
   <section class="param-group">
-    <h3>Shared / Basic</h3>
-    <div class="param-grid compact compact-tight">
-      <label class="field">
-        <span>Vector Store Name</span>
-        <input
-          type="text"
-          name="vector_store_name"
-          value="{{ create_values.get('vector_store_name', 'TokioMarine') }}"
-          placeholder="updated_vs or pdf_vs name"
-          {% if not evs.connected %}disabled{% endif %}
-        />
-      </label>
-      <label class="field">
-        <span>Create Preset</span>
-        <select name="create_preset" {% if not evs.connected %}disabled{% endif %}>
-          <option value="custom" {% if create_values.get('create_preset', '') == 'custom' %}selected{% endif %}>Custom (manual)</option>
-          <option value="hnsw" {% if create_values.get('create_preset', '') == 'hnsw' %}selected{% endif %}>HNSW sample</option>
-          <option value="vectordistance" {% if create_values.get('create_preset', 'vectordistance') == 'vectordistance' %}selected{% endif %}>VectorDistance sample</option>
-        </select>
-      </label>
-      <label class="field">
-        <span>embeddings_model</span>
-        <select name="embeddings_model" {% if not evs.connected %}disabled{% endif %}>
-          <option value="">(not set)</option>
-          <option value="amazon.titan-embed-text-v1" {% if create_values.get('embeddings_model', '') == 'amazon.titan-embed-text-v1' %}selected{% endif %}>amazon.titan-embed-text-v1</option>
-          <option value="amazon.titan-embed-text-v2:0" {% if create_values.get('embeddings_model', '') == 'amazon.titan-embed-text-v2:0' %}selected{% endif %}>amazon.titan-embed-text-v2:0</option>
-          <option value="text-embedding-3-small" {% if create_values.get('embeddings_model', '') == 'text-embedding-3-small' %}selected{% endif %}>text-embedding-3-small</option>
-          <option value="text-embedding-3-large" {% if create_values.get('embeddings_model', '') == 'text-embedding-3-large' %}selected{% endif %}>text-embedding-3-large</option>
-        </select>
-      </label>
-      <label class="field">
-        <span>search_algorithm</span>
-        <select name="search_algorithm" {% if not evs.connected %}disabled{% endif %}>
-          <option value="">(not set)</option>
-          <option value="HNSW" {% if create_values.get('search_algorithm', '') == 'HNSW' %}selected{% endif %}>HNSW</option>
-          <option value="VECTORDISTANCE" {% if create_values.get('search_algorithm', '') == 'VECTORDISTANCE' %}selected{% endif %}>VECTORDISTANCE</option>
-          <option value="KMEANS" {% if create_values.get('search_algorithm', '') == 'KMEANS' %}selected{% endif %}>KMEANS</option>
-        </select>
-      </label>
-      <label class="field">
-        <span>object_names</span>
-        <input
-          type="text"
-          name="object_names"
-          value="{{ create_values.get('object_names', '') }}"
-          placeholder="demo.amazon_reviews_25 or DataFrame('demo.amazon_reviews_25')"
-          {% if not evs.connected %}disabled{% endif %}
-        />
-      </label>
-      <label class="field">
-        <span>data_columns (comma separated)</span>
-        <input type="text" name="data_columns" value="{{ create_values.get('data_columns', '') }}" placeholder="rev_text or chunks" {% if not evs.connected %}disabled{% endif %} />
-      </label>
-      <label class="field">
-        <span>vector_column</span>
-        <input type="text" name="vector_column" value="{{ create_values.get('vector_column', '') }}" placeholder="VectorIndex or Embedding" {% if not evs.connected %}disabled{% endif %} />
-      </label>
-      <label class="field">
-        <span>top_k</span>
-        <input type="number" name="top_k" value="{{ create_values.get('top_k', '') }}" placeholder="5 or 10" {% if not evs.connected %}disabled{% endif %} />
-      </label>
+    <h3>Basic</h3>
+    <input type="hidden" name="create_preset" value="{{ create_values.get('create_preset', 'vectordistance') }}" />
+    <div class="basic-layout">
+      <div class="basic-row basic-row-first">
+        <label class="field">
+          <span>Vector Store Name</span>
+          <input
+            type="text"
+            name="vector_store_name"
+            value="{{ create_values.get('vector_store_name', 'TokioMarine') }}"
+            placeholder="updated_vs or pdf_vs name"
+            {% if not evs.connected %}disabled{% endif %}
+          />
+        </label>
+      </div>
+      <div class="basic-row basic-row-second">
+        <label class="field">
+          <span>embeddings_model</span>
+          <select name="embeddings_model" {% if not evs.connected %}disabled{% endif %}>
+            <option value="">(not set)</option>
+            <optgroup label="AWS">
+              <option value="amazon.titan-embed-text-v1" {% if create_values.get('embeddings_model', '') == 'amazon.titan-embed-text-v1' %}selected{% endif %}>amazon.titan-embed-text-v1</option>
+              <option value="amazon.titan-embed-image-v1" {% if create_values.get('embeddings_model', '') == 'amazon.titan-embed-image-v1' %}selected{% endif %}>amazon.titan-embed-image-v1</option>
+              <option value="amazon.titan-embed-text-v2:0" {% if create_values.get('embeddings_model', '') == 'amazon.titan-embed-text-v2:0' %}selected{% endif %}>amazon.titan-embed-text-v2:0</option>
+            </optgroup>
+            <optgroup label="Azure">
+              <option value="text-embedding-ada-002" {% if create_values.get('embeddings_model', '') == 'text-embedding-ada-002' %}selected{% endif %}>text-embedding-ada-002</option>
+              <option value="text-embedding-3-small" {% if create_values.get('embeddings_model', '') == 'text-embedding-3-small' %}selected{% endif %}>text-embedding-3-small</option>
+              <option value="text-embedding-3-large" {% if create_values.get('embeddings_model', '') == 'text-embedding-3-large' %}selected{% endif %}>text-embedding-3-large</option>
+            </optgroup>
+          </select>
+        </label>
+        <label class="field">
+          <span>search_algorithm</span>
+          <select name="search_algorithm" {% if not evs.connected %}disabled{% endif %}>
+            <option value="VECTORDISTANCE" {% if create_values.get('search_algorithm', 'VECTORDISTANCE') == 'VECTORDISTANCE' %}selected{% endif %}>VECTORDISTANCE</option>
+            <option value="KMEANS" {% if create_values.get('search_algorithm', '') == 'KMEANS' %}selected{% endif %}>KMEANS</option>
+            <option value="HNSW" {% if create_values.get('search_algorithm', '') == 'HNSW' %}selected{% endif %}>HNSW</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>top_k</span>
+          <input type="number" name="top_k" value="{{ create_values.get('top_k', '') }}" placeholder="5 or 10" {% if not evs.connected %}disabled{% endif %} />
+        </label>
+        <label class="field">
+          <span>object_names</span>
+          <input
+            type="text"
+            name="object_names"
+            value="{{ create_values.get('object_names', '') }}"
+            {% if not evs.connected %}disabled{% endif %}
+          />
+        </label>
+        <label class="field">
+          <span>data_columns (comma separated)</span>
+          <input type="text" name="data_columns" value="{{ create_values.get('data_columns', '') }}" {% if not evs.connected %}disabled{% endif %} />
+        </label>
+        <label class="field">
+          <span>vector_column</span>
+          <input type="text" name="vector_column" value="{{ create_values.get('vector_column', '') }}" {% if not evs.connected %}disabled{% endif %} />
+        </label>
+      </div>
     </div>
   </section>
 

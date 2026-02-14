@@ -1,6 +1,6 @@
 {% for item in messages %}
 <div class="msg {{ item.role }}">
-  <p>{{ item.content }}</p>
+  <p class="chat-content">{{ item.content }}</p>
   <small>{{ item.time }}</small>
 </div>
 {% endfor %}
