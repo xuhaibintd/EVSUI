@@ -1,0 +1,11 @@
+{% if selected_method %}
+<article class="detail-card">
+  <p class="eyebrow">{{ selected_method.group }}</p>
+  <h3>{{ selected_method.class_name }}.{{ selected_method.method_name }}</h3>
+  <code>{{ selected_method.method_name }}{{ selected_method.signature }}</code>
+  <p>{{ selected_method.description }}</p>
+  <p class="muted">Module: {{ selected_method.module }}</p>
+</article>
+{% else %}
+<p class="muted">No feature selected.</p>
+{% endif %}

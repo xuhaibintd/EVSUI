@@ -1,0 +1,161 @@
+<h2>Step 2) Build Vector Store from PDF Documents</h2>
+<p class="muted step-lock-note" {% if evs.connected %}hidden{% endif %}>Step 2 is locked. Complete Step 1 first.</p>
+
+<form
+  class="stack {% if not evs.connected %}disabled-block{% endif %}"
+  hx-post="/ui/create/upload"
+  hx-target="#create-result"
+  hx-swap="innerHTML"
+  enctype="multipart/form-data"
+>
+  <section class="param-group">
+    <h3>Select Documents</h3>
+    <div class="param-grid compact compact-tight">
+      <label class="field">
+        <span>Upload PDF / Documents</span>
+        <input type="file" name="files" multiple {% if not evs.connected %}disabled{% endif %} />
+      </label>
+      <label class="field">
+        <span>chunk_size</span>
+        <input type="number" name="chunk_size" value="{{ create_values.get('chunk_size', '') }}" placeholder="500" {% if not evs.connected %}disabled{% endif %} />
+      </label>
+      <label class="field">
+        <span>optimized_chunking</span>
+        <select name="optimized_chunking" {% if not evs.connected %}disabled{% endif %}>
+          <option value="">(not set)</option>
+          <option value="false" {% if create_values.get('optimized_chunking', '') == 'false' %}selected{% endif %}>false</option>
+          <option value="true" {% if create_values.get('optimized_chunking', '') == 'true' %}selected{% endif %}>true</option>
+        </select>
+      </label>
+    </div>
+    <div class="selected-files-panel" data-selected-doc-paths>
+      {% include "partials/selected_documents.html" %}
+    </div>
+  </section>
+
+  <section class="param-group">
+    <h3>Shared / Basic</h3>
+    <div class="param-grid compact compact-tight">
+      <label class="field">
+        <span>Vector Store Name</span>
+        <input
+          type="text"
+          name="vector_store_name"
+          value="{{ create_values.get('vector_store_name', 'TokioMarine') }}"
+          placeholder="updated_vs or pdf_vs name"
+          {% if not evs.connected %}disabled{% endif %}
+        />
+      </label>
+      <label class="field">
+        <span>Create Preset</span>
+        <select name="create_preset" {% if not evs.connected %}disabled{% endif %}>
+          <option value="custom" {% if create_values.get('create_preset', '') == 'custom' %}selected{% endif %}>Custom (manual)</option>
+          <option value="hnsw" {% if create_values.get('create_preset', '') == 'hnsw' %}selected{% endif %}>HNSW sample</option>
+          <option value="vectordistance" {% if create_values.get('create_preset', 'vectordistance') == 'vectordistance' %}selected{% endif %}>VectorDistance sample</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>embeddings_model</span>
+        <select name="embeddings_model" {% if not evs.connected %}disabled{% endif %}>
+          <option value="">(not set)</option>
+          <option value="amazon.titan-embed-text-v1" {% if create_values.get('embeddings_model', '') == 'amazon.titan-embed-text-v1' %}selected{% endif %}>amazon.titan-embed-text-v1</option>
+          <option value="amazon.titan-embed-text-v2:0" {% if create_values.get('embeddings_model', '') == 'amazon.titan-embed-text-v2:0' %}selected{% endif %}>amazon.titan-embed-text-v2:0</option>
+          <option value="text-embedding-3-small" {% if create_values.get('embeddings_model', '') == 'text-embedding-3-small' %}selected{% endif %}>text-embedding-3-small</option>
+          <option value="text-embedding-3-large" {% if create_values.get('embeddings_model', '') == 'text-embedding-3-large' %}selected{% endif %}>text-embedding-3-large</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>search_algorithm</span>
+        <select name="search_algorithm" {% if not evs.connected %}disabled{% endif %}>
+          <option value="">(not set)</option>
+          <option value="HNSW" {% if create_values.get('search_algorithm', '') == 'HNSW' %}selected{% endif %}>HNSW</option>
+          <option value="VECTORDISTANCE" {% if create_values.get('search_algorithm', '') == 'VECTORDISTANCE' %}selected{% endif %}>VECTORDISTANCE</option>
+          <option value="KMEANS" {% if create_values.get('search_algorithm', '') == 'KMEANS' %}selected{% endif %}>KMEANS</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>object_names</span>
+        <input
+          type="text"
+          name="object_names"
+          value="{{ create_values.get('object_names', '') }}"
+          placeholder="demo.amazon_reviews_25 or DataFrame('demo.amazon_reviews_25')"
+          {% if not evs.connected %}disabled{% endif %}
+        />
+      </label>
+      <label class="field">
+        <span>data_columns (comma separated)</span>
+        <input type="text" name="data_columns" value="{{ create_values.get('data_columns', '') }}" placeholder="rev_text or chunks" {% if not evs.connected %}disabled{% endif %} />
+      </label>
+      <label class="field">
+        <span>vector_column</span>
+        <input type="text" name="vector_column" value="{{ create_values.get('vector_column', '') }}" placeholder="VectorIndex or Embedding" {% if not evs.connected %}disabled{% endif %} />
+      </label>
+      <label class="field">
+        <span>top_k</span>
+        <input type="number" name="top_k" value="{{ create_values.get('top_k', '') }}" placeholder="5 or 10" {% if not evs.connected %}disabled{% endif %} />
+      </label>
+    </div>
+  </section>
+
+  <section class="param-group">
+    <h3>updated_vs.create(...) HNSW params</h3>
+    <div class="param-grid compact compact-tight">
+      <label class="field">
+        <span>seed</span>
+        <input type="number" name="seed" value="{{ create_values.get('seed', '') }}" placeholder="10" {% if not evs.connected %}disabled{% endif %} />
+      </label>
+      <label class="field">
+        <span>ef_construction</span>
+        <input type="number" name="ef_construction" value="{{ create_values.get('ef_construction', '') }}" placeholder="32" {% if not evs.connected %}disabled{% endif %} />
+      </label>
+      <label class="field">
+        <span>num_connpernode</span>
+        <input type="number" name="num_connpernode" value="{{ create_values.get('num_connpernode', '') }}" placeholder="32" {% if not evs.connected %}disabled{% endif %} />
+      </label>
+      <label class="field">
+        <span>maxnum_connpernode</span>
+        <input type="number" name="maxnum_connpernode" value="{{ create_values.get('maxnum_connpernode', '') }}" placeholder="32" {% if not evs.connected %}disabled{% endif %} />
+      </label>
+      <label class="field">
+        <span>metric</span>
+        <select name="metric" {% if not evs.connected %}disabled{% endif %}>
+          <option value="">(not set)</option>
+          <option value="COSINE" {% if create_values.get('metric', '') == 'COSINE' %}selected{% endif %}>COSINE</option>
+          <option value="EUCLIDEAN" {% if create_values.get('metric', '') == 'EUCLIDEAN' %}selected{% endif %}>EUCLIDEAN</option>
+          <option value="DOTPRODUCT" {% if create_values.get('metric', '') == 'DOTPRODUCT' %}selected{% endif %}>DOTPRODUCT</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>apply_heuristics</span>
+        <select name="apply_heuristics" {% if not evs.connected %}disabled{% endif %}>
+          <option value="">(not set)</option>
+          <option value="true" {% if create_values.get('apply_heuristics', '') == 'true' %}selected{% endif %}>true</option>
+          <option value="false" {% if create_values.get('apply_heuristics', '') == 'false' %}selected{% endif %}>false</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>ef_search</span>
+        <input type="number" name="ef_search" value="{{ create_values.get('ef_search', '') }}" placeholder="32" {% if not evs.connected %}disabled{% endif %} />
+      </label>
+      <label class="field">
+        <span>key_columns (comma separated)</span>
+        <input type="text" name="key_columns" value="{{ create_values.get('key_columns', '') }}" placeholder="rev_id, aid" {% if not evs.connected %}disabled{% endif %} />
+      </label>
+    </div>
+  </section>
+
+  <div class="stack-inline">
+    <button type="submit" class="progress-btn" data-progress-button {% if not evs.connected %}disabled{% endif %}>
+      <span class="progress-btn-label">Create Vector Store</span>
+      <span class="progress-btn-loading">
+        <span class="progress-btn-spinner" aria-hidden="true"></span>
+        <span>Creating...</span>
+      </span>
+    </button>
+  </div>
+</form>
+
+<div id="create-result">
+  {% include "partials/create_result.html" %}
+</div>

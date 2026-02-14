@@ -1,0 +1,27 @@
+{% if document_upload_error %}
+<p class="status err">{{ document_upload_error }}</p>
+{% endif %}
+
+{% if document_upload_notices %}
+<div>
+  {% for notice in document_upload_notices %}
+  <p class="muted">{{ notice }}</p>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if document_uploads %}
+<p><strong>Uploaded files ({{ document_uploads|length }})</strong></p>
+<ul class="file-list small limit-3">
+  {% for file in document_uploads %}
+  <li>
+    <div class="file-main">
+      <strong>{{ file.name }}</strong>
+      <span>{{ file.size }} bytes</span>
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="muted">No files uploaded yet.</p>
+{% endif %}

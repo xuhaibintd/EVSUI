@@ -1,0 +1,8 @@
+<form class="stack" hx-post="/ui/upload" hx-target="#upload-list" hx-swap="innerHTML" enctype="multipart/form-data">
+  <label class="label" for="files">Choose files</label>
+  <input id="files" type="file" name="files" multiple />
+  <button type="submit">Upload</button>
+</form>
+<div id="upload-list">
+  {% include "partials/upload_list.html" %}
+</div>

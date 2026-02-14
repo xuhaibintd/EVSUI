@@ -1,0 +1,25 @@
+{% if not evs.connected %}
+<p class="muted">Step 3 is locked. Complete Step 1 first.</p>
+{% endif %}
+
+<div class="stack {% if not evs.connected %}disabled-block{% endif %}">
+  <div id="chat-messages" class="chat-window">
+    {% include "partials/chat_messages.html" %}
+  </div>
+
+  <form class="stack" hx-post="/ui/chat" hx-target="#chat-messages" hx-swap="innerHTML">
+    <label class="label" for="validation-target">Validation target</label>
+    <select name="validation_target" id="validation-target" {% if not evs.connected %}disabled{% endif %}>
+      <option value="vectorstore.ask">VectorStore.ask</option>
+      <option value="vectorstore.similarity_search">VectorStore.similarity_search</option>
+      <option value="vectorstore.status">VectorStore.status</option>
+      <option value="vectorstore.destroy">VectorStore.destroy</option>
+      <option value="vsmanager.disconnect">VSManager.disconnect</option>
+    </select>
+    <textarea name="message" rows="4" placeholder="Ask notebook-based EVS validation question..." required {% if not evs.connected %}disabled{% endif %}></textarea>
+    <div class="stack-inline">
+      <button type="submit" {% if not evs.connected %}disabled{% endif %}>Send</button>
+      <button type="button" class="ghost" hx-post="/ui/chat/reset" hx-target="#chat-messages" hx-swap="innerHTML" {% if not evs.connected %}disabled{% endif %}>Clear</button>
+    </div>
+  </form>
+</div>

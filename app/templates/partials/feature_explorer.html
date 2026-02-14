@@ -1,0 +1,30 @@
+<div class="stack">
+  <form hx-get="/ui/features" hx-target="#feature-shell" hx-trigger="keyup changed delay:250ms from:#feature-query" class="stack-inline">
+    <input id="feature-query" name="query" type="search" value="{{ query }}" placeholder="Search: vector, text, ask, pattern..." />
+  </form>
+
+  <div class="feature-layout">
+    <div class="method-list">
+      {% for group_name, methods in groups %}
+      <section class="group-block">
+        <h3>{{ group_name }}</h3>
+        {% for method in methods %}
+        <button
+          class="method-btn {% if selected_method and method.id == selected_method.id %}active{% endif %}"
+          hx-get="/ui/features/{{ method.id }}"
+          hx-target="#feature-detail"
+          hx-swap="innerHTML"
+          type="button"
+        >
+          <span>{{ method.class_name }}.{{ method.method_name }}</span>
+        </button>
+        {% endfor %}
+      </section>
+      {% endfor %}
+    </div>
+
+    <div id="feature-detail">
+      {% include "partials/feature_detail.html" %}
+    </div>
+  </div>
+</div>

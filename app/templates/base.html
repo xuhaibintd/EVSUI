@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EVSUI</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='css/app.css') }}?v=20260214-2242" />
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <script defer src="{{ url_for('static', path='js/step-gate.js') }}?v=20260214-2242"></script>
+  <script defer src="{{ url_for('static', path='js/app.js') }}?v=20260214-2242"></script>
+</head>
+<body>
+  <div class="viewport-shell">
+    <div class="viewport-stage">
+      <header class="topbar">
+        <div class="brand-block">
+          <p class="brand-name" aria-label="teradata logo">
+            <span class="brand-wordmark">teradata</span><span class="brand-dot">.</span>
+          </p>
+          <p class="brand-sub">Enterprise AI Platform</p>
+        </div>
+        <div class="title-block">
+          <h1>Enterprise Vector Store Visual Console</h1>
+        </div>
+        <div class="top-actions">
+          {% if logged_in %}
+          <form method="post" action="/logout">
+            <button type="submit" class="chip-btn">Log Out</button>
+          </form>
+          <span class="user-name">{{ username }}</span>
+          <span class="avatar">{{ user_initials }}</span>
+          {% endif %}
+        </div>
+      </header>
+      <main class="page">
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+  </div>
+</body>
+</html>

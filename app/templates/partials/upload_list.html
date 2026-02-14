@@ -1,0 +1,15 @@
+{% if uploads %}
+<ul class="file-list">
+  {% for item in uploads %}
+  <li>
+    <div class="file-main">
+      <strong>{{ item.name }}</strong>
+      <span>{{ item.size }} bytes</span>
+    </div>
+    <small>{{ item.saved_path }} - {{ item.time }}</small>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="muted">No files uploaded yet.</p>
+{% endif %}

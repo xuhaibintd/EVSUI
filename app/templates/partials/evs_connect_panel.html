@@ -1,0 +1,134 @@
+<h2>Step 1) Connect to Vantage + Authenticate CCP</h2>
+<div class="connect-grid" data-step1-connected="{% if evs.connected %}true{% else %}false{% endif %}">
+  <form class="stack connect-shell connect-fields" hx-post="/ui/evs/connect" hx-target="#section-connect-content" hx-swap="innerHTML" hx-encoding="multipart/form-data" enctype="multipart/form-data" hx-indicator="#connect-progress" hx-on::after-request="window.location.reload()">
+    <div class="connect-status-zone">
+      <div class="connect-status-slot">
+        {% if evs.connected %}
+        <p class="status ok" title="Connected at {{ evs.connected_at }}">Connected at {{ evs.connected_at }}</p>
+        {% elif evs.last_error %}
+        <p class="status err" title="{{ evs.last_error }}">{{ evs.last_error }}</p>
+        {% else %}
+        <p class="status neutral">Connection not established.</p>
+        {% endif %}
+      </div>
+      <div class="connect-status-slot">
+        {% if evs.last_success %}
+        <p class="status ok" title="{{ evs.last_success }}">{{ evs.last_success }}</p>
+        {% elif evs.connected %}
+        <p class="status neutral">Session is active. Run health/list checks as needed.</p>
+        {% else %}
+        <p class="status neutral">Submit connection to continue.</p>
+        {% endif %}
+      </div>
+    </div>
+    <label class="field">
+      <span>Host</span>
+      <input type="text" name="host" value="{{ evs.params.host }}" placeholder="hostname" required />
+    </label>
+    <div class="connect-userpass-row">
+      <label class="field">
+        <span>Username</span>
+        <input type="text" name="username" value="{{ evs.params.username }}" placeholder="db user" required />
+      </label>
+      <label class="field">
+        <span>Password</span>
+        <input type="password" name="password" value="{{ evs.params.password }}" placeholder="db password" required />
+      </label>
+    </div>
+    <label class="field">
+      <span>UES URL</span>
+      <input type="text" name="ues_url" value="{{ evs.params.ues_url }}" placeholder="https://.../open-analytics" />
+    </label>
+    <div class="connect-userpass-row">
+      <label class="field">
+        <span>PAT Token</span>
+        <input type="text" name="pat_token" value="{{ evs.params.pat_token }}" placeholder="ccp token" required />
+      </label>
+      <label class="field">
+        <span>PEM File Upload</span>
+        <input
+          type="file"
+          name="pem_file"
+          accept=".pem,.key,.crt"
+          hx-post="/ui/evs/upload-pem"
+          hx-trigger="change"
+          hx-target="#pem-upload-status"
+          hx-swap="innerHTML"
+          hx-encoding="multipart/form-data"
+          hx-on::after-request="this.value=''"
+        />
+        <div id="pem-upload-status">
+          {% set pem_file_path = evs.params.pem_file %}
+          {% include "partials/pem_upload_status.html" %}
+        </div>
+      </label>
+    </div>
+
+    <div class="stack-inline connect-actions">
+      <button type="submit" class="connect-submit-btn progress-btn" data-progress-button>
+        <span class="connect-submit-label progress-btn-label">Connect + Authenticate</span>
+        <span class="connect-submit-loading progress-btn-loading">
+          <span class="progress-btn-spinner" aria-hidden="true"></span>
+          <span>Connecting...</span>
+        </span>
+      </button>
+      <button type="button" class="ghost progress-btn" data-progress-button hx-post="/ui/evs/reset" hx-trigger="click" hx-target="#section-connect-content" hx-swap="innerHTML" hx-on::after-request="window.location.reload()">
+        <span class="progress-btn-label">Reset / Disconnect</span>
+        <span class="progress-btn-loading">
+          <span class="progress-btn-spinner" aria-hidden="true"></span>
+          <span>Resetting...</span>
+        </span>
+      </button>
+    </div>
+    <div id="connect-progress" class="connect-progress" role="status" aria-live="polite">
+      <span class="connect-progress-spinner" aria-hidden="true"></span>
+      <span>Connecting and authenticating, please wait...</span>
+    </div>
+  </form>
+
+  <aside class="connect-monitor">
+    <article class="monitor-card">
+      <div class="monitor-title-line" title="VSManager.health() - Run connectivity health check (requires Step 1 connected).">VSManager.health() - Run connectivity health check (requires Step 1 connected).</div>
+      <div class="monitor-actions">
+        <button
+          type="button"
+          class="ghost monitor-btn progress-btn"
+          data-progress-button
+          hx-post="/ui/evs/health"
+          hx-target="#section-connect-content"
+          hx-swap="innerHTML"
+          {% if not evs.connected %}disabled{% endif %}
+        >
+          <span class="progress-btn-label">Run Health</span>
+          <span class="progress-btn-loading">
+            <span class="progress-btn-spinner" aria-hidden="true"></span>
+            <span>Running...</span>
+          </span>
+        </button>
+      </div>
+      <div class="monitor-status {% if evs.connected and evs.health_preview %}ok{% endif %}">{% if evs.connected and evs.health_preview -%}{{- evs.health_preview -}}{%- elif evs.connected -%}Connected. Click Run Health.{%- else -%}Connect in Step 1 to enable health check.{%- endif %}</div>
+    </article>
+
+    <article class="monitor-card">
+      <div class="monitor-title-line" title="VSManager.list() - Fetch vector store list (requires Step 1 connected).">VSManager.list() - Fetch vector store list (requires Step 1 connected).</div>
+      <div class="monitor-actions">
+        <button
+          type="button"
+          class="ghost monitor-btn progress-btn"
+          data-progress-button
+          hx-post="/ui/evs/list"
+          hx-target="#section-connect-content"
+          hx-swap="innerHTML"
+          {% if not evs.connected %}disabled{% endif %}
+        >
+          <span class="progress-btn-label">Run List</span>
+          <span class="progress-btn-loading">
+            <span class="progress-btn-spinner" aria-hidden="true"></span>
+            <span>Running...</span>
+          </span>
+        </button>
+      </div>
+      <div class="monitor-status monitor-status-list {% if evs.connected and evs.list_preview %}ok{% endif %}">{% if evs.connected and evs.list_preview -%}{{- evs.list_preview -}}{%- elif evs.connected -%}Connected. Click Run List.{%- else -%}Connect in Step 1 to enable list query.{%- endif %}</div>
+    </article>
+  </aside>
+</div>

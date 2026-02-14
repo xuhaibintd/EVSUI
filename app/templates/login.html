@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="login-wrap">
+  <article class="panel login-panel">
+    <div class="login-header">
+      <h2>Sign in</h2>
+      <p class="muted">Default credentials: admin / admin</p>
+    </div>
+    {% if error %}
+    <p class="status err">{{ error }}</p>
+    {% endif %}
+    <form class="stack" method="post" action="/login" autocomplete="on">
+      <label class="field">
+        <span>Username</span>
+        <input type="text" name="username" value="admin" placeholder="admin" required />
+      </label>
+      <label class="field">
+        <span>Password</span>
+        <input type="password" name="password" value="admin" placeholder="admin" required />
+      </label>
+      <button type="submit" class="login-btn">Login</button>
+    </form>
+  </article>
+</section>
+{% endblock %}

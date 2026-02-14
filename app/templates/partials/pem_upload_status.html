@@ -1,0 +1,5 @@
+<input type="hidden" name="current_pem_file" value="{{ pem_file_path if pem_file_path else '' }}" />
+<small class="pem-path">Saved path: {{ pem_file_path if pem_file_path else "No PEM uploaded yet." }}</small>
+{% if pem_upload_error %}
+<small class="pem-path">{{ pem_upload_error }}</small>
+{% endif %}
