@@ -7,16 +7,26 @@
     {% include "partials/chat_messages.html" %}
   </div>
 
-  <form class="stack" hx-post="/ui/chat" hx-target="#chat-messages" hx-swap="innerHTML">
+  <form class="stack chat-shell" hx-post="/ui/chat" hx-target="#chat-messages" hx-swap="innerHTML" hx-indicator="#chat-progress">
     <label class="label" for="validation-target">Validation target</label>
     <select name="validation_target" id="validation-target" {% if not evs.connected %}disabled{% endif %}>
       <option value="vectorstore.ask">VectorStore.ask</option>
       <option value="vectorstore.similarity_search">VectorStore.similarity_search</option>
     </select>
-    <textarea name="message" rows="4" placeholder="Ask notebook-based EVS validation question..." required {% if not evs.connected %}disabled{% endif %}></textarea>
-    <div class="stack-inline">
-      <button type="submit" {% if not evs.connected %}disabled{% endif %}>Send</button>
+    <textarea name="message" rows="2" placeholder="Ask notebook-based EVS validation question..." required {% if not evs.connected %}disabled{% endif %}></textarea>
+    <div class="stack-inline chat-actions">
+      <button type="submit" class="progress-btn" data-progress-button {% if not evs.connected %}disabled{% endif %}>
+        <span class="progress-btn-label">Send</span>
+        <span class="progress-btn-loading">
+          <span class="progress-btn-spinner" aria-hidden="true"></span>
+          <span>Sending...</span>
+        </span>
+      </button>
       <button type="button" class="ghost" hx-post="/ui/chat/reset" hx-target="#chat-messages" hx-swap="innerHTML" {% if not evs.connected %}disabled{% endif %}>Clear</button>
+    </div>
+    <div id="chat-progress" class="chat-progress" role="status" aria-live="polite">
+      <span class="connect-progress-spinner" aria-hidden="true"></span>
+      <span>Processing request, please wait...</span>
     </div>
   </form>
 </div>

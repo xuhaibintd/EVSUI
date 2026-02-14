@@ -45,6 +45,10 @@ DEFAULT_PAT_TOKEN = "<redacted-pat-token>"
 logger = logging.getLogger("evsui.connect")
 logger.setLevel(logging.INFO)
 
+JP_KANA_RE = re.compile(r"[\u3040-\u30ff]")
+LATIN_RE = re.compile(r"[A-Za-z]")
+HAN_RE = re.compile(r"[\u4e00-\u9fff]")
+
 
 CREATE_FIELDS: list[dict[str, str]] = [
     {"name": "description", "label": "Description", "group": "Notebook Core", "kind": "text", "placeholder": "Vector store description"},
@@ -133,6 +137,18 @@ CSV_FIELDS = {
     "include_patterns",
     "exclude_patterns",
 }
+FORCE_LIST_CSV_FIELDS = {"data_columns"}
+
+CORE_CREATE_FIELDS = {
+    "chunk_size",
+    "optimized_chunking",
+    "embeddings_model",
+    "search_algorithm",
+    "top_k",
+    "object_names",
+    "data_columns",
+    "vector_column",
+}
 
 
 def _now_ts() -> str:
@@ -153,6 +169,8 @@ def _split_csv(value: str) -> list[str]:
 def _coerce_create_param(name: str, raw: str):
     if name in CSV_FIELDS:
         chunks = _split_csv(raw)
+        if name in FORCE_LIST_CSV_FIELDS:
+            return chunks
         if len(chunks) == 1:
             return chunks[0]
         return chunks
@@ -345,6 +363,139 @@ def _format_preview(value, max_chars: int | None = 900) -> str:
     return text
 
 
+def _preview_cell(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list, tuple)):
+        try:
+            return json.dumps(value, ensure_ascii=False)
+        except Exception:
+            return str(value)
+    return str(value)
+
+
+def _split_table_line(line: str) -> list[str]:
+    return [chunk for chunk in re.split(r"\s{2,}", line.strip()) if chunk]
+
+
+def _table_from_text_preview(text: str) -> tuple[list[str], list[list[str]]]:
+    lines = [line.rstrip() for line in text.splitlines() if line.strip()]
+    if len(lines) < 2:
+        return [], []
+
+    header = _split_table_line(lines[0])
+    if len(header) < 2:
+        return [], []
+
+    rows: list[list[str]] = []
+    for idx, line in enumerate(lines[1:], start=1):
+        parts = _split_table_line(line)
+        if not parts:
+            continue
+        if re.fullmatch(r"\d+", parts[0]):
+            parts = parts[1:]
+        if len(parts) < len(header):
+            parts = parts + [""] * (len(header) - len(parts))
+        elif len(parts) > len(header):
+            parts = parts[: len(header) - 1] + [" ".join(parts[len(header) - 1 :])]
+        rows.append([str(idx)] + parts)
+    if not rows:
+        return [], []
+    return ["#"] + header, rows
+
+
+def _table_from_result(value) -> tuple[list[str], list[list[str]]]:
+    candidate = value
+    for attr in ("to_pandas", "to_dataframe"):
+        fn = getattr(value, attr, None)
+        if callable(fn):
+            try:
+                converted = fn()
+                if converted is not None:
+                    candidate = converted
+                    break
+            except Exception:
+                pass
+
+    columns: list[str] = []
+    rows: list[list[str]] = []
+
+    if hasattr(candidate, "columns"):
+        try:
+            columns = [str(col) for col in list(candidate.columns)]
+        except Exception:
+            columns = []
+        if columns:
+            to_dict_fn = getattr(candidate, "to_dict", None)
+            if callable(to_dict_fn):
+                records = None
+                try:
+                    records = to_dict_fn(orient="records")
+                except TypeError:
+                    try:
+                        records = to_dict_fn()
+                    except Exception:
+                        records = None
+                except Exception:
+                    records = None
+                if isinstance(records, list):
+                    for idx, item in enumerate(records, start=1):
+                        if isinstance(item, dict):
+                            row = [str(idx)] + [_preview_cell(item.get(col)) for col in columns]
+                        else:
+                            row = [str(idx), _preview_cell(item)]
+                        rows.append(row)
+                    return ["#"] + columns, rows
+
+            itertuples_fn = getattr(candidate, "itertuples", None)
+            if callable(itertuples_fn):
+                try:
+                    for idx, item in enumerate(itertuples_fn(index=False, name=None), start=1):
+                        row = [str(idx)] + [_preview_cell(cell) for cell in tuple(item)]
+                        rows.append(row)
+                    if rows:
+                        return ["#"] + columns, rows
+                except Exception:
+                    pass
+
+    if isinstance(value, list) and value and all(isinstance(item, dict) for item in value):
+        ordered_keys: list[str] = []
+        for item in value:
+            for key in item.keys():
+                text_key = str(key)
+                if text_key not in ordered_keys:
+                    ordered_keys.append(text_key)
+        for idx, item in enumerate(value, start=1):
+            row = [str(idx)] + [_preview_cell(item.get(key)) for key in ordered_keys]
+            rows.append(row)
+        return ["#"] + ordered_keys, rows
+
+    if isinstance(value, dict):
+        rows = [[str(idx), str(key), _preview_cell(val)] for idx, (key, val) in enumerate(value.items(), start=1)]
+        return ["#", "key", "value"], rows
+
+    preview_text = _format_preview(value, max_chars=None)
+    headers, parsed_rows = _table_from_text_preview(preview_text)
+    if parsed_rows:
+        return headers, parsed_rows
+
+    return [], []
+
+
+def _clear_list_result(state: dict) -> None:
+    state["list_preview"] = ""
+    state["list_columns"] = []
+    state["list_rows"] = []
+    state["list_row_count"] = 0
+
+
+def _clear_health_result(state: dict) -> None:
+    state["health_preview"] = ""
+    state["health_columns"] = []
+    state["health_rows"] = []
+    state["health_row_count"] = 0
+
+
 def _build_file_meta(path_hint: str) -> dict[str, str | int | bool]:
     meta: dict[str, str | int | bool] = {
         "input": path_hint,
@@ -445,7 +596,13 @@ def _default_evs_state() -> dict:
         "last_error": "",
         "last_success": "",
         "health_preview": "",
+        "health_columns": [],
+        "health_rows": [],
+        "health_row_count": 0,
         "list_preview": "",
+        "list_columns": [],
+        "list_rows": [],
+        "list_row_count": 0,
         "actual_params": {},
         "connect_steps": [],
         "params": connect_defaults,
@@ -475,6 +632,8 @@ def _apply_create_preset(payload: dict, preset: str, vector_store_name: str):
 
     if preset == "vectordistance":
         payload["search_algorithm"] = "VECTORDISTANCE"
+    elif preset == "kmeans":
+        payload["search_algorithm"] = "KMEANS"
     elif preset == "hnsw":
         payload["search_algorithm"] = "HNSW"
         payload.setdefault("metric", "COSINE")
@@ -522,10 +681,10 @@ def _normalize_document_files_for_create(create_payload: dict) -> tuple[dict, li
         if not Path(resolved).exists():
             warnings.append(f"Document file not found on disk: {raw}")
 
-    if len(resolved_items) == 1:
-        exec_payload["document_files"] = resolved_items[0]
-    else:
-        exec_payload["document_files"] = resolved_items
+    # Always pass document_files as a list.
+    # Some VectorStore runtimes iterate the value and will treat a single
+    # string path like "C:\\..." as characters ("C", ":", "\\", ...).
+    exec_payload["document_files"] = resolved_items
 
     return exec_payload, warnings
 
@@ -558,12 +717,13 @@ def _active_vector_store_name() -> str:
 
 
 def _detect_message_language(text: str) -> str:
-    if re.search(r"[\u3040-\u30ff]", text):
+    # Product language priority: Japanese first, then English.
+    if JP_KANA_RE.search(text):
         return "ja"
-    if re.search(r"[\uac00-\ud7a3]", text):
-        return "ko"
-    if re.search(r"[\u4e00-\u9fff]", text):
-        return "zh"
+    if HAN_RE.search(text):
+        return "ja"
+    if LATIN_RE.search(text):
+        return "en"
     return "en"
 
 
@@ -573,18 +733,6 @@ def _ask_prompt_for_language(lang: str) -> str:
             "文書の根拠に基づいて回答してください。"
             "質問と同じ言語（日本語）で回答し、他の言語に切り替えないでください。"
             "文書内に根拠がない場合は、その旨を日本語で明確に回答してください。"
-        )
-    if lang == "zh":
-        return (
-            "请仅依据检索到的文档内容回答。"
-            "必须使用与提问完全一致的语言（中文）作答，不要切换到其他语言。"
-            "如果文档中没有依据，请用中文明确说明。"
-        )
-    if lang == "ko":
-        return (
-            "문서 근거만 사용해 답변하세요."
-            "질문과 동일한 언어(한국어)로만 답변하고 다른 언어로 바꾸지 마세요."
-            "문서 근거가 없으면 한국어로 명확히 알려주세요."
         )
     return (
         "Answer only with evidence from retrieved documents. "
@@ -598,7 +746,10 @@ def _build_evs_reply(message: str, validation_target: str) -> str:
         return "Validation failed: VectorStore runtime is unavailable."
 
     question = message.strip()
-    lang = _detect_message_language(question)
+    try:
+        lang = _detect_message_language(question)
+    except re.error:
+        lang = "en"
     ask_prompt = _ask_prompt_for_language(lang)
     target = validation_target.strip().lower()
     vs_name = _active_vector_store_name()
@@ -782,8 +933,8 @@ async def evs_connect(
         state["connected_at"] = ""
         state["last_success"] = ""
         state["last_error"] = f"Missing required fields: {', '.join(missing)}"
-        state["health_preview"] = ""
-        state["list_preview"] = ""
+        _clear_health_result(state)
+        _clear_list_result(state)
         state["actual_params"] = actual_params
         state["connect_steps"] = steps
     elif not (create_context and set_auth_token and VSManager):
@@ -802,8 +953,8 @@ async def evs_connect(
             "Install them first. "
             f"Import error: {TERADATA_IMPORT_ERROR}"
         )
-        state["health_preview"] = ""
-        state["list_preview"] = ""
+        _clear_health_result(state)
+        _clear_list_result(state)
         state["actual_params"] = actual_params
         state["connect_steps"] = steps
     else:
@@ -882,8 +1033,8 @@ async def evs_connect(
             state["connected_at"] = _now_ts()
             state["last_error"] = " | ".join(warnings) if warnings else ""
             state["last_success"] = "Step 1 completed. Database connection and VS authentication succeeded."
-            state["health_preview"] = ""
-            state["list_preview"] = ""
+            _clear_health_result(state)
+            _clear_list_result(state)
             state["actual_params"] = actual_params
             state["connect_steps"] = steps
         except Exception as ex:
@@ -900,8 +1051,8 @@ async def evs_connect(
             state["connected_at"] = ""
             state["last_success"] = ""
             state["last_error"] = f"Connection/auth failed: {ex}"
-            state["health_preview"] = ""
-            state["list_preview"] = ""
+            _clear_health_result(state)
+            _clear_list_result(state)
             state["actual_params"] = actual_params
             state["connect_steps"] = steps
 
@@ -1001,28 +1152,36 @@ async def evs_run_health(request: Request):
         return HTMLResponse("Unauthorized", status_code=401)
     state = app.state.evs_state
     if not state["connected"]:
+        _clear_health_result(state)
         state["health_preview"] = "Connect in Step 1 first."
         state["last_error"] = "Run blocked: connection is not established."
         _append_connect_step(state, "VSManager.health()", "warn", "Blocked: Step 1 is not connected.")
         return _render_connect_panel(request)
     if VSManager is None:
+        _clear_health_result(state)
         state["health_preview"] = f"Cannot run: {TERADATA_IMPORT_ERROR}"
         state["last_error"] = "VS runtime is unavailable."
         _append_connect_step(state, "VSManager.health()", "error", f"Runtime unavailable: {TERADATA_IMPORT_ERROR}")
         return _render_connect_panel(request)
     health_fn = getattr(VSManager, "health", None)
     if not callable(health_fn):
+        _clear_health_result(state)
         state["health_preview"] = "Cannot run: VSManager.health is not callable."
         state["last_error"] = "VSManager.health() is not callable."
         _append_connect_step(state, "VSManager.health()", "error", "VSManager.health is missing or not callable.")
         return _render_connect_panel(request)
     try:
         health_output = health_fn()
-        state["health_preview"] = _format_preview(health_output)
+        headers, rows_data = _table_from_result(health_output)
+        state["health_columns"] = headers
+        state["health_rows"] = rows_data
+        state["health_row_count"] = len(rows_data)
+        state["health_preview"] = _format_preview(health_output, max_chars=None)
         state["last_error"] = ""
         state["last_success"] = "VSManager.health() completed."
         _append_connect_step(state, "VSManager.health()", "ok", "Called successfully.")
     except Exception as ex:
+        _clear_health_result(state)
         state["health_preview"] = f"Error: {ex}"
         state["last_error"] = f"VSManager.health() failed: {ex}"
         _append_connect_step(state, "VSManager.health()", "error", f"Execution failed: {ex}")
@@ -1035,24 +1194,31 @@ async def evs_run_list(request: Request):
         return HTMLResponse("Unauthorized", status_code=401)
     state = app.state.evs_state
     if not state["connected"]:
+        _clear_list_result(state)
         state["list_preview"] = "Connect in Step 1 first."
         state["last_error"] = "Run blocked: connection is not established."
         _append_connect_step(state, "VSManager.list()", "warn", "Blocked: Step 1 is not connected.")
         return _render_connect_panel(request)
     if VSManager is None:
+        _clear_list_result(state)
         state["list_preview"] = f"Cannot run: {TERADATA_IMPORT_ERROR}"
         state["last_error"] = "VS runtime is unavailable."
         _append_connect_step(state, "VSManager.list()", "error", f"Runtime unavailable: {TERADATA_IMPORT_ERROR}")
         return _render_connect_panel(request)
     list_fn = getattr(VSManager, "list", None)
     if not callable(list_fn):
+        _clear_list_result(state)
         state["list_preview"] = "Cannot run: VSManager.list is not callable."
         state["last_error"] = "VSManager.list() is not callable."
         _append_connect_step(state, "VSManager.list()", "error", "VSManager.list is missing or not callable.")
         return _render_connect_panel(request)
     try:
         list_output = list_fn()
-        state["list_preview"] = _format_preview(list_output)
+        headers, rows_data = _table_from_result(list_output)
+        state["list_columns"] = headers
+        state["list_rows"] = rows_data
+        state["list_row_count"] = len(rows_data)
+        state["list_preview"] = _format_preview(list_output, max_chars=None)
         if hasattr(list_output, "shape"):
             rows = int(list_output.shape[0])
             _append_connect_step(state, "VSManager.list()", "ok", f"Called successfully. rows={rows}.")
@@ -1061,6 +1227,7 @@ async def evs_run_list(request: Request):
         state["last_error"] = ""
         state["last_success"] = "VSManager.list() completed."
     except Exception as ex:
+        _clear_list_result(state)
         state["list_preview"] = f"Error: {ex}"
         state["last_error"] = f"VSManager.list() failed: {ex}"
         _append_connect_step(state, "VSManager.list()", "error", f"Execution failed: {ex}")
@@ -1097,25 +1264,38 @@ async def upload_and_prepare_create(request: Request):
 
     create_values: dict[str, str] = {}
     vector_store_name = str(form.get("vector_store_name", "")).strip() or "TokioMarine"
-    create_preset = str(form.get("create_preset", "vectordistance")).strip() or "vectordistance"
+    requested_preset = str(form.get("create_preset", "auto")).strip().lower() or "auto"
+    create_mode = str(form.get("create_mode", "core")).strip().lower() or "core"
+    selected_search_algorithm = str(form.get("search_algorithm", "")).strip().upper()
+    if requested_preset in {"vectordistance", "hnsw", "kmeans"}:
+        create_preset = requested_preset
+    elif selected_search_algorithm in {"VECTORDISTANCE", "HNSW", "KMEANS"}:
+        create_preset = selected_search_algorithm.lower()
+    else:
+        create_preset = "vectordistance"
     create_values["vector_store_name"] = vector_store_name
     create_values["create_preset"] = create_preset
+    create_values["create_mode"] = create_mode
 
     create_payload: dict = {}
     warnings: list[str] = list(upload_notices)
+    allowed_fields = CORE_CREATE_FIELDS if create_mode == "core" else {field["name"] for field in CREATE_FIELDS}
     for field in CREATE_FIELDS:
-        raw = str(form.get(field["name"], "")).strip()
+        field_name = field["name"]
+        raw = str(form.get(field_name, "")).strip()
         if len(raw) > CREATE_FIELD_MAX_LEN:
             raw = raw[:CREATE_FIELD_MAX_LEN]
-            warnings.append(f"Field [{field['name']}] exceeded {CREATE_FIELD_MAX_LEN} chars and was truncated.")
-        create_values[field["name"]] = raw
+            warnings.append(f"Field [{field_name}] exceeded {CREATE_FIELD_MAX_LEN} chars and was truncated.")
+        create_values[field_name] = raw
+        if field_name not in allowed_fields:
+            continue
         if not raw:
             continue
         try:
-            create_payload[field["name"]] = _coerce_create_param(field["name"], raw)
+            create_payload[field_name] = _coerce_create_param(field_name, raw)
         except ValueError:
-            warnings.append(f"Field [{field['name']}] cannot be cast; kept as string.")
-            create_payload[field["name"]] = raw
+            warnings.append(f"Field [{field_name}] cannot be cast; kept as string.")
+            create_payload[field_name] = raw
 
     if saved and "document_files" not in create_payload:
         create_payload["document_files"] = [item["saved_path"] for item in saved]
@@ -1159,6 +1339,7 @@ async def upload_and_prepare_create(request: Request):
         "message": result_message,
         "vector_store_name": vector_store_name,
         "create_preset": create_preset,
+        "create_mode": create_mode,
         "uploaded_files": saved if saved else app.state.document_uploads,
         "warnings": warnings,
         "create_payload_json": json.dumps(create_payload, indent=2, ensure_ascii=False),

@@ -87,7 +87,7 @@
   </form>
 
   <aside class="connect-monitor">
-    <article class="monitor-card">
+    <article class="monitor-card monitor-card-health">
       <div class="monitor-title-line" title="VSManager.health() - Run connectivity health check (requires Step 1 connected).">VSManager.health() - Run connectivity health check (requires Step 1 connected).</div>
       <div class="monitor-actions">
         <button
@@ -106,10 +106,40 @@
           </span>
         </button>
       </div>
-      <div class="monitor-status {% if evs.connected and evs.health_preview %}ok{% endif %}">{% if evs.connected and evs.health_preview -%}{{- evs.health_preview -}}{%- elif evs.connected -%}Connected. Click Run Health.{%- else -%}Connect in Step 1 to enable health check.{%- endif %}</div>
+      <div class="monitor-status monitor-status-list monitor-status-health {% if evs.connected and evs.health_preview %}ok{% endif %}">
+        {% if evs.connected and evs.health_rows %}
+        <div class="monitor-list-summary">Rows: {{ evs.health_row_count }}</div>
+        <div class="monitor-table-wrap monitor-table-wrap-health">
+          <table class="monitor-table">
+            <thead>
+              <tr>
+                {% for col in evs.health_columns %}
+                <th>{{ col }}</th>
+                {% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in evs.health_rows %}
+              <tr>
+                {% for cell in row %}
+                <td>{{ cell }}</td>
+                {% endfor %}
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% elif evs.connected and evs.health_preview -%}
+        <pre class="monitor-fallback-text">{{ evs.health_preview }}</pre>
+        {%- elif evs.connected -%}
+        Connected. Click Run Health.
+        {%- else -%}
+        Connect in Step 1 to enable health check.
+        {%- endif %}
+      </div>
     </article>
 
-    <article class="monitor-card">
+    <article class="monitor-card monitor-card-list">
       <div class="monitor-title-line" title="VSManager.list() - Fetch vector store list (requires Step 1 connected).">VSManager.list() - Fetch vector store list (requires Step 1 connected).</div>
       <div class="monitor-actions">
         <button
@@ -128,7 +158,37 @@
           </span>
         </button>
       </div>
-      <div class="monitor-status monitor-status-list {% if evs.connected and evs.list_preview %}ok{% endif %}">{% if evs.connected and evs.list_preview -%}{{- evs.list_preview -}}{%- elif evs.connected -%}Connected. Click Run List.{%- else -%}Connect in Step 1 to enable list query.{%- endif %}</div>
+      <div class="monitor-status monitor-status-list monitor-status-list-main {% if evs.connected and evs.list_preview %}ok{% endif %}">
+        {% if evs.connected and evs.list_rows %}
+        <div class="monitor-list-summary">Rows: {{ evs.list_row_count }}</div>
+        <div class="monitor-table-wrap monitor-table-wrap-list">
+          <table class="monitor-table">
+            <thead>
+              <tr>
+                {% for col in evs.list_columns %}
+                <th>{{ col }}</th>
+                {% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in evs.list_rows %}
+              <tr>
+                {% for cell in row %}
+                <td>{{ cell }}</td>
+                {% endfor %}
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% elif evs.connected and evs.list_preview -%}
+        <pre class="monitor-fallback-text">{{ evs.list_preview }}</pre>
+        {%- elif evs.connected -%}
+        Connected. Click Run List.
+        {%- else -%}
+        Connect in Step 1 to enable list query.
+        {%- endif %}
+      </div>
     </article>
   </aside>
 </div>

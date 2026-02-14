@@ -874,7 +874,7 @@ button.ghost {
   gap: 0.6rem;
   min-height: 0;
   height: 100%;
-  overflow: visible;
+  overflow: hidden;
   align-content: start;
 }
 
@@ -886,7 +886,7 @@ button.ghost {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  overflow: visible;
+  overflow: hidden;
 }
 
 .monitor-toggle {
@@ -925,9 +925,9 @@ button.ghost {
   font-size: 0.82rem;
   line-height: 1.3;
   padding-top: 0.04rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
 }
 
 .monitor-actions {
@@ -990,7 +990,7 @@ button.ghost {
   overflow-wrap: anywhere;
   flex: 1 1 auto;
   min-height: 0;
-  overflow: visible;
+  overflow: hidden;
 }
 
 .connect-monitor .monitor-card:first-child .monitor-status {
@@ -1014,6 +1014,105 @@ button.ghost {
   min-height: 0;
   max-height: none;
   line-height: 1.35;
+  white-space: normal;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.monitor-card-health {
+  flex: 0 0 auto;
+  min-height: auto;
+}
+
+.monitor-card-list {
+  min-height: 0;
+  height: 100%;
+}
+
+.monitor-status-health {
+  flex: 0 0 auto;
+}
+
+.monitor-table-wrap-health {
+  max-height: 5.6rem;
+}
+
+.monitor-status-list-main {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.monitor-table-wrap-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.monitor-table-wrap-list .monitor-table {
+  width: max-content;
+  min-width: max-content;
+}
+
+.monitor-list-summary {
+  color: #cfe1ff;
+  font-size: 0.73rem;
+}
+
+.monitor-table-wrap {
+  border: 1px solid #2a4a7b;
+  border-radius: 8px;
+  overflow: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+  background: rgba(5, 16, 36, 0.92);
+}
+
+.monitor-table {
+  border-collapse: collapse;
+  width: max-content;
+  min-width: max-content;
+  font-size: 0.72rem;
+  color: #d9e8ff;
+}
+
+.monitor-table th,
+.monitor-table td {
+  border-right: 1px solid #27436f;
+  border-bottom: 1px solid #233f68;
+  padding: 0.28rem 0.4rem;
+  white-space: nowrap;
+  text-align: left;
+  vertical-align: top;
+}
+
+.monitor-table th:last-child,
+.monitor-table td:last-child {
+  border-right: 0;
+}
+
+.monitor-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #12315e;
+  color: #f0f6ff;
+  font-weight: 700;
+}
+
+.monitor-table tbody tr:nth-child(even) td {
+  background: rgba(22, 49, 88, 0.2);
+}
+
+.monitor-fallback-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  color: inherit;
 }
 
 .connect-actions {
@@ -1090,6 +1189,15 @@ button.ghost {
   border-radius: 12px;
   padding: 0.72rem;
   background: rgba(5, 14, 33, 0.92);
+}
+
+#section-create #create-result {
+  height: 44vh;
+  min-height: 44vh;
+  max-height: 44vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 0.2rem;
 }
 
 .step-log {
@@ -1248,10 +1356,19 @@ button.ghost {
   border: 1px solid var(--line-soft);
   border-radius: 12px;
   padding: 0.6rem;
-  min-height: 42vh;
-  max-height: 42vh;
+  min-height: 56vh;
+  max-height: 56vh;
   overflow-y: auto;
   background: rgba(7, 18, 42, 0.84);
+}
+
+#section-chat .chat-shell {
+  gap: 0.45rem;
+}
+
+#section-chat .chat-shell textarea[name="message"] {
+  min-height: 4.2rem;
+  max-height: 8rem;
 }
 
 .msg {
@@ -1275,6 +1392,23 @@ button.ghost {
 
 .msg small {
   color: #8da9d8;
+}
+
+.chat-actions {
+  justify-content: flex-start;
+}
+
+.chat-progress {
+  display: none;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.15rem;
+  font-size: 0.8rem;
+  color: #bcd6ff;
+}
+
+.chat-shell.htmx-request .chat-progress {
+  display: flex;
 }
 
 @media (max-width: 1100px) {
@@ -1354,6 +1488,13 @@ button.ghost {
   }
 
   .chat-window {
+    min-height: 48vh;
+    max-height: 48vh;
+  }
+
+  #section-create #create-result {
+    height: 36vh;
+    min-height: 36vh;
     max-height: 36vh;
   }
 

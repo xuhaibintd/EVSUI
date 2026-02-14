@@ -39,7 +39,7 @@
 
   <section class="param-group">
     <h3>Basic</h3>
-    <input type="hidden" name="create_preset" value="{{ create_values.get('create_preset', 'vectordistance') }}" />
+    <input type="hidden" name="create_preset" value="auto" />
     <div class="basic-layout">
       <div class="basic-row basic-row-first">
         <label class="field">
@@ -151,7 +151,7 @@
   </section>
 
   <div class="stack-inline">
-    <button type="submit" class="progress-btn" data-progress-button {% if not evs.connected %}disabled{% endif %}>
+    <button type="submit" name="create_mode" value="core" class="progress-btn" data-progress-button {% if not evs.connected %}disabled{% endif %}>
       <span class="progress-btn-label">Create Vector Store</span>
       <span class="progress-btn-loading">
         <span class="progress-btn-spinner" aria-hidden="true"></span>
