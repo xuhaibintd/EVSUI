@@ -11,7 +11,7 @@
 {% endif %}
 
 {% if document_uploads %}
-<p><strong>Uploaded files ({{ document_uploads|length }})</strong></p>
+<p class="uploaded-files-title">Uploaded files ({{ document_uploads|length }})</p>
 <ul class="file-list small limit-3">
   {% for file in document_uploads %}
   <li>
@@ -23,5 +23,6 @@
   {% endfor %}
 </ul>
 {% else %}
+<p class="uploaded-files-title">Uploaded files (0)</p>
 <p class="muted">No files uploaded yet.</p>
 {% endif %}

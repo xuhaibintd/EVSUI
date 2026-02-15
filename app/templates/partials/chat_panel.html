@@ -13,7 +13,7 @@
       <option value="vectorstore.ask">VectorStore.ask</option>
       <option value="vectorstore.similarity_search">VectorStore.similarity_search</option>
     </select>
-    <textarea name="message" rows="2" placeholder="Ask notebook-based EVS validation question..." required {% if not evs.connected %}disabled{% endif %}></textarea>
+    <textarea name="message" rows="2" required {% if not evs.connected %}disabled{% endif %}></textarea>
     <div class="stack-inline chat-actions">
       <button type="submit" class="progress-btn" data-progress-button {% if not evs.connected %}disabled{% endif %}>
         <span class="progress-btn-label">Send</span>

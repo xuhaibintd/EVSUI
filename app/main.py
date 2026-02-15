@@ -1451,7 +1451,10 @@ async def evs_destroy_selected(request: Request, vs_name: str = Form(default="")
 async def upload_and_prepare_create(request: Request):
     if not _is_logged_in(request):
         return HTMLResponse("Unauthorized", status_code=401)
+    is_htmx = request.headers.get("HX-Request", "").lower() == "true"
     if not app.state.evs_state["connected"]:
+        app.state.evs_state["last_success"] = ""
+        app.state.evs_state["last_error"] = "Connect/authenticate in Step 1 first."
         return templates.TemplateResponse(
             request,
             "partials/create_result.html",
@@ -1460,7 +1463,9 @@ async def upload_and_prepare_create(request: Request):
                     "status": "error",
                     "time": _now_ts(),
                     "message": "Connect/authenticate in Step 1 first.",
-                }
+                },
+                "evs": app.state.evs_state,
+                "is_htmx": is_htmx,
             },
         )
 
@@ -1562,11 +1567,21 @@ async def upload_and_prepare_create(request: Request):
         "status_output_preview": status_output_preview,
     }
     app.state.last_create_operation = result
+    if result_status == "error":
+        app.state.evs_state["last_success"] = ""
+        app.state.evs_state["last_error"] = result_message
+    else:
+        app.state.evs_state["last_error"] = ""
+        app.state.evs_state["last_success"] = result_message
 
     return templates.TemplateResponse(
         request,
         "partials/create_result.html",
-        {"create_result": result},
+        {
+            "create_result": result,
+            "evs": app.state.evs_state,
+            "is_htmx": is_htmx,
+        },
     )
 
 

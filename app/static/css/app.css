@@ -684,14 +684,7 @@ p {
 }
 
 .file-input-name {
-  min-width: 0;
-  flex: 1 1 auto;
-  color: #c9dbf7;
-  font-size: 0.84rem;
-  line-height: 1.2;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  display: none !important;
 }
 
 .file-input-btn:disabled,
@@ -802,6 +795,21 @@ button.ghost {
   width: 100%;
   max-width: 100%;
   min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 0.34rem;
+}
+
+.selected-files-panel .file-list {
+  margin: 0;
+}
+
+.uploaded-files-title {
+  margin: 0;
+  font-size: 0.84rem;
+  line-height: 1.2;
+  color: #a7c0e7;
+  font-weight: 600;
 }
 
 .select-docs-layout {
@@ -1825,6 +1833,31 @@ button.ghost {
     width: 100%;
     max-width: 100%;
     margin: 0;
+  }
+
+  .panel.left-menu {
+    padding: 0.72rem;
+    border-radius: 14px;
+  }
+
+  .eyebrow {
+    font-size: clamp(0.58rem, 1.2vw, 0.72rem);
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .menu-item {
+    font-size: clamp(0.66rem, 1.35vw, 0.82rem);
+    font-family: var(--font-ui);
+    letter-spacing: 0;
+    line-height: 1.15;
+    padding: 0.42rem 0.52rem;
+  }
+
+  .menu-hint {
+    font-size: clamp(0.62rem, 1.1vw, 0.72rem);
   }
 
   .wizard-nav {

@@ -32,6 +32,12 @@ async function uploadSelectedDocuments(fileInput, previewPanel) {
     if (response.ok) {
       // Prevent duplicate re-upload in /ui/create/upload after successful pre-upload.
       fileInput.value = "";
+      const shell = fileInput.closest("[data-file-shell]");
+      const nameNode = shell ? shell.querySelector("[data-file-name]") : null;
+      const defaultText = (fileInput.dataset.fileDefault || "No file selected").trim();
+      if (nameNode instanceof HTMLElement) {
+        nameNode.textContent = defaultText;
+      }
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -406,3 +412,4 @@ document.addEventListener("DOMContentLoaded", () => {
   bindListRowSelection(document);
   bindDestroyConfirmModal(document);
 });
+
