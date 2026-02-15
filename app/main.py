@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import hashlib
 import logging
@@ -482,6 +483,66 @@ def _table_from_result(value) -> tuple[list[str], list[list[str]]]:
     return [], []
 
 
+def _filter_table_rows_by_username(headers: list[str], rows: list[list[str]], username: str) -> list[list[str]]:
+    needle = username.strip().lower()
+    if not needle or not headers or not rows:
+        return rows
+
+    preferred_markers = ("username", "user", "owner", "creator", "created_by", "database", "schema", "permission")
+    preferred_indices: list[int] = []
+    for idx, column in enumerate(headers):
+        if idx == 0:
+            continue
+        name = str(column).lower()
+        if any(marker in name for marker in preferred_markers):
+            preferred_indices.append(idx)
+
+    all_indices = [idx for idx in range(1, len(headers))]
+    search_orders = [preferred_indices] if preferred_indices else []
+    if all_indices != preferred_indices:
+        search_orders.append(all_indices)
+
+    filtered: list[list[str]] = []
+    for indices in search_orders:
+        candidate: list[list[str]] = []
+        for row in rows:
+            for idx in indices:
+                if idx < len(row) and needle in str(row[idx]).lower():
+                    candidate.append(row)
+                    break
+        if candidate:
+            filtered = candidate
+            break
+
+    reindexed: list[list[str]] = []
+    for idx, row in enumerate(filtered, start=1):
+        if row:
+            reindexed.append([str(idx)] + row[1:])
+        else:
+            reindexed.append([str(idx)])
+    return reindexed
+
+
+def _vs_name_column_index(headers: list[str]) -> int:
+    for idx, column in enumerate(headers):
+        if str(column).strip().lower() == "vs_name":
+            return idx
+    return -1
+
+
+def _list_vs_name_values(headers: list[str], rows: list[list[str]]) -> set[str]:
+    idx = _vs_name_column_index(headers)
+    if idx < 0:
+        return set()
+    values: set[str] = set()
+    for row in rows:
+        if idx < len(row):
+            value = str(row[idx]).strip()
+            if value:
+                values.add(value)
+    return values
+
+
 def _clear_list_result(state: dict) -> None:
     state["list_preview"] = ""
     state["list_columns"] = []
@@ -494,6 +555,38 @@ def _clear_health_result(state: dict) -> None:
     state["health_columns"] = []
     state["health_rows"] = []
     state["health_row_count"] = 0
+
+
+def _clear_destroy_result(state: dict) -> None:
+    state["destroy_preview"] = ""
+    state["destroy_status"] = "neutral"
+
+
+def _apply_list_output_to_state(state: dict, list_output) -> tuple[int, int | None, str]:
+    headers, rows_data = _table_from_result(list_output)
+    username_filter = str(state.get("params", {}).get("username", "")).strip()
+    if username_filter:
+        rows_data = _filter_table_rows_by_username(headers, rows_data, username_filter)
+
+    state["list_columns"] = headers
+    state["list_rows"] = rows_data
+    state["list_row_count"] = len(rows_data)
+    if username_filter and not rows_data:
+        state["list_preview"] = f"No rows matched username '{username_filter}'."
+    else:
+        state["list_preview"] = _format_preview(list_output, max_chars=None)
+
+    selected = str(state.get("selected_vs_name", "")).strip()
+    if selected and selected not in _list_vs_name_values(headers, rows_data):
+        state["selected_vs_name"] = ""
+
+    total_rows: int | None = None
+    if hasattr(list_output, "shape"):
+        try:
+            total_rows = int(list_output.shape[0])
+        except Exception:
+            total_rows = None
+    return len(rows_data), total_rows, username_filter
 
 
 def _build_file_meta(path_hint: str) -> dict[str, str | int | bool]:
@@ -603,6 +696,9 @@ def _default_evs_state() -> dict:
         "list_columns": [],
         "list_rows": [],
         "list_row_count": 0,
+        "selected_vs_name": "",
+        "destroy_preview": "",
+        "destroy_status": "neutral",
         "actual_params": {},
         "connect_steps": [],
         "params": connect_defaults,
@@ -730,9 +826,9 @@ def _detect_message_language(text: str) -> str:
 def _ask_prompt_for_language(lang: str) -> str:
     if lang == "ja":
         return (
-            "文書の根拠に基づいて回答してください。"
-            "質問と同じ言語（日本語）で回答し、他の言語に切り替えないでください。"
-            "文書内に根拠がない場合は、その旨を日本語で明確に回答してください。"
+            "Answer only with evidence from retrieved documents. "
+            "Respond in Japanese only. "
+            "If evidence is missing, explicitly state that in Japanese."
         )
     return (
         "Answer only with evidence from retrieved documents. "
@@ -815,10 +911,11 @@ def _build_home_context(request: Request) -> dict:
 
 
 def _render_connect_panel(request: Request):
+    is_htmx = request.headers.get("HX-Request", "").lower() == "true"
     return templates.TemplateResponse(
         request,
         "partials/evs_connect_panel.html",
-        {"evs": app.state.evs_state},
+        {"evs": app.state.evs_state, "is_htmx": is_htmx},
     )
 
 
@@ -935,6 +1032,8 @@ async def evs_connect(
         state["last_error"] = f"Missing required fields: {', '.join(missing)}"
         _clear_health_result(state)
         _clear_list_result(state)
+        state["selected_vs_name"] = ""
+        _clear_destroy_result(state)
         state["actual_params"] = actual_params
         state["connect_steps"] = steps
     elif not (create_context and set_auth_token and VSManager):
@@ -955,6 +1054,8 @@ async def evs_connect(
         )
         _clear_health_result(state)
         _clear_list_result(state)
+        state["selected_vs_name"] = ""
+        _clear_destroy_result(state)
         state["actual_params"] = actual_params
         state["connect_steps"] = steps
     else:
@@ -1035,6 +1136,8 @@ async def evs_connect(
             state["last_success"] = "Step 1 completed. Database connection and VS authentication succeeded."
             _clear_health_result(state)
             _clear_list_result(state)
+            state["selected_vs_name"] = ""
+            _clear_destroy_result(state)
             state["actual_params"] = actual_params
             state["connect_steps"] = steps
         except Exception as ex:
@@ -1053,6 +1156,8 @@ async def evs_connect(
             state["last_error"] = f"Connection/auth failed: {ex}"
             _clear_health_result(state)
             _clear_list_result(state)
+            state["selected_vs_name"] = ""
+            _clear_destroy_result(state)
             state["actual_params"] = actual_params
             state["connect_steps"] = steps
 
@@ -1193,14 +1298,17 @@ async def evs_run_list(request: Request):
     if not _is_logged_in(request):
         return HTMLResponse("Unauthorized", status_code=401)
     state = app.state.evs_state
+    _clear_destroy_result(state)
     if not state["connected"]:
         _clear_list_result(state)
+        state["selected_vs_name"] = ""
         state["list_preview"] = "Connect in Step 1 first."
         state["last_error"] = "Run blocked: connection is not established."
         _append_connect_step(state, "VSManager.list()", "warn", "Blocked: Step 1 is not connected.")
         return _render_connect_panel(request)
     if VSManager is None:
         _clear_list_result(state)
+        state["selected_vs_name"] = ""
         state["list_preview"] = f"Cannot run: {TERADATA_IMPORT_ERROR}"
         state["last_error"] = "VS runtime is unavailable."
         _append_connect_step(state, "VSManager.list()", "error", f"Runtime unavailable: {TERADATA_IMPORT_ERROR}")
@@ -1208,29 +1316,134 @@ async def evs_run_list(request: Request):
     list_fn = getattr(VSManager, "list", None)
     if not callable(list_fn):
         _clear_list_result(state)
+        state["selected_vs_name"] = ""
         state["list_preview"] = "Cannot run: VSManager.list is not callable."
         state["last_error"] = "VSManager.list() is not callable."
         _append_connect_step(state, "VSManager.list()", "error", "VSManager.list is missing or not callable.")
         return _render_connect_panel(request)
     try:
         list_output = list_fn()
-        headers, rows_data = _table_from_result(list_output)
-        state["list_columns"] = headers
-        state["list_rows"] = rows_data
-        state["list_row_count"] = len(rows_data)
-        state["list_preview"] = _format_preview(list_output, max_chars=None)
-        if hasattr(list_output, "shape"):
-            rows = int(list_output.shape[0])
-            _append_connect_step(state, "VSManager.list()", "ok", f"Called successfully. rows={rows}.")
+        visible_rows, total_rows, username_filter = _apply_list_output_to_state(state, list_output)
+        if total_rows is not None:
+            if username_filter:
+                _append_connect_step(
+                    state,
+                    "VSManager.list()",
+                    "ok",
+                    f"Called successfully. rows={visible_rows}/{total_rows} (filtered by username='{username_filter}').",
+                )
+            else:
+                _append_connect_step(state, "VSManager.list()", "ok", f"Called successfully. rows={total_rows}.")
         else:
             _append_connect_step(state, "VSManager.list()", "ok", "Called successfully.")
         state["last_error"] = ""
         state["last_success"] = "VSManager.list() completed."
     except Exception as ex:
         _clear_list_result(state)
+        state["selected_vs_name"] = ""
         state["list_preview"] = f"Error: {ex}"
         state["last_error"] = f"VSManager.list() failed: {ex}"
         _append_connect_step(state, "VSManager.list()", "error", f"Execution failed: {ex}")
+    return _render_connect_panel(request)
+
+
+@app.post("/ui/evs/select", response_class=HTMLResponse)
+async def evs_select_from_list(request: Request, vs_name: str = Form(default="")):
+    if not _is_logged_in(request):
+        return HTMLResponse("Unauthorized", status_code=401)
+
+    state = app.state.evs_state
+    selected_name = vs_name.strip()
+    state["selected_vs_name"] = selected_name
+    state["destroy_status"] = "neutral"
+    if selected_name:
+        state["destroy_preview"] = f"Selected '{selected_name}'. Click Destroy Selected to delete."
+    else:
+        state["destroy_preview"] = "Click a row in list, then destroy it here."
+    return _render_connect_panel(request)
+
+
+@app.post("/ui/evs/destroy", response_class=HTMLResponse)
+async def evs_destroy_selected(request: Request, vs_name: str = Form(default="")):
+    if not _is_logged_in(request):
+        return HTMLResponse("Unauthorized", status_code=401)
+
+    state = app.state.evs_state
+    target_name = vs_name.strip() or str(state.get("selected_vs_name", "")).strip()
+    state["selected_vs_name"] = target_name
+
+    if not state["connected"]:
+        state["destroy_status"] = "warn"
+        state["destroy_preview"] = "Connect in Step 1 first."
+        state["last_error"] = "Destroy blocked: connection is not established."
+        _append_connect_step(state, "VectorStore.destroy()", "warn", "Blocked: Step 1 is not connected.")
+        return _render_connect_panel(request)
+
+    if not target_name:
+        state["destroy_status"] = "warn"
+        state["destroy_preview"] = "Select a vector store row first."
+        state["last_error"] = "Destroy blocked: no vector store selected."
+        _append_connect_step(state, "VectorStore.destroy()", "warn", "Blocked: no vector store selected.")
+        return _render_connect_panel(request)
+
+    if VectorStore is None:
+        state["destroy_status"] = "err"
+        state["destroy_preview"] = f"Cannot run destroy: {TERADATA_IMPORT_ERROR}"
+        state["last_error"] = "VectorStore runtime is unavailable."
+        _append_connect_step(state, "VectorStore.destroy()", "error", f"Runtime unavailable: {TERADATA_IMPORT_ERROR}")
+        return _render_connect_panel(request)
+
+    try:
+        vector_store = VectorStore(target_name)
+        destroy_fn = getattr(vector_store, "destroy", None)
+        if not callable(destroy_fn):
+            raise RuntimeError("VectorStore.destroy() is not callable.")
+
+        destroy_output = destroy_fn()
+        output_preview = _format_preview(destroy_output, max_chars=500)
+        if output_preview and output_preview != "None":
+            state["destroy_preview"] = f"Deleted '{target_name}'. Result: {output_preview}"
+        else:
+            state["destroy_preview"] = f"Deleted '{target_name}'."
+        state["destroy_status"] = "ok"
+        state["last_error"] = ""
+        state["last_success"] = f"VectorStore.destroy() completed for '{target_name}'."
+        _append_connect_step(state, "VectorStore.destroy()", "ok", f"Destroyed vector store '{target_name}'.")
+        state["selected_vs_name"] = ""
+
+        list_fn = getattr(VSManager, "list", None) if VSManager is not None else None
+        if callable(list_fn):
+            try:
+                refresh_attempts = 3
+                for attempt in range(1, refresh_attempts + 1):
+                    list_output = list_fn()
+                    visible_rows, _total_rows, _username_filter = _apply_list_output_to_state(state, list_output)
+                    existing_names = _list_vs_name_values(state.get("list_columns", []), state.get("list_rows", []))
+                    if target_name not in existing_names:
+                        _append_connect_step(
+                            state,
+                            "VSManager.list()",
+                            "ok",
+                            f"List refreshed after destroy (attempt {attempt}/{refresh_attempts}). rows={visible_rows}.",
+                        )
+                        break
+                    if attempt < refresh_attempts:
+                        await asyncio.sleep(0.4)
+                else:
+                    _append_connect_step(
+                        state,
+                        "VSManager.list()",
+                        "warn",
+                        f"Destroy completed, but '{target_name}' is still visible after {refresh_attempts} refresh attempts.",
+                    )
+            except Exception as list_ex:
+                _append_connect_step(state, "VSManager.list()", "warn", f"Destroy succeeded, list refresh failed: {list_ex}")
+    except Exception as ex:
+        state["destroy_status"] = "err"
+        state["destroy_preview"] = f"Delete failed for '{target_name}': {ex}"
+        state["last_error"] = f"VectorStore.destroy() failed for '{target_name}': {ex}"
+        _append_connect_step(state, "VectorStore.destroy()", "error", f"Execution failed: {ex}")
+
     return _render_connect_panel(request)
 
 

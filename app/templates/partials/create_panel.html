@@ -1,4 +1,3 @@
-<h2>Step 2) Build Vector Store from PDF Documents</h2>
 <p class="muted step-lock-note" {% if evs.connected %}hidden{% endif %}>Step 2 is locked. Complete Step 1 first.</p>
 
 <form
@@ -14,7 +13,20 @@
       <div class="select-docs-left">
         <label class="field field-file-auto">
           <span>Upload PDF / Documents</span>
-          <input type="file" name="files" multiple {% if not evs.connected %}disabled{% endif %} />
+          <div class="file-input-shell" data-file-shell>
+            <input
+              type="file"
+              name="files"
+              multiple
+              class="file-input-native"
+              data-file-input
+              data-file-default="No files selected"
+              data-file-multi-label="files selected"
+              {% if not evs.connected %}disabled{% endif %}
+            />
+            <button type="button" class="ghost file-input-btn" data-file-trigger {% if not evs.connected %}disabled{% endif %}>Choose Files</button>
+            <span class="file-input-name" data-file-name>No files selected</span>
+          </div>
         </label>
         <div class="select-docs-options">
           <label class="field">

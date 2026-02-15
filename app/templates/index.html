@@ -3,10 +3,10 @@
 {% block content %}
 <section class="menu-layout" data-connected="{% if evs.connected %}true{% else %}false{% endif %}">
   <aside class="panel left-menu">
-    <p class="eyebrow">Workflow Navigation</p>
-    <button class="menu-item active" type="button" data-section="section-connect">1) Connect to Vantage + Authenticate CCP</button>
-    <button class="menu-item {% if not evs.connected %}locked{% endif %}" type="button" data-section="section-create" aria-disabled="{% if not evs.connected %}true{% else %}false{% endif %}">2) Build Vector Store from PDF Documents</button>
-    <button class="menu-item {% if not evs.connected %}locked{% endif %}" type="button" data-section="section-chat" aria-disabled="{% if not evs.connected %}true{% else %}false{% endif %}">3) Vector Store Validation Console</button>
+    <p class="eyebrow">Vector Store Navigation</p>
+    <button class="menu-item active" type="button" data-section="section-connect">1. Connect &amp; Manage</button>
+    <button class="menu-item {% if not evs.connected %}locked{% endif %}" type="button" data-section="section-create" aria-disabled="{% if not evs.connected %}true{% else %}false{% endif %}">2. Vector Store Creation</button>
+    <button class="menu-item {% if not evs.connected %}locked{% endif %}" type="button" data-section="section-chat" aria-disabled="{% if not evs.connected %}true{% else %}false{% endif %}">3. Vector Store Retrieval</button>
     <p id="menu-hint" class="menu-hint muted">{% if not evs.connected %}Complete Step 1 to unlock Steps 2 and 3.{% endif %}</p>
   </aside>
 
@@ -19,7 +19,7 @@
       <div class="wizard-nav">
         <p class="wizard-note {% if evs.connected %}muted{% endif %}">{% if evs.connected %}Step 1 completed. Continue to Step 2.{% else %}Complete Step 1 to continue.{% endif %}</p>
         <div class="wizard-actions">
-          <button type="button" class="wizard-btn" data-target="section-create" data-requires-connected="true">Next: Build Vector Store from PDF Documents</button>
+          <button type="button" class="wizard-btn" data-target="section-create" data-requires-connected="true">Next: Vector Store Creation</button>
         </div>
       </div>
     </article>
@@ -31,7 +31,7 @@
       <div class="wizard-nav">
         <div class="wizard-actions">
           <button type="button" class="ghost wizard-btn" data-target="section-connect">Back</button>
-          <button type="button" class="wizard-btn" data-target="section-chat" data-requires-connected="true">Next: Vector Store Validation Console</button>
+          <button type="button" class="wizard-btn" data-target="section-chat" data-requires-connected="true">Next: Vector Store Retrieval</button>
         </div>
       </div>
       <div class="lock-overlay" {% if evs.connected %}hidden{% endif %}>
@@ -44,7 +44,6 @@
 
     <article class="panel menu-section{% if not evs.connected %} locked{% endif %}" id="section-chat" data-step="3">
       <div class="panel-content">
-        <h2>Step 3) Vector Store Validation Console</h2>
         {% include "partials/chat_panel.html" %}
       </div>
       <div class="wizard-nav">

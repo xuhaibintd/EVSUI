@@ -1,0 +1,13 @@
+{% if evs is defined and evs.connected and evs.connected_at %}
+<p class="top-op-line ok" title="Connected at {{ evs.connected_at }}">Connected at {{ evs.connected_at }}</p>
+{% else %}
+<p class="top-op-line warn">Connection not established.</p>
+{% endif %}
+
+{% if evs is defined and evs.last_success %}
+<p class="top-op-line ok" title="{{ evs.last_success }}">{{ evs.last_success }}</p>
+{% elif evs is defined and evs.last_error %}
+<p class="top-op-line err" title="{{ evs.last_error }}">{{ evs.last_error }}</p>
+{% else %}
+<p class="top-op-line info">Submit connection to continue.</p>
+{% endif %}

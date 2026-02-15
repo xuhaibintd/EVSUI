@@ -53,6 +53,58 @@ function bindCreateFileUpload(scope = document) {
   fileInput.addEventListener("change", () => uploadSelectedDocuments(fileInput, previewPanel));
 }
 
+function bindCustomFileInputs(scope = document) {
+  const shells = scope.querySelectorAll("[data-file-shell]");
+  shells.forEach((shell) => {
+    const input = shell.querySelector("[data-file-input]");
+    const trigger = shell.querySelector("[data-file-trigger]");
+    const nameNode = shell.querySelector("[data-file-name]");
+    if (!(input instanceof HTMLInputElement) || !(trigger instanceof HTMLButtonElement) || !(nameNode instanceof HTMLElement)) {
+      return;
+    }
+    if (shell.dataset.fileBound === "1") {
+      trigger.disabled = input.disabled;
+      return;
+    }
+    shell.dataset.fileBound = "1";
+
+    const defaultText = (input.dataset.fileDefault || "No file selected").trim();
+    const multiLabel = (input.dataset.fileMultiLabel || "files selected").trim();
+    const updateName = () => {
+      const files = input.files ? Array.from(input.files) : [];
+      if (!files.length) {
+        nameNode.textContent = defaultText;
+        return;
+      }
+      if (files.length === 1) {
+        nameNode.textContent = files[0].name || defaultText;
+        return;
+      }
+      nameNode.textContent = `${files.length} ${multiLabel}`;
+    };
+
+    trigger.disabled = input.disabled;
+    updateName();
+
+    trigger.addEventListener("click", () => {
+      if (input.disabled) {
+        return;
+      }
+      input.click();
+    });
+
+    input.addEventListener("change", () => {
+      updateName();
+    });
+
+    input.addEventListener("htmx:afterRequest", () => {
+      if (!input.files || input.files.length === 0) {
+        nameNode.textContent = defaultText;
+      }
+    });
+  });
+}
+
 function enforceCreateInputLength(scope = document) {
   const fields = scope.querySelectorAll("#section-create input:not([type='file']), #section-create textarea");
   const clamp = (field) => {
@@ -94,6 +146,115 @@ function enforceCreateInputLength(scope = document) {
   }
 }
 
+function bindListRowSelection(scope = document) {
+  const tables = scope.querySelectorAll("[data-vs-select-table]");
+  tables.forEach((table) => {
+    const card = table.closest(".monitor-card-list");
+    if (!card) {
+      return;
+    }
+    const hiddenInput = card.querySelector("[data-destroy-vs-input]");
+    const selectedName = card.querySelector("[data-destroy-selected-name]");
+    const destroyButton = card.querySelector("[data-destroy-btn]");
+    const feedback = card.querySelector("[data-destroy-feedback]");
+    if (!(hiddenInput instanceof HTMLInputElement)) {
+      return;
+    }
+
+    const rows = table.querySelectorAll("tbody tr[data-vs-name]");
+    rows.forEach((row) => {
+      if (row.dataset.selectBound === "1") {
+        return;
+      }
+      row.dataset.selectBound = "1";
+      row.addEventListener("click", () => {
+        const vsName = (row.dataset.vsName || "").trim();
+        if (!vsName) {
+          return;
+        }
+        rows.forEach((item) => item.classList.remove("is-selected"));
+        row.classList.add("is-selected");
+        hiddenInput.value = vsName;
+        if (selectedName) {
+          selectedName.textContent = vsName;
+        }
+        if (destroyButton instanceof HTMLButtonElement) {
+          destroyButton.disabled = false;
+        }
+        if (feedback) {
+          feedback.textContent = `Selected '${vsName}'. Click Destroy Selected to delete.`;
+          feedback.classList.remove("ok", "warn", "err");
+          feedback.classList.add("neutral");
+        }
+      });
+    });
+  });
+}
+
+function bindDestroyConfirmModal(scope = document) {
+  const panels = scope.querySelectorAll("[data-vs-destroy-panel]");
+  panels.forEach((panel) => {
+    const triggerButton = panel.querySelector("[data-destroy-btn]");
+    const modal = panel.querySelector("[data-destroy-confirm]");
+    const modalName = panel.querySelector("[data-confirm-vs-name]");
+    const selectedName = panel.querySelector("[data-destroy-selected-name]");
+    const cancelButtons = panel.querySelectorAll("[data-confirm-cancel]");
+    const okButton = panel.querySelector("[data-confirm-ok]");
+    if (!(triggerButton instanceof HTMLButtonElement) || !(modal instanceof HTMLElement)) {
+      return;
+    }
+    if (triggerButton.dataset.confirmBound === "1") {
+      return;
+    }
+    triggerButton.dataset.confirmBound = "1";
+
+    const closeModal = () => {
+      modal.hidden = true;
+      document.body.classList.remove("confirm-open");
+    };
+
+    const openModal = () => {
+      const currentName = (selectedName && selectedName.textContent ? selectedName.textContent : "").trim() || "(none)";
+      if (modalName) {
+        modalName.textContent = currentName;
+      }
+      modal.hidden = false;
+      document.body.classList.add("confirm-open");
+      if (okButton instanceof HTMLButtonElement) {
+        okButton.focus();
+      }
+    };
+
+    triggerButton.addEventListener("click", (event) => {
+      if (triggerButton.dataset.confirmArmed === "1") {
+        delete triggerButton.dataset.confirmArmed;
+        return;
+      }
+      event.preventDefault();
+      openModal();
+    });
+
+    cancelButtons.forEach((button) => {
+      button.addEventListener("click", () => closeModal());
+    });
+
+    if (okButton instanceof HTMLButtonElement) {
+      okButton.addEventListener("click", () => {
+        closeModal();
+        triggerButton.dataset.confirmArmed = "1";
+        setTimeout(() => triggerButton.click(), 0);
+      });
+    }
+
+    panel.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !modal.hidden) {
+        event.preventDefault();
+        closeModal();
+      }
+    });
+  });
+}
+
 document.body.addEventListener("htmx:afterSwap", (event) => {
   const target = event.target;
   if (target && target.id === "chat-messages") {
@@ -103,7 +264,10 @@ document.body.addEventListener("htmx:afterSwap", (event) => {
     stepGate.syncStepConnectionState(target);
   }
   bindCreateFileUpload(document);
+  bindCustomFileInputs(document);
   enforceCreateInputLength(document);
+  bindListRowSelection(document);
+  bindDestroyConfirmModal(document);
 });
 
 function setProgressState(button, loading) {
@@ -237,5 +401,8 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   registerHtmxProgressButtons();
   bindCreateFileUpload(document);
+  bindCustomFileInputs(document);
   enforceCreateInputLength(document);
+  bindListRowSelection(document);
+  bindDestroyConfirmModal(document);
 });

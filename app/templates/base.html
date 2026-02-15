@@ -4,10 +4,10 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>EVSUI</title>
-  <link rel="stylesheet" href="{{ url_for('static', path='css/app.css') }}?v=20260214-2340" />
+  <link rel="stylesheet" href="{{ url_for('static', path='css/app.css') }}?v=20260215-1854" />
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
-  <script defer src="{{ url_for('static', path='js/step-gate.js') }}?v=20260214-2340"></script>
-  <script defer src="{{ url_for('static', path='js/app.js') }}?v=20260214-2340"></script>
+  <script defer src="{{ url_for('static', path='js/step-gate.js') }}?v=20260215-1854"></script>
+  <script defer src="{{ url_for('static', path='js/app.js') }}?v=20260215-1854"></script>
 </head>
 <body>
   <header class="topbar">
@@ -18,7 +18,11 @@
       <p class="brand-sub">Enterprise AI Platform</p>
     </div>
     <div class="title-block">
-      <h1>Enterprise Vector Store Visual Console</h1>
+      {% if logged_in %}
+      <div id="top-op-stack-shell" class="top-op-stack" aria-live="polite">
+        {% include "partials/top_status.html" %}
+      </div>
+      {% endif %}
     </div>
     <div class="top-actions">
       {% if logged_in %}

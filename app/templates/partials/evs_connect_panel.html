@@ -1,26 +1,7 @@
-<h2>Step 1) Connect to Vantage + Authenticate CCP</h2>
 <div class="connect-grid" data-step1-connected="{% if evs.connected %}true{% else %}false{% endif %}">
   <form class="stack connect-shell connect-fields" hx-post="/ui/evs/connect" hx-target="#section-connect-content" hx-swap="innerHTML" hx-encoding="multipart/form-data" enctype="multipart/form-data" hx-indicator="#connect-progress" hx-on::after-request="window.location.reload()">
-    <div class="connect-status-zone">
-      <div class="connect-status-slot">
-        {% if evs.connected %}
-        <p class="status ok" title="Connected at {{ evs.connected_at }}">Connected at {{ evs.connected_at }}</p>
-        {% elif evs.last_error %}
-        <p class="status err" title="{{ evs.last_error }}">{{ evs.last_error }}</p>
-        {% else %}
-        <p class="status neutral">Connection not established.</p>
-        {% endif %}
-      </div>
-      <div class="connect-status-slot">
-        {% if evs.last_success %}
-        <p class="status ok" title="{{ evs.last_success }}">{{ evs.last_success }}</p>
-        {% elif evs.connected %}
-        <p class="status neutral">Session is active. Run health/list checks as needed.</p>
-        {% else %}
-        <p class="status neutral">Submit connection to continue.</p>
-        {% endif %}
-      </div>
-    </div>
+    <fieldset class="connect-group">
+      <legend>Connection</legend>
     <label class="field">
       <span>Host</span>
       <input type="text" name="host" value="{{ evs.params.host }}" placeholder="hostname" required />
@@ -46,17 +27,24 @@
       </label>
       <label class="field">
         <span>PEM File Upload</span>
-        <input
-          type="file"
-          name="pem_file"
-          accept=".pem,.key,.crt"
-          hx-post="/ui/evs/upload-pem"
-          hx-trigger="change"
-          hx-target="#pem-upload-status"
-          hx-swap="innerHTML"
-          hx-encoding="multipart/form-data"
-          hx-on::after-request="this.value=''"
-        />
+        <div class="file-input-shell" data-file-shell>
+          <input
+            type="file"
+            name="pem_file"
+            accept=".pem,.key,.crt"
+            class="file-input-native"
+            data-file-input
+            data-file-default="No file selected"
+            hx-post="/ui/evs/upload-pem"
+            hx-trigger="change"
+            hx-target="#pem-upload-status"
+            hx-swap="innerHTML"
+            hx-encoding="multipart/form-data"
+            hx-on::after-request="this.value=''"
+          />
+          <button type="button" class="ghost file-input-btn" data-file-trigger>Choose File</button>
+          <span class="file-input-name" data-file-name>No file selected</span>
+        </div>
         <div id="pem-upload-status">
           {% set pem_file_path = evs.params.pem_file %}
           {% include "partials/pem_upload_status.html" %}
@@ -66,17 +54,17 @@
 
     <div class="stack-inline connect-actions">
       <button type="submit" class="connect-submit-btn progress-btn" data-progress-button>
-        <span class="connect-submit-label progress-btn-label">Connect + Authenticate</span>
+        <span class="connect-submit-label progress-btn-label">Connect</span>
         <span class="connect-submit-loading progress-btn-loading">
           <span class="progress-btn-spinner" aria-hidden="true"></span>
           <span>Connecting...</span>
         </span>
       </button>
       <button type="button" class="ghost progress-btn" data-progress-button hx-post="/ui/evs/reset" hx-trigger="click" hx-target="#section-connect-content" hx-swap="innerHTML" hx-on::after-request="window.location.reload()">
-        <span class="progress-btn-label">Reset / Disconnect</span>
+        <span class="progress-btn-label">Disconnect</span>
         <span class="progress-btn-loading">
           <span class="progress-btn-spinner" aria-hidden="true"></span>
-          <span>Resetting...</span>
+          <span>Disconnecting...</span>
         </span>
       </button>
     </div>
@@ -84,9 +72,12 @@
       <span class="connect-progress-spinner" aria-hidden="true"></span>
       <span>Connecting and authenticating, please wait...</span>
     </div>
+    </fieldset>
   </form>
 
   <aside class="connect-monitor">
+    <fieldset class="connect-monitor-group">
+      <legend>Management</legend>
     <article class="monitor-card monitor-card-health">
       <div class="monitor-title-line" title="VSManager.health() - Run connectivity health check (requires Step 1 connected).">VSManager.health() - Run connectivity health check (requires Step 1 connected).</div>
       <div class="monitor-actions">
@@ -106,7 +97,7 @@
           </span>
         </button>
       </div>
-      <div class="monitor-status monitor-status-list monitor-status-health {% if evs.connected and evs.health_preview %}ok{% endif %}">
+      <div class="monitor-status monitor-status-list monitor-status-health {% if not evs.connected %}warn{% elif evs.connected and evs.health_rows %}ok{% elif evs.connected and evs.health_preview and ('error:' in evs.health_preview|lower or 'failed' in evs.health_preview|lower) %}err{% else %}info{% endif %}">
         {% if evs.connected and evs.health_rows %}
         <div class="monitor-list-summary">Rows: {{ evs.health_row_count }}</div>
         <div class="monitor-table-wrap monitor-table-wrap-health">
@@ -158,11 +149,17 @@
           </span>
         </button>
       </div>
-      <div class="monitor-status monitor-status-list monitor-status-list-main {% if evs.connected and evs.list_preview %}ok{% endif %}">
+      <div class="monitor-status monitor-status-list monitor-status-list-main {% if not evs.connected %}warn{% elif evs.connected and evs.list_rows %}ok{% elif evs.connected and evs.list_preview and ('error:' in evs.list_preview|lower or 'failed' in evs.list_preview|lower) %}err{% else %}info{% endif %}">
         {% if evs.connected and evs.list_rows %}
+        {% set ns = namespace(vs_name_idx=-1) %}
+        {% for col in evs.list_columns %}
+          {% if col|string|lower == "vs_name" %}
+            {% set ns.vs_name_idx = loop.index0 %}
+          {% endif %}
+        {% endfor %}
         <div class="monitor-list-summary">Rows: {{ evs.list_row_count }}</div>
         <div class="monitor-table-wrap monitor-table-wrap-list">
-          <table class="monitor-table">
+          <table class="monitor-table" data-vs-select-table>
             <thead>
               <tr>
                 {% for col in evs.list_columns %}
@@ -172,7 +169,20 @@
             </thead>
             <tbody>
               {% for row in evs.list_rows %}
-              <tr>
+              {% set row_vs_name = "" %}
+              {% if ns.vs_name_idx >= 0 and ns.vs_name_idx < row|length %}
+                {% set row_vs_name = row[ns.vs_name_idx] %}
+              {% endif %}
+              <tr
+                class="monitor-list-row{% if row_vs_name and row_vs_name == evs.selected_vs_name %} is-selected{% endif %}"
+                {% if row_vs_name %}data-vs-name="{{ row_vs_name }}"{% endif %}
+                {% if row_vs_name %}
+                hx-post="/ui/evs/select"
+                hx-vals='{"vs_name": {{ row_vs_name|tojson }} }'
+                hx-target="#section-connect-content"
+                hx-swap="innerHTML"
+                {% endif %}
+              >
                 {% for cell in row %}
                 <td>{{ cell }}</td>
                 {% endfor %}
@@ -189,6 +199,55 @@
         Connect in Step 1 to enable list query.
         {%- endif %}
       </div>
+      <div class="vs-destroy-panel" data-vs-destroy-panel>
+        <div class="vs-destroy-head">Destroy Selected Vector Store</div>
+        <div class="vs-destroy-current">Selected: <strong data-destroy-selected-name>{% if evs.selected_vs_name %}{{ evs.selected_vs_name }}{% else %}(none){% endif %}</strong></div>
+        <form
+          class="vs-destroy-actions"
+          hx-post="/ui/evs/destroy"
+          hx-target="#section-connect-content"
+          hx-swap="innerHTML"
+        >
+          <input type="hidden" name="vs_name" value="{{ evs.selected_vs_name }}" data-destroy-vs-input />
+          <button
+            type="submit"
+            class="monitor-btn progress-btn"
+            data-progress-button
+            data-destroy-btn
+            {% if not evs.connected or not evs.selected_vs_name %}disabled{% endif %}
+          >
+            <span class="progress-btn-label">Destroy Selected</span>
+            <span class="progress-btn-loading">
+              <span class="progress-btn-spinner" aria-hidden="true"></span>
+              <span>Destroying...</span>
+            </span>
+          </button>
+        </form>
+        <p class="vs-destroy-feedback {{ evs.destroy_status|default('neutral') }}" data-destroy-feedback>
+          {% if evs.destroy_preview %}{{ evs.destroy_preview }}{% else %}Click a row in list, then destroy it here.{% endif %}
+        </p>
+        <div class="confirm-modal" data-destroy-confirm hidden>
+          <button type="button" class="confirm-modal-backdrop" data-confirm-cancel aria-label="Close"></button>
+          <section class="confirm-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="destroy-confirm-title">
+            <h3 id="destroy-confirm-title" class="confirm-modal-title">Delete Vector Store</h3>
+            <p class="confirm-modal-body">
+              This will permanently delete
+              <strong data-confirm-vs-name>{% if evs.selected_vs_name %}{{ evs.selected_vs_name }}{% else %}(none){% endif %}</strong>.
+              This action cannot be undone.
+            </p>
+            <div class="confirm-modal-actions">
+              <button type="button" class="ghost confirm-btn" data-confirm-cancel>Cancel</button>
+              <button type="button" class="confirm-btn confirm-btn-danger" data-confirm-ok>Delete</button>
+            </div>
+          </section>
+        </div>
+      </div>
     </article>
+    </fieldset>
   </aside>
 </div>
+{% if is_htmx %}
+<div id="top-op-stack-shell" class="top-op-stack" aria-live="polite" hx-swap-oob="outerHTML">
+  {% include "partials/top_status.html" %}
+</div>
+{% endif %}
