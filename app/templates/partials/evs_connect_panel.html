@@ -79,7 +79,7 @@
     <fieldset class="connect-monitor-group">
       <legend>Management</legend>
     <article class="monitor-card monitor-card-health">
-      <div class="monitor-title-line" title="VSManager.health() - Run connectivity health check (requires Step 1 connected).">VSManager.health() - Run connectivity health check (requires Step 1 connected).</div>
+      <div class="monitor-title-line" title="Vector Store Health check">Vector Store Health check</div>
       <div class="monitor-actions">
         <button
           type="button"
@@ -90,7 +90,7 @@
           hx-swap="innerHTML"
           {% if not evs.connected %}disabled{% endif %}
         >
-          <span class="progress-btn-label">Run Health</span>
+          <span class="progress-btn-label">Vector Store Health check</span>
           <span class="progress-btn-loading">
             <span class="progress-btn-spinner" aria-hidden="true"></span>
             <span>Running...</span>
@@ -123,7 +123,7 @@
         {% elif evs.connected and evs.health_preview -%}
         <pre class="monitor-fallback-text">{{ evs.health_preview }}</pre>
         {%- elif evs.connected -%}
-        Connected. Click Run Health.
+        Connected. Click Vector Store Health check.
         {%- else -%}
         Connect in Step 1 to enable health check.
         {%- endif %}
@@ -131,7 +131,7 @@
     </article>
 
     <article class="monitor-card monitor-card-list">
-      <div class="monitor-title-line" title="VSManager.list() - Fetch vector store list (requires Step 1 connected).">VSManager.list() - Fetch vector store list (requires Step 1 connected).</div>
+      <div class="monitor-title-line" title="Vector Store List">Vector Store List</div>
       <div class="monitor-actions">
         <button
           type="button"
@@ -150,54 +150,9 @@
         </button>
       </div>
       <div class="monitor-status monitor-status-list monitor-status-list-main {% if not evs.connected %}warn{% elif evs.connected and evs.list_rows %}ok{% elif evs.connected and evs.list_preview and ('error:' in evs.list_preview|lower or 'failed' in evs.list_preview|lower) %}err{% else %}info{% endif %}">
-        {% if evs.connected and evs.list_rows %}
-        {% set ns = namespace(vs_name_idx=-1) %}
-        {% for col in evs.list_columns %}
-          {% if col|string|lower == "vs_name" %}
-            {% set ns.vs_name_idx = loop.index0 %}
-          {% endif %}
-        {% endfor %}
-        <div class="monitor-list-summary">Rows: {{ evs.list_row_count }}</div>
-        <div class="monitor-table-wrap monitor-table-wrap-list">
-          <table class="monitor-table" data-vs-select-table>
-            <thead>
-              <tr>
-                {% for col in evs.list_columns %}
-                <th>{{ col }}</th>
-                {% endfor %}
-              </tr>
-            </thead>
-            <tbody>
-              {% for row in evs.list_rows %}
-              {% set row_vs_name = "" %}
-              {% if ns.vs_name_idx >= 0 and ns.vs_name_idx < row|length %}
-                {% set row_vs_name = row[ns.vs_name_idx] %}
-              {% endif %}
-              <tr
-                class="monitor-list-row{% if row_vs_name and row_vs_name == evs.selected_vs_name %} is-selected{% endif %}"
-                {% if row_vs_name %}data-vs-name="{{ row_vs_name }}"{% endif %}
-                {% if row_vs_name %}
-                hx-post="/ui/evs/select"
-                hx-vals='{"vs_name": {{ row_vs_name|tojson }} }'
-                hx-target="#section-connect-content"
-                hx-swap="innerHTML"
-                {% endif %}
-              >
-                {% for cell in row %}
-                <td>{{ cell }}</td>
-                {% endfor %}
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-        {% elif evs.connected and evs.list_preview -%}
-        <pre class="monitor-fallback-text">{{ evs.list_preview }}</pre>
-        {%- elif evs.connected -%}
-        Connected. Click Run List.
-        {%- else -%}
-        Connect in Step 1 to enable list query.
-        {%- endif %}
+        {% set list_visible_rows = 15 %}
+        {% set selectable = true %}
+        {% include "partials/vector_store_list_body.html" %}
       </div>
       <div class="vs-destroy-panel" data-vs-destroy-panel>
         <div class="vs-destroy-head">Destroy Selected Vector Store</div>

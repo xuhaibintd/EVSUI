@@ -28,6 +28,11 @@
             <span class="file-input-name" data-file-name>No files selected</span>
           </div>
         </label>
+        <div class="selected-files-panel" data-selected-doc-paths>
+          {% include "partials/selected_documents.html" %}
+        </div>
+      </div>
+      <div class="select-docs-right">
         <div class="select-docs-options">
           <label class="field">
             <span>chunk_size</span>
@@ -41,10 +46,15 @@
               <option value="true" {% if create_values.get('optimized_chunking', '') == 'true' %}selected{% endif %}>true</option>
             </select>
           </label>
+          <label class="field">
+            <span>header_height</span>
+            <input type="number" name="header_height" min="0" step="1" value="{{ create_values.get('header_height', '') }}" placeholder="" {% if not evs.connected %}disabled{% endif %} />
+          </label>
+          <label class="field">
+            <span>footer_height</span>
+            <input type="number" name="footer_height" min="0" step="1" value="{{ create_values.get('footer_height', '') }}" placeholder="" {% if not evs.connected %}disabled{% endif %} />
+          </label>
         </div>
-      </div>
-      <div class="selected-files-panel" data-selected-doc-paths>
-        {% include "partials/selected_documents.html" %}
       </div>
     </div>
   </section>
@@ -111,39 +121,84 @@
           <span>vector_column</span>
           <input type="text" name="vector_column" value="{{ create_values.get('vector_column', '') }}" {% if not evs.connected %}disabled{% endif %} />
         </label>
+        <label class="field">
+          <span>metric</span>
+          <select name="metric" {% if not evs.connected %}disabled{% endif %}>
+            <option value="">(not set)</option>
+            <option value="COSINE" {% if create_values.get('metric', '') == 'COSINE' %}selected{% endif %}>COSINE</option>
+            <option value="EUCLIDEAN" {% if create_values.get('metric', '') == 'EUCLIDEAN' %}selected{% endif %}>EUCLIDEAN</option>
+            <option value="DOTPRODUCT" {% if create_values.get('metric', '') == 'DOTPRODUCT' %}selected{% endif %}>DOTPRODUCT</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>key_columns (comma separated)</span>
+          <input type="text" name="key_columns" value="{{ create_values.get('key_columns', '') }}" placeholder="rev_id, aid" {% if not evs.connected %}disabled{% endif %} />
+        </label>
       </div>
     </div>
   </section>
 
-  <section class="param-group">
-    <h3>updated_vs.create(...) HNSW params</h3>
-    <div class="param-grid compact compact-tight">
-      <label class="field">
+  <section class="param-group" data-algorithm-panel>
+    <h3>Search Algorithm</h3>
+    <p class="muted algorithm-hint" data-algo-hint></p>
+    <div class="param-grid compact compact-tight" data-algo-param-scope>
+      <label class="field" data-algo-for="VECTORDISTANCE KMEANS">
+        <span>search_threshold</span>
+        <input type="number" step="any" name="search_threshold" value="{{ create_values.get('search_threshold', '') }}" placeholder="0.75" {% if not evs.connected %}disabled{% endif %} />
+      </label>
+      <label class="field" data-algo-for="KMEANS">
+        <span>initial_centroids_method</span>
+        <select name="initial_centroids_method" {% if not evs.connected %}disabled{% endif %}>
+          <option value="">(not set)</option>
+          <option value="RANDOM" {% if create_values.get('initial_centroids_method', '') == 'RANDOM' %}selected{% endif %}>RANDOM</option>
+          <option value="KMEANS++" {% if create_values.get('initial_centroids_method', '') == 'KMEANS++' %}selected{% endif %}>KMEANS++</option>
+        </select>
+      </label>
+      <label class="field" data-algo-for="KMEANS">
+        <span>train_numcluster</span>
+        <input type="number" name="train_numcluster" value="{{ create_values.get('train_numcluster', '') }}" placeholder="8" {% if not evs.connected %}disabled{% endif %} />
+      </label>
+      <label class="field" data-algo-for="KMEANS">
+        <span>max_iternum</span>
+        <input type="number" name="max_iternum" value="{{ create_values.get('max_iternum', '') }}" placeholder="10" {% if not evs.connected %}disabled{% endif %} />
+      </label>
+      <label class="field" data-algo-for="KMEANS">
+        <span>stop_threshold</span>
+        <input type="number" step="any" name="stop_threshold" value="{{ create_values.get('stop_threshold', '') }}" placeholder="0.0395" {% if not evs.connected %}disabled{% endif %} />
+      </label>
+      <label class="field" data-algo-for="KMEANS HNSW">
         <span>seed</span>
         <input type="number" name="seed" value="{{ create_values.get('seed', '') }}" placeholder="10" {% if not evs.connected %}disabled{% endif %} />
       </label>
-      <label class="field">
+      <label class="field" data-algo-for="KMEANS">
+        <span>num_init</span>
+        <input type="number" name="num_init" value="{{ create_values.get('num_init', '') }}" placeholder="1" {% if not evs.connected %}disabled{% endif %} />
+      </label>
+      <label class="field" data-algo-for="KMEANS">
+        <span>search_numcluster</span>
+        <input type="number" name="search_numcluster" value="{{ create_values.get('search_numcluster', '') }}" placeholder="4" {% if not evs.connected %}disabled{% endif %} />
+      </label>
+      <label class="field" data-algo-for="HNSW">
+        <span>ef_search</span>
+        <input type="number" name="ef_search" value="{{ create_values.get('ef_search', '') }}" placeholder="32" {% if not evs.connected %}disabled{% endif %} />
+      </label>
+      <label class="field" data-algo-for="HNSW">
+        <span>num_layer</span>
+        <input type="number" name="num_layer" value="{{ create_values.get('num_layer', '') }}" placeholder="2" {% if not evs.connected %}disabled{% endif %} />
+      </label>
+      <label class="field" data-algo-for="HNSW">
         <span>ef_construction</span>
         <input type="number" name="ef_construction" value="{{ create_values.get('ef_construction', '') }}" placeholder="32" {% if not evs.connected %}disabled{% endif %} />
       </label>
-      <label class="field">
+      <label class="field" data-algo-for="HNSW">
         <span>num_connpernode</span>
         <input type="number" name="num_connpernode" value="{{ create_values.get('num_connpernode', '') }}" placeholder="32" {% if not evs.connected %}disabled{% endif %} />
       </label>
-      <label class="field">
+      <label class="field" data-algo-for="HNSW">
         <span>maxnum_connpernode</span>
         <input type="number" name="maxnum_connpernode" value="{{ create_values.get('maxnum_connpernode', '') }}" placeholder="32" {% if not evs.connected %}disabled{% endif %} />
       </label>
-      <label class="field">
-        <span>metric</span>
-        <select name="metric" {% if not evs.connected %}disabled{% endif %}>
-          <option value="">(not set)</option>
-          <option value="COSINE" {% if create_values.get('metric', '') == 'COSINE' %}selected{% endif %}>COSINE</option>
-          <option value="EUCLIDEAN" {% if create_values.get('metric', '') == 'EUCLIDEAN' %}selected{% endif %}>EUCLIDEAN</option>
-          <option value="DOTPRODUCT" {% if create_values.get('metric', '') == 'DOTPRODUCT' %}selected{% endif %}>DOTPRODUCT</option>
-        </select>
-      </label>
-      <label class="field">
+      <label class="field" data-algo-for="HNSW">
         <span>apply_heuristics</span>
         <select name="apply_heuristics" {% if not evs.connected %}disabled{% endif %}>
           <option value="">(not set)</option>
@@ -151,13 +206,23 @@
           <option value="false" {% if create_values.get('apply_heuristics', '') == 'false' %}selected{% endif %}>false</option>
         </select>
       </label>
+    </div>
+  </section>
+
+  <section class="param-group">
+    <h3>Rerank</h3>
+    <div class="param-grid compact rerank-grid">
       <label class="field">
-        <span>ef_search</span>
-        <input type="number" name="ef_search" value="{{ create_values.get('ef_search', '') }}" placeholder="32" {% if not evs.connected %}disabled{% endif %} />
+        <span>Rerank Weight</span>
+        <input type="number" step="any" name="rerank_weight" value="{{ create_values.get('rerank_weight', '') }}" placeholder="0.2" {% if not evs.connected %}disabled{% endif %} />
       </label>
       <label class="field">
-        <span>key_columns (comma separated)</span>
-        <input type="text" name="key_columns" value="{{ create_values.get('key_columns', '') }}" placeholder="rev_id, aid" {% if not evs.connected %}disabled{% endif %} />
+        <span>Relevance Top K</span>
+        <input type="number" name="relevance_top_k" value="{{ create_values.get('relevance_top_k', '') }}" placeholder="60" {% if not evs.connected %}disabled{% endif %} />
+      </label>
+      <label class="field">
+        <span>Relevance Threshold</span>
+        <input type="number" step="any" name="relevance_search_threshold" value="{{ create_values.get('relevance_search_threshold', '') }}" placeholder="0.2" {% if not evs.connected %}disabled{% endif %} />
       </label>
     </div>
   </section>

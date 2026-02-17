@@ -127,6 +127,7 @@ INT_FIELDS = {
     "maxnum_connpernode",
     "sample_size",
 }
+NON_NEGATIVE_INT_FIELDS = {"header_height", "footer_height"}
 FLOAT_FIELDS = {"search_threshold", "rerank_weight", "relevance_search_threshold", "stop_threshold"}
 CSV_FIELDS = {
     "object_names",
@@ -143,12 +144,33 @@ FORCE_LIST_CSV_FIELDS = {"data_columns"}
 CORE_CREATE_FIELDS = {
     "chunk_size",
     "optimized_chunking",
+    "header_height",
+    "footer_height",
     "embeddings_model",
     "search_algorithm",
     "top_k",
     "object_names",
     "data_columns",
     "vector_column",
+    "metric",
+    "key_columns",
+    "search_threshold",
+    "initial_centroids_method",
+    "train_numcluster",
+    "max_iternum",
+    "stop_threshold",
+    "seed",
+    "num_init",
+    "search_numcluster",
+    "ef_search",
+    "num_layer",
+    "ef_construction",
+    "num_connpernode",
+    "maxnum_connpernode",
+    "apply_heuristics",
+    "rerank_weight",
+    "relevance_top_k",
+    "relevance_search_threshold",
 }
 
 
@@ -178,7 +200,10 @@ def _coerce_create_param(name: str, raw: str):
     if name in BOOL_FIELDS:
         return raw.lower() == "true"
     if name in INT_FIELDS:
-        return int(raw)
+        value = int(raw)
+        if name in NON_NEGATIVE_INT_FIELDS and value < 0:
+            raise ValueError(f"Field [{name}] must be >= 0.")
+        return value
     if name in FLOAT_FIELDS:
         return float(raw)
     return raw
@@ -794,22 +819,12 @@ app.state.create_form_values: dict[str, str] = _default_create_values()
 app.state.last_create_operation: dict | None = None
 app.state.document_uploads: list[dict] = []
 app.state.document_upload_notices: list[str] = []
-app.state.chat_history: list[dict] = [
-    {
-        "role": "assistant",
-        "content": "EVS Validation Chat is ready. You can verify ask/similarity_search here.",
-        "time": datetime.now().strftime("%H:%M"),
-    }
-]
+app.state.chat_history: list[dict] = []
 
 
 def _active_vector_store_name() -> str:
-    last = app.state.last_create_operation or {}
-    name = str(last.get("vector_store_name", "")).strip()
-    if name:
-        return name
-    current = app.state.create_form_values or {}
-    return str(current.get("vector_store_name", "")).strip() or "TokioMarine"
+    state = app.state.evs_state or {}
+    return str(state.get("selected_vs_name", "")).strip()
 
 
 def _detect_message_language(text: str) -> str:
@@ -849,6 +864,8 @@ def _build_evs_reply(message: str, validation_target: str) -> str:
     ask_prompt = _ask_prompt_for_language(lang)
     target = validation_target.strip().lower()
     vs_name = _active_vector_store_name()
+    if not vs_name:
+        return "Validation blocked: no vector store selected. Select one in Step 1 > Vector Store List."
 
     try:
         vector_store = VectorStore(vs_name)
@@ -1511,7 +1528,10 @@ async def upload_and_prepare_create(request: Request):
             continue
         try:
             create_payload[field_name] = _coerce_create_param(field_name, raw)
-        except ValueError:
+        except ValueError as ex:
+            if field_name in NON_NEGATIVE_INT_FIELDS:
+                warnings.append(str(ex))
+                continue
             warnings.append(f"Field [{field_name}] cannot be cast; kept as string.")
             create_payload[field_name] = raw
 
@@ -1605,7 +1625,7 @@ async def chat_send(
         return templates.TemplateResponse(
             request,
             "partials/chat_messages.html",
-            {"messages": app.state.chat_history},
+            {"messages": app.state.chat_history, "evs": app.state.evs_state},
         )
 
     clean = message.strip()
@@ -1632,7 +1652,7 @@ async def chat_send(
     return templates.TemplateResponse(
         request,
         "partials/chat_messages.html",
-        {"messages": app.state.chat_history},
+        {"messages": app.state.chat_history, "evs": app.state.evs_state},
     )
 
 
@@ -1640,17 +1660,11 @@ async def chat_send(
 async def chat_reset(request: Request):
     if not _is_logged_in(request):
         return HTMLResponse("Unauthorized", status_code=401)
-    app.state.chat_history = [
-        {
-            "role": "assistant",
-            "content": "Session cleared. Continue with notebook-based EVS validations.",
-            "time": datetime.now().strftime("%H:%M"),
-        }
-    ]
+    app.state.chat_history = []
     return templates.TemplateResponse(
         request,
         "partials/chat_messages.html",
-        {"messages": app.state.chat_history},
+        {"messages": app.state.chat_history, "evs": app.state.evs_state},
     )
 
 

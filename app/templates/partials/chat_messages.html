@@ -1,3 +1,16 @@
+<article class="monitor-card chat-vs-list-card">
+  <div class="monitor-title-line" title="Selected Vector Store">Selected Vector Store</div>
+  <div class="monitor-status {% if not evs.connected %}warn{% elif evs.selected_vs_name %}ok{% else %}warn{% endif %}">
+    {% if not evs.connected -%}
+    Connect in Step 1 first.
+    {%- elif evs.selected_vs_name -%}
+    {{ evs.selected_vs_name }}
+    {%- else -%}
+    No vector store selected. Select one in Step 1 > Vector Store List.
+    {%- endif %}
+  </div>
+</article>
+
 {% for item in messages %}
 <div class="msg {{ item.role }}">
   <p class="chat-content">{{ item.content }}</p>

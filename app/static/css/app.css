@@ -2,7 +2,7 @@
 
 :root {
   --ui-topbar-h: clamp(84px, 9.5vh, 106px);
-  --left-rail-w: clamp(178px, 11vw, 236px);
+  --left-rail-w: clamp(210px, 12.8vw, 260px);
   --ui-font-base: clamp(15px, 0.3vw + 11px, 19px);
   --page-pad: clamp(0.75rem, 0.8vw, 1.35rem);
   --layout-gap: clamp(0.7rem, 0.75vw, 1.15rem);
@@ -219,8 +219,8 @@ p {
   letter-spacing: 0.04em;
   line-height: 1.2;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow: visible;
+  text-overflow: clip;
 }
 
 .top-actions {
@@ -341,8 +341,8 @@ p {
   letter-spacing: 0.01em;
   white-space: nowrap;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow: visible;
+  text-overflow: clip;
 }
 
 .menu-item.disabled {
@@ -814,7 +814,7 @@ button.ghost {
 
 .select-docs-layout {
   display: grid;
-  grid-template-columns: minmax(22rem, 30rem) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 0.85rem;
   align-items: start;
 }
@@ -824,8 +824,16 @@ button.ghost {
   gap: 0.55rem;
 }
 
+.select-docs-right {
+  display: grid;
+  gap: 0.55rem;
+  min-width: 0;
+  align-content: start;
+}
+
 .select-docs-options {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.55rem;
 }
 
@@ -868,6 +876,14 @@ button.ghost {
   margin-bottom: 0.55rem;
 }
 
+.algorithm-hint {
+  margin: 0 0 0.55rem;
+}
+
+#section-create [data-algo-for].algo-hidden {
+  display: none;
+}
+
 .param-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -876,6 +892,20 @@ button.ghost {
 
 .param-grid.compact {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+#section-create .param-grid.compact.rerank-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+}
+
+#section-create .param-grid.compact.rerank-grid .field:last-child {
+  grid-column: auto;
+}
+
+#section-create .param-grid.compact.rerank-grid .field > span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .param-grid.compact.compact-tight {
@@ -958,7 +988,7 @@ button.ghost {
   }
 
   .select-docs-layout {
-    grid-template-columns: minmax(18rem, 1fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
 
   .basic-row-second {
@@ -968,6 +998,10 @@ button.ghost {
 
 @media (max-width: 1100px) {
   .select-docs-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .select-docs-options {
     grid-template-columns: 1fr;
   }
 
@@ -1552,12 +1586,11 @@ button.ghost {
 }
 
 #section-create #create-result {
-  height: var(--create-result-h);
-  min-height: var(--create-result-h);
-  max-height: var(--create-result-h);
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding-right: 0.2rem;
+  height: auto;
+  min-height: 0;
+  max-height: none;
+  overflow: hidden;
+  padding-right: 0;
 }
 
 .step-log {
@@ -1722,6 +1755,10 @@ button.ghost {
   background: rgba(7, 18, 42, 0.84);
 }
 
+.chat-vs-list-card {
+  margin-bottom: 0.55rem;
+}
+
 #section-chat .chat-shell {
   gap: 0.45rem;
 }
@@ -1773,9 +1810,48 @@ button.ghost {
 
 @media (min-width: 1800px) {
   :root {
-    --left-rail-w: clamp(186px, 9.2vw, 260px);
+    --left-rail-w: clamp(220px, 10.8vw, 300px);
     --connect-form-w: clamp(23rem, 24vw, 35rem);
     --content-max-w: 2460px;
+  }
+}
+
+@media (min-width: 1101px) {
+  #section-create.menu-section .panel-content {
+    overflow: hidden;
+    padding-right: 0;
+  }
+
+  #section-create form.stack {
+    gap: clamp(0.35rem, 0.5vh, 0.55rem);
+  }
+
+  #section-create .param-group {
+    padding: clamp(0.42rem, 0.58vh, 0.6rem);
+  }
+
+  #section-create .param-group h3 {
+    margin: 0.04rem 0 clamp(0.2rem, 0.35vh, 0.36rem);
+    font-size: clamp(0.92rem, 0.42vw, 1.04rem);
+    line-height: 1.2;
+  }
+
+  #section-create .field > span {
+    margin-bottom: clamp(0.12rem, 0.2vh, 0.22rem);
+    font-size: clamp(0.76rem, 0.3vw, 0.9rem);
+    line-height: 1.15;
+  }
+
+  #section-create input,
+  #section-create select,
+  #section-create textarea {
+    min-height: clamp(2.05rem, 3.3vh, 2.35rem);
+    padding-top: clamp(0.3rem, 0.45vh, 0.44rem);
+    padding-bottom: clamp(0.3rem, 0.45vh, 0.44rem);
+  }
+
+  #section-create .stack-inline {
+    margin-top: clamp(0.12rem, 0.24vh, 0.2rem);
   }
 }
 
@@ -1830,9 +1906,10 @@ button.ghost {
     max-height: none;
     height: 100%;
     overflow: auto;
-    width: 100%;
-    max-width: 100%;
+    width: min(100%, 320px);
+    max-width: 320px;
     margin: 0;
+    justify-self: start;
   }
 
   .panel.left-menu {
@@ -1844,8 +1921,8 @@ button.ghost {
     font-size: clamp(0.58rem, 1.2vw, 0.72rem);
     letter-spacing: 0.03em;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow: visible;
+    text-overflow: clip;
   }
 
   .menu-item {
@@ -2014,8 +2091,8 @@ button.ghost {
     font-size: 0.62rem;
     letter-spacing: 0.03em;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow: visible;
+    text-overflow: clip;
   }
 
   .menu-item {
@@ -2024,8 +2101,8 @@ button.ghost {
     font-weight: 600;
     letter-spacing: 0;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow: visible;
+    text-overflow: clip;
     line-height: 1.15;
     padding: 0.4rem 0.48rem;
     border-radius: 10px;

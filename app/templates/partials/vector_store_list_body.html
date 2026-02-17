@@ -1,0 +1,53 @@
+{% set _list_visible_rows = list_visible_rows|default(15) %}
+{% set _selectable = selectable|default(false) %}
+{% set _connected_empty_text = connected_empty_text|default("Connected. Click Run List.") %}
+{% set _disconnected_empty_text = disconnected_empty_text|default("Connect in Step 1 to enable list query.") %}
+
+{% if evs.connected and evs.list_rows %}
+{% set ns = namespace(vs_name_idx=-1) %}
+{% for col in evs.list_columns %}
+  {% if col|string|lower == "vs_name" %}
+    {% set ns.vs_name_idx = loop.index0 %}
+  {% endif %}
+{% endfor %}
+<div class="monitor-list-summary">Rows: {{ evs.list_row_count }}</div>
+<div class="monitor-table-wrap monitor-table-wrap-list" style="--list-visible-rows: {{ _list_visible_rows }};">
+  <table class="monitor-table" {% if _selectable %}data-vs-select-table{% endif %}>
+    <thead>
+      <tr>
+        {% for col in evs.list_columns %}
+        <th>{{ col }}</th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in evs.list_rows %}
+      {% set row_vs_name = "" %}
+      {% if ns.vs_name_idx >= 0 and ns.vs_name_idx < row|length %}
+        {% set row_vs_name = row[ns.vs_name_idx] %}
+      {% endif %}
+      <tr
+        class="{% if _selectable %}monitor-list-row{% if row_vs_name and row_vs_name == evs.selected_vs_name %} is-selected{% endif %}{% endif %}"
+        {% if _selectable and row_vs_name %}data-vs-name="{{ row_vs_name }}"{% endif %}
+        {% if _selectable and row_vs_name %}
+        hx-post="/ui/evs/select"
+        hx-vals='{"vs_name": {{ row_vs_name|tojson }} }'
+        hx-target="#section-connect-content"
+        hx-swap="innerHTML"
+        {% endif %}
+      >
+        {% for cell in row %}
+        <td>{{ cell }}</td>
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% elif evs.connected and evs.list_preview -%}
+<pre class="monitor-fallback-text">{{ evs.list_preview }}</pre>
+{%- elif evs.connected -%}
+{{ _connected_empty_text }}
+{%- else -%}
+{{ _disconnected_empty_text }}
+{%- endif %}

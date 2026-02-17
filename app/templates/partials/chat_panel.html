@@ -8,7 +8,7 @@
   </div>
 
   <form class="stack chat-shell" hx-post="/ui/chat" hx-target="#chat-messages" hx-swap="innerHTML" hx-indicator="#chat-progress">
-    <label class="label" for="validation-target">Validation target</label>
+    <label class="label" for="validation-target">Retrieval Method</label>
     <select name="validation_target" id="validation-target" {% if not evs.connected %}disabled{% endif %}>
       <option value="vectorstore.ask">VectorStore.ask</option>
       <option value="vectorstore.similarity_search">VectorStore.similarity_search</option>

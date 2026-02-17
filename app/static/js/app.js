@@ -152,6 +152,70 @@ function enforceCreateInputLength(scope = document) {
   }
 }
 
+function bindAlgorithmParams(scope = document) {
+  const forms = scope.querySelectorAll("#section-create form[hx-post='/ui/create/upload']");
+  forms.forEach((form) => {
+    const algorithmSelect = form.querySelector("select[name='search_algorithm']");
+    const panel = form.querySelector("[data-algorithm-panel]");
+    const fields = form.querySelectorAll("[data-algo-for]");
+    const hint = form.querySelector("[data-algo-hint]");
+    if (!(algorithmSelect instanceof HTMLSelectElement) || !panel || !fields.length) {
+      return;
+    }
+    if (algorithmSelect.dataset.algoBound === "1") {
+      return;
+    }
+    algorithmSelect.dataset.algoBound = "1";
+
+    const labels = {
+      VECTORDISTANCE: "VECTORDISTANCE",
+      KMEANS: "KMEANS",
+      HNSW: "HNSW",
+    };
+
+    fields.forEach((field) => {
+      if (!(field instanceof HTMLElement)) {
+        return;
+      }
+      const controls = field.querySelectorAll("input, select, textarea");
+      controls.forEach((control) => {
+        const key = "algoInitialDisabled";
+        if (control.dataset[key] == null) {
+          control.dataset[key] = control.disabled ? "1" : "0";
+        }
+      });
+    });
+
+    const syncByAlgorithm = () => {
+      const current = (algorithmSelect.value || "VECTORDISTANCE").trim().toUpperCase();
+      fields.forEach((field) => {
+        if (!(field instanceof HTMLElement)) {
+          return;
+        }
+        const allowed = (field.dataset.algoFor || "")
+          .split(/\s+/)
+          .map((item) => item.trim().toUpperCase())
+          .filter(Boolean);
+        const show = allowed.includes(current);
+        field.classList.toggle("algo-hidden", !show);
+
+        const controls = field.querySelectorAll("input, select, textarea");
+        controls.forEach((control) => {
+          const initialDisabled = control.dataset.algoInitialDisabled === "1";
+          control.disabled = !show || initialDisabled;
+        });
+      });
+
+      if (hint instanceof HTMLElement) {
+        hint.textContent = labels[current] || "VECTORDISTANCE";
+      }
+    };
+
+    algorithmSelect.addEventListener("change", syncByAlgorithm);
+    syncByAlgorithm();
+  });
+}
+
 function bindListRowSelection(scope = document) {
   const tables = scope.querySelectorAll("[data-vs-select-table]");
   tables.forEach((table) => {
@@ -272,6 +336,7 @@ document.body.addEventListener("htmx:afterSwap", (event) => {
   bindCreateFileUpload(document);
   bindCustomFileInputs(document);
   enforceCreateInputLength(document);
+  bindAlgorithmParams(document);
   bindListRowSelection(document);
   bindDestroyConfirmModal(document);
 });
@@ -409,6 +474,7 @@ document.addEventListener("DOMContentLoaded", () => {
   bindCreateFileUpload(document);
   bindCustomFileInputs(document);
   enforceCreateInputLength(document);
+  bindAlgorithmParams(document);
   bindListRowSelection(document);
   bindDestroyConfirmModal(document);
 });
