@@ -205,4 +205,6 @@
 <div id="top-op-stack-shell" class="top-op-stack" aria-live="polite" hx-swap-oob="outerHTML">
   {% include "partials/top_status.html" %}
 </div>
+{% set is_oob = true %}
+{% include "partials/selected_vector_store_card.html" %}
 {% endif %}

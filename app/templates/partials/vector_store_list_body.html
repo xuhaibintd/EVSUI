@@ -6,10 +6,14 @@
 {% if evs.connected and evs.list_rows %}
 {% set ns = namespace(vs_name_idx=-1) %}
 {% for col in evs.list_columns %}
-  {% if col|string|lower == "vs_name" %}
+  {% set col_key = col|string|lower|replace(" ", "")|replace("-", "") %}
+  {% if col_key in ["vs_name", "vsname", "vector_store_name", "vectorstorename"] or ("vs" in col_key and "name" in col_key) or ("vector" in col_key and "name" in col_key) %}
     {% set ns.vs_name_idx = loop.index0 %}
   {% endif %}
 {% endfor %}
+{% if ns.vs_name_idx < 0 and evs.list_columns|length > 0 %}
+  {% set ns.vs_name_idx = 0 %}
+{% endif %}
 <div class="monitor-list-summary">Rows: {{ evs.list_row_count }}</div>
 <div class="monitor-table-wrap monitor-table-wrap-list" style="--list-visible-rows: {{ _list_visible_rows }};">
   <table class="monitor-table" {% if _selectable %}data-vs-select-table{% endif %}>
@@ -31,7 +35,7 @@
         {% if _selectable and row_vs_name %}data-vs-name="{{ row_vs_name }}"{% endif %}
         {% if _selectable and row_vs_name %}
         hx-post="/ui/evs/select"
-        hx-vals='{"vs_name": {{ row_vs_name|tojson }} }'
+        hx-vals='js:{vs_name: this.dataset.vsName}'
         hx-target="#section-connect-content"
         hx-swap="innerHTML"
         {% endif %}

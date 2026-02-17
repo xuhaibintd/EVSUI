@@ -1,13 +1,10 @@
-{% if not evs.connected %}
-<p class="muted">Step 3 is locked. Complete Step 1 first.</p>
-{% endif %}
-
 <div class="stack {% if not evs.connected %}disabled-block{% endif %}">
   <div id="chat-messages" class="chat-window">
     {% include "partials/chat_messages.html" %}
   </div>
 
   <form class="stack chat-shell" hx-post="/ui/chat" hx-target="#chat-messages" hx-swap="innerHTML" hx-indicator="#chat-progress">
+    <input type="hidden" name="selected_vs_name" value="{{ evs.selected_vs_name or 'TokioMarine_test' }}" data-chat-selected-vs />
     <label class="label" for="validation-target">Retrieval Method</label>
     <select name="validation_target" id="validation-target" {% if not evs.connected %}disabled{% endif %}>
       <option value="vectorstore.ask">VectorStore.ask</option>

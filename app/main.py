@@ -43,6 +43,7 @@ PEM_UPLOAD_DIR = UPLOAD_DIR / "pem"
 PEM_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 VS_BASICS_DIR = PROJECT_DIR.parent / "VS_Basics_Full_Kit"
 DEFAULT_PAT_TOKEN = "<redacted-pat-token>"
+DEFAULT_CHAT_VS_NAME = "TokioMarine_test"
 logger = logging.getLogger("evsui.connect")
 logger.setLevel(logging.INFO)
 
@@ -824,7 +825,8 @@ app.state.chat_history: list[dict] = []
 
 def _active_vector_store_name() -> str:
     state = app.state.evs_state or {}
-    return str(state.get("selected_vs_name", "")).strip()
+    selected = str(state.get("selected_vs_name", "")).strip()
+    return selected or DEFAULT_CHAT_VS_NAME
 
 
 def _detect_message_language(text: str) -> str:
@@ -864,8 +866,6 @@ def _build_evs_reply(message: str, validation_target: str) -> str:
     ask_prompt = _ask_prompt_for_language(lang)
     target = validation_target.strip().lower()
     vs_name = _active_vector_store_name()
-    if not vs_name:
-        return "Validation blocked: no vector store selected. Select one in Step 1 > Vector Store List."
 
     try:
         vector_store = VectorStore(vs_name)
@@ -1370,13 +1370,15 @@ async def evs_select_from_list(request: Request, vs_name: str = Form(default="")
         return HTMLResponse("Unauthorized", status_code=401)
 
     state = app.state.evs_state
-    selected_name = vs_name.strip()
+    selected_name = (vs_name or str(request.query_params.get("vs_name", ""))).strip()
     state["selected_vs_name"] = selected_name
     state["destroy_status"] = "neutral"
     if selected_name:
         state["destroy_preview"] = f"Selected '{selected_name}'. Click Destroy Selected to delete."
+        _append_connect_step(state, "Vector Store selection", "ok", f"Selected '{selected_name}'.")
     else:
         state["destroy_preview"] = "Click a row in list, then destroy it here."
+        _append_connect_step(state, "Vector Store selection", "warn", "Selection payload was empty.")
     return _render_connect_panel(request)
 
 
@@ -1610,6 +1612,7 @@ async def chat_send(
     request: Request,
     message: str = Form(...),
     validation_target: str = Form(default="vectorstore.ask"),
+    selected_vs_name: str = Form(default=""),
 ):
     if not _is_logged_in(request):
         return HTMLResponse("Unauthorized", status_code=401)
@@ -1632,6 +1635,9 @@ async def chat_send(
     selected_target = validation_target.strip().lower()
     if selected_target not in ALLOWED_VALIDATION_TARGETS:
         selected_target = "vectorstore.ask"
+    posted_vs_name = selected_vs_name.strip()
+    if posted_vs_name:
+        app.state.evs_state["selected_vs_name"] = posted_vs_name
     if clean:
         app.state.chat_history.append(
             {

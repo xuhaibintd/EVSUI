@@ -1,0 +1,10 @@
+<article id="selected-vs-card" class="monitor-card chat-vs-list-card" {% if is_oob %}hx-swap-oob="outerHTML"{% endif %}>
+  <div class="monitor-title-line" title="Selected Vector Store">Selected Vector Store</div>
+  {% set _current_vs_name = evs.selected_vs_name %}
+  {% if not _current_vs_name %}
+    {% set _current_vs_name = "TokioMarine_test" %}
+  {% endif %}
+  <div class="monitor-status {% if evs.connected %}ok{% else %}warn{% endif %}">
+    {{ _current_vs_name }}
+  </div>
+</article>
