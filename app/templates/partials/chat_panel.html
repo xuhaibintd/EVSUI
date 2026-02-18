@@ -1,10 +1,18 @@
 <div class="stack {% if not evs.connected %}disabled-block{% endif %}">
-  <div id="chat-messages" class="chat-window">
+  <div
+    id="chat-messages"
+    class="chat-window"
+    style="overflow: hidden !important; scrollbar-width: none; -ms-overflow-style: none;"
+  >
     {% include "partials/chat_messages.html" %}
   </div>
+  <style>
+    #chat-messages::-webkit-scrollbar { width: 0; height: 0; }
+  </style>
 
-  <form class="stack chat-shell" hx-post="/ui/chat" hx-target="#chat-messages" hx-swap="innerHTML" hx-indicator="#chat-progress">
-    <input type="hidden" name="selected_vs_name" value="{{ evs.selected_vs_name or 'TokioMarine_test' }}" data-chat-selected-vs />
+  <form id="chat-form" class="stack chat-shell" hx-post="/ui/chat" hx-target="#chat-messages" hx-swap="innerHTML" hx-indicator="#chat-progress">
+    {% set is_oob = false %}
+    {% include "partials/selected_vector_store_card.html" %}
     <label class="label" for="validation-target">Retrieval Method</label>
     <select name="validation_target" id="validation-target" {% if not evs.connected %}disabled{% endif %}>
       <option value="vectorstore.ask">VectorStore.ask</option>

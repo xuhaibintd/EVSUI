@@ -1,6 +1,3 @@
-{% set is_oob = false %}
-{% include "partials/selected_vector_store_card.html" %}
-
 {% for item in messages %}
 <div class="msg {{ item.role }}">
   <p class="chat-content">{{ item.content }}</p>

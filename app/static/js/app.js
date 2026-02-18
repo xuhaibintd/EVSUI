@@ -257,15 +257,9 @@ function bindListRowSelection(scope = document) {
           feedback.classList.add("neutral");
         }
 
-        const chatVsInput = document.querySelector("input[name='selected_vs_name'][data-chat-selected-vs]");
-        if (chatVsInput instanceof HTMLInputElement) {
-          chatVsInput.value = vsName;
-        }
-        const selectedCard = document.querySelector("#selected-vs-card .monitor-status");
-        if (selectedCard instanceof HTMLElement) {
-          selectedCard.textContent = vsName;
-          selectedCard.classList.remove("warn", "err", "info");
-          selectedCard.classList.add("ok");
+        const chatVsSelect = document.querySelector("select[name='selected_vs_name'][data-chat-selected-vs]");
+        if (chatVsSelect instanceof HTMLSelectElement) {
+          chatVsSelect.value = vsName;
         }
       });
     });

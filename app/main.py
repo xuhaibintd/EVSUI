@@ -550,8 +550,16 @@ def _filter_table_rows_by_username(headers: list[str], rows: list[list[str]], us
 
 
 def _vs_name_column_index(headers: list[str]) -> int:
+    def _norm(value: str) -> str:
+        return str(value).strip().lower().replace(" ", "").replace("-", "")
+
     for idx, column in enumerate(headers):
-        if str(column).strip().lower() == "vs_name":
+        col_key = _norm(str(column))
+        if (
+            col_key in {"vs_name", "vsname", "vector_store_name", "vectorstorename"}
+            or ("vs" in col_key and "name" in col_key)
+            or ("vector" in col_key and "name" in col_key)
+        ):
             return idx
     return -1
 
@@ -569,11 +577,123 @@ def _list_vs_name_values(headers: list[str], rows: list[list[str]]) -> set[str]:
     return values
 
 
+def _ordered_vs_name_values(headers: list[str], rows: list[list[str]]) -> list[str]:
+    idx = _vs_name_column_index(headers)
+    if idx < 0:
+        return []
+    values: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        if idx >= len(row):
+            continue
+        value = str(row[idx]).strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        values.append(value)
+    return values
+
+
+def _try_parse_datetime_cell(value: str) -> datetime | None:
+    text = str(value).strip()
+    if not text:
+        return None
+
+    iso_candidate = text
+    if iso_candidate.endswith("Z"):
+        iso_candidate = iso_candidate[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(iso_candidate)
+    except Exception:
+        pass
+
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y/%m/%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y/%m/%d %H:%M",
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+    ):
+        try:
+            return datetime.strptime(text, fmt)
+        except Exception:
+            continue
+    return None
+
+
+def _guess_latest_vs_name(headers: list[str], rows: list[list[str]]) -> str:
+    vs_idx = _vs_name_column_index(headers)
+    if vs_idx < 0:
+        return ""
+
+    def _norm(value: str) -> str:
+        return str(value).strip().lower().replace(" ", "").replace("-", "")
+
+    creation_markers = (
+        "createdat",
+        "createtime",
+        "creationtime",
+        "createat",
+        "created",
+    )
+    time_markers = ("timestamp", "datetime", "time", "date")
+
+    preferred_time_indices: list[int] = []
+    fallback_time_indices: list[int] = []
+    for idx, column in enumerate(headers):
+        if idx == 0:
+            continue
+        key = _norm(column)
+        if any(marker in key for marker in creation_markers):
+            preferred_time_indices.append(idx)
+            continue
+        if any(marker in key for marker in time_markers):
+            fallback_time_indices.append(idx)
+
+    time_indices = preferred_time_indices or fallback_time_indices
+    best_name = ""
+    best_ts: float | None = None
+    for row in rows:
+        if vs_idx >= len(row):
+            continue
+        name = str(row[vs_idx]).strip()
+        if not name:
+            continue
+        row_ts: float | None = None
+        for time_idx in time_indices:
+            if time_idx >= len(row):
+                continue
+            parsed = _try_parse_datetime_cell(row[time_idx])
+            if parsed is None:
+                continue
+            try:
+                candidate_ts = parsed.timestamp()
+            except Exception:
+                continue
+            if row_ts is None or candidate_ts > row_ts:
+                row_ts = candidate_ts
+        if row_ts is None:
+            continue
+        if best_ts is None or row_ts > best_ts:
+            best_ts = row_ts
+            best_name = name
+
+    if best_name:
+        return best_name
+
+    ordered_names = _ordered_vs_name_values(headers, rows)
+    if ordered_names:
+        return ordered_names[0]
+    return ""
+
+
 def _clear_list_result(state: dict) -> None:
     state["list_preview"] = ""
     state["list_columns"] = []
     state["list_rows"] = []
     state["list_row_count"] = 0
+    state["chat_vs_options"] = []
 
 
 def _clear_health_result(state: dict) -> None:
@@ -589,22 +709,33 @@ def _clear_destroy_result(state: dict) -> None:
 
 
 def _apply_list_output_to_state(state: dict, list_output) -> tuple[int, int | None, str]:
-    headers, rows_data = _table_from_result(list_output)
+    headers, all_rows_data = _table_from_result(list_output)
     username_filter = str(state.get("params", {}).get("username", "")).strip()
+    rows_data = all_rows_data
     if username_filter:
-        rows_data = _filter_table_rows_by_username(headers, rows_data, username_filter)
+        rows_data = _filter_table_rows_by_username(headers, all_rows_data, username_filter)
 
     state["list_columns"] = headers
     state["list_rows"] = rows_data
     state["list_row_count"] = len(rows_data)
+    all_vs_options = _ordered_vs_name_values(headers, all_rows_data)
+    state["chat_vs_options"] = all_vs_options
     if username_filter and not rows_data:
         state["list_preview"] = f"No rows matched username '{username_filter}'."
     else:
         state["list_preview"] = _format_preview(list_output, max_chars=None)
 
     selected = str(state.get("selected_vs_name", "")).strip()
-    if selected and selected not in _list_vs_name_values(headers, rows_data):
-        state["selected_vs_name"] = ""
+    available_names = set(all_vs_options)
+    if selected and selected not in available_names:
+        selected = ""
+    if not selected and all_rows_data:
+        preferred = str(state.get("last_created_vs_name", "")).strip()
+        if preferred and preferred in available_names:
+            selected = preferred
+        else:
+            selected = _guess_latest_vs_name(headers, all_rows_data)
+    state["selected_vs_name"] = selected
 
     total_rows: int | None = None
     if hasattr(list_output, "shape"):
@@ -722,7 +853,9 @@ def _default_evs_state() -> dict:
         "list_columns": [],
         "list_rows": [],
         "list_row_count": 0,
+        "chat_vs_options": [],
         "selected_vs_name": "",
+        "last_created_vs_name": "",
         "destroy_preview": "",
         "destroy_status": "neutral",
         "actual_params": {},
@@ -911,10 +1044,20 @@ def _user_initials(username: str) -> str:
 
 
 def _build_home_context(request: Request) -> dict:
+    state = app.state.evs_state
+    if state.get("connected") and not state.get("chat_vs_options"):
+        list_fn = getattr(VSManager, "list", None) if VSManager is not None else None
+        if callable(list_fn):
+            try:
+                list_output = list_fn()
+                _apply_list_output_to_state(state, list_output)
+            except Exception:
+                pass
+
     username = _current_user(request)
     return {
         "messages": app.state.chat_history,
-        "evs": app.state.evs_state,
+        "evs": state,
         "create_param_groups": _group_create_fields(),
         "create_values": app.state.create_form_values,
         "create_result": app.state.last_create_operation,
@@ -1156,6 +1299,32 @@ async def evs_connect(
             state["selected_vs_name"] = ""
             _clear_destroy_result(state)
             state["actual_params"] = actual_params
+            list_fn = getattr(VSManager, "list", None)
+            if callable(list_fn):
+                try:
+                    list_output = list_fn()
+                    visible_rows, total_rows, username_filter = _apply_list_output_to_state(state, list_output)
+                    if total_rows is not None:
+                        if username_filter and visible_rows != total_rows:
+                            steps.append(
+                                _new_connect_step(
+                                    "VSManager.list()",
+                                    "ok",
+                                    f"Auto refresh completed. rows={visible_rows}/{total_rows} (table filtered by username='{username_filter}').",
+                                )
+                            )
+                        else:
+                            steps.append(
+                                _new_connect_step(
+                                    "VSManager.list()",
+                                    "ok",
+                                    f"Auto refresh completed. rows={total_rows}.",
+                                )
+                            )
+                    else:
+                        steps.append(_new_connect_step("VSManager.list()", "ok", "Auto refresh completed."))
+                except Exception as list_ex:
+                    steps.append(_new_connect_step("VSManager.list()", "warn", f"Auto refresh failed: {list_ex}"))
             state["connect_steps"] = steps
         except Exception as ex:
             cleanup_after_fail = _cleanup_context()
@@ -1595,6 +1764,20 @@ async def upload_and_prepare_create(request: Request):
     else:
         app.state.evs_state["last_error"] = ""
         app.state.evs_state["last_success"] = result_message
+        app.state.evs_state["last_created_vs_name"] = vector_store_name
+        app.state.evs_state["selected_vs_name"] = vector_store_name
+        list_fn = getattr(VSManager, "list", None) if VSManager is not None else None
+        if callable(list_fn):
+            try:
+                list_output = list_fn()
+                _apply_list_output_to_state(app.state.evs_state, list_output)
+            except Exception as list_ex:
+                _append_connect_step(
+                    app.state.evs_state,
+                    "VSManager.list()",
+                    "warn",
+                    f"Create succeeded, but list refresh failed: {list_ex}",
+                )
 
     return templates.TemplateResponse(
         request,

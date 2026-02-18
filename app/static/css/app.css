@@ -9,7 +9,7 @@
   --content-max-w: 2200px;
   --connect-form-w: clamp(21rem, 26vw, 31rem);
   --create-result-h: clamp(280px, 44vh, 760px);
-  --chat-window-h: clamp(320px, 56vh, 860px);
+  --chat-window-h: clamp(180px, 34vh, 420px);
   --list-visible-rows: 15;
   --list-row-h: 2rem;
   --list-head-h: 2rem;
@@ -406,7 +406,7 @@ p {
 .menu-section .panel-content {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   padding-right: 0.15rem;
 }
 
@@ -1745,18 +1745,48 @@ button.ghost {
   overflow-x: auto;
 }
 
-.chat-window {
+#section-chat .chat-window {
   border: 1px solid var(--line-soft);
   border-radius: 12px;
   padding: 0.6rem;
+  height: var(--chat-window-h);
   min-height: var(--chat-window-h);
   max-height: var(--chat-window-h);
-  overflow-y: auto;
+  overflow: hidden !important;
+  scrollbar-width: none;
   background: rgba(7, 18, 42, 0.84);
 }
 
-.chat-vs-list-card {
-  margin-bottom: 0.55rem;
+#section-chat .chat-window::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.chat-vs-field {
+  gap: 0.34rem;
+}
+
+#section-chat.menu-section .panel-content {
+  overflow: hidden !important;
+  padding-right: 0;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+#section-chat.menu-section {
+  overflow: hidden !important;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+#section-chat.menu-section::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+#section-chat.menu-section .panel-content::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 #section-chat .chat-shell {
@@ -1766,6 +1796,8 @@ button.ghost {
 #section-chat .chat-shell textarea[name="message"] {
   min-height: 4.2rem;
   max-height: 8rem;
+  overflow: hidden;
+  resize: none;
 }
 
 .msg {
@@ -1859,14 +1891,14 @@ button.ghost {
   :root {
     --ui-topbar-h: clamp(76px, 10vh, 92px);
     --create-result-h: clamp(220px, 40vh, 520px);
-    --chat-window-h: clamp(250px, 50vh, 620px);
+    --chat-window-h: clamp(170px, 32vh, 320px);
   }
 }
 
 @media (max-width: 1100px) {
   html,
   body {
-    overflow: auto;
+    overflow: hidden;
   }
 
   .topbar {
@@ -1876,9 +1908,9 @@ button.ghost {
   }
 
   .page {
-    height: auto;
-    max-height: none;
-    overflow: auto;
+    height: calc(100dvh - var(--ui-topbar-h));
+    max-height: calc(100dvh - var(--ui-topbar-h));
+    overflow: hidden;
   }
 
   .brand-block {
@@ -1905,7 +1937,7 @@ button.ghost {
     min-height: 0;
     max-height: none;
     height: 100%;
-    overflow: auto;
+    overflow: hidden;
     width: min(100%, 320px);
     max-width: 320px;
     margin: 0;
@@ -1959,7 +1991,7 @@ button.ghost {
   }
 
   .menu-section .panel-content {
-    overflow: auto;
+    overflow: hidden;
     padding-right: 0;
   }
 
@@ -1983,8 +2015,9 @@ button.ghost {
   }
 
   .chat-window {
-    min-height: 48vh;
-    max-height: 48vh;
+    height: 34vh;
+    min-height: 34vh;
+    max-height: 34vh;
   }
 
   #section-create #create-result {
@@ -2027,7 +2060,7 @@ button.ghost {
   .connect-fields,
   .connect-monitor {
     height: auto;
-    overflow: auto;
+    overflow: hidden;
   }
 
   .connect-userpass-row {
@@ -2037,7 +2070,7 @@ button.ghost {
   .connect-monitor-group {
     height: auto;
     grid-template-rows: auto;
-    overflow: auto;
+    overflow: hidden;
   }
 
   .step-results-dock {
@@ -2055,7 +2088,7 @@ button.ghost {
     display: flex;
     flex-direction: column;
     gap: 0.65rem;
-    overflow: auto;
+    overflow: hidden;
   }
 }
 

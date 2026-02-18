@@ -1,10 +1,56 @@
-<article id="selected-vs-card" class="monitor-card chat-vs-list-card" {% if is_oob %}hx-swap-oob="outerHTML"{% endif %}>
-  <div class="monitor-title-line" title="Selected Vector Store">Selected Vector Store</div>
-  {% set _current_vs_name = evs.selected_vs_name %}
+<div id="selected-vs-card" class="field chat-vs-field" {% if is_oob %}hx-swap-oob="outerHTML"{% endif %}>
+  {% set _vs_options = evs.chat_vs_options|default([]) %}
+  {% if not _vs_options and evs.list_rows %}
+    {% set ns = namespace(vs_name_idx=-1, joined="") %}
+    {% for col in evs.list_columns %}
+      {% set col_key = col|string|lower|replace(" ", "")|replace("-", "") %}
+      {% if col_key in ["vs_name", "vsname", "vector_store_name", "vectorstorename"] or ("vs" in col_key and "name" in col_key) or ("vector" in col_key and "name" in col_key) %}
+        {% set ns.vs_name_idx = loop.index0 %}
+      {% endif %}
+    {% endfor %}
+    {% if ns.vs_name_idx < 0 and evs.list_columns|length > 0 %}
+      {% set ns.vs_name_idx = 0 %}
+    {% endif %}
+    {% for row in evs.list_rows %}
+      {% if ns.vs_name_idx >= 0 and ns.vs_name_idx < row|length %}
+        {% set row_vs_name = row[ns.vs_name_idx]|string|trim %}
+        {% if row_vs_name %}
+          {% if ns.joined %}
+            {% set ns.joined = ns.joined ~ "\n" ~ row_vs_name %}
+          {% else %}
+            {% set ns.joined = row_vs_name %}
+          {% endif %}
+        {% endif %}
+      {% endif %}
+    {% endfor %}
+    {% if ns.joined %}
+      {% set _vs_options = ns.joined.split("\n") %}
+    {% endif %}
+  {% endif %}
+  {% set _current_vs_name = evs.selected_vs_name|default("") %}
+  {% if not _current_vs_name and _vs_options %}
+    {% set _current_vs_name = _vs_options[0] %}
+  {% endif %}
+  {% if _current_vs_name and _current_vs_name not in _vs_options %}
+    {% set _vs_options = [_current_vs_name] + _vs_options %}
+  {% endif %}
   {% if not _current_vs_name %}
     {% set _current_vs_name = "TokioMarine_test" %}
   {% endif %}
-  <div class="monitor-status {% if evs.connected %}ok{% else %}warn{% endif %}">
-    {{ _current_vs_name }}
-  </div>
-</article>
+  <label class="label" for="chat-selected-vs">Selected Vector Store</label>
+  <select
+    id="chat-selected-vs"
+    class="chat-vs-select"
+    name="selected_vs_name"
+    form="chat-form"
+    data-chat-selected-vs
+    {% if not evs.connected %}disabled{% endif %}
+  >
+    {% for vs_name in _vs_options %}
+    <option value="{{ vs_name }}" {% if vs_name == _current_vs_name %}selected{% endif %}>{{ vs_name }}</option>
+    {% endfor %}
+    {% if not _vs_options %}
+    <option value="{{ _current_vs_name }}" selected>{{ _current_vs_name }}</option>
+    {% endif %}
+  </select>
+</div>
