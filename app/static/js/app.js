@@ -220,16 +220,10 @@ function bindListRowSelection(scope = document) {
   const tables = scope.querySelectorAll("[data-vs-select-table]");
   tables.forEach((table) => {
     const card = table.closest(".monitor-card-list");
-    if (!card) {
-      return;
-    }
-    const hiddenInput = card.querySelector("[data-destroy-vs-input]");
-    const selectedName = card.querySelector("[data-destroy-selected-name]");
-    const destroyButton = card.querySelector("[data-destroy-btn]");
-    const feedback = card.querySelector("[data-destroy-feedback]");
-    if (!(hiddenInput instanceof HTMLInputElement)) {
-      return;
-    }
+    const hiddenInput = card ? card.querySelector("[data-destroy-vs-input]") : null;
+    const selectedName = card ? card.querySelector("[data-destroy-selected-name]") : null;
+    const destroyButton = card ? card.querySelector("[data-destroy-btn]") : null;
+    const feedback = card ? card.querySelector("[data-destroy-feedback]") : null;
 
     const rows = table.querySelectorAll("tbody tr[data-vs-name]");
     rows.forEach((row) => {
@@ -244,8 +238,10 @@ function bindListRowSelection(scope = document) {
         }
         rows.forEach((item) => item.classList.remove("is-selected"));
         row.classList.add("is-selected");
-        hiddenInput.value = vsName;
-        if (selectedName) {
+        if (hiddenInput instanceof HTMLInputElement) {
+          hiddenInput.value = vsName;
+        }
+        if (selectedName instanceof HTMLElement) {
           selectedName.textContent = vsName;
         }
         if (destroyButton instanceof HTMLButtonElement) {
@@ -257,9 +253,13 @@ function bindListRowSelection(scope = document) {
           feedback.classList.add("neutral");
         }
 
-        const chatVsSelect = document.querySelector("select[name='selected_vs_name'][data-chat-selected-vs]");
-        if (chatVsSelect instanceof HTMLSelectElement) {
-          chatVsSelect.value = vsName;
+        const chatVsField = document.querySelector("[name='selected_vs_name'][data-chat-selected-vs]");
+        if (chatVsField instanceof HTMLInputElement || chatVsField instanceof HTMLSelectElement) {
+          chatVsField.value = vsName;
+        }
+        const chatVsLabel = document.querySelector("[data-chat-selected-vs-label]");
+        if (chatVsLabel instanceof HTMLElement) {
+          chatVsLabel.textContent = vsName;
         }
       });
     });
@@ -483,4 +483,3 @@ document.addEventListener("DOMContentLoaded", () => {
   bindListRowSelection(document);
   bindDestroyConfirmModal(document);
 });
-

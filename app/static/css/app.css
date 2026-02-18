@@ -1790,7 +1790,47 @@ button.ghost {
 }
 
 #section-chat .chat-shell {
-  gap: 0.45rem;
+  gap: 0.35rem;
+}
+
+#section-chat .chat-section {
+  display: grid;
+  gap: 0.28rem;
+}
+
+#section-chat .chat-section + .chat-section {
+  margin-top: 0.15rem;
+  padding-top: 0.34rem;
+}
+
+#section-chat .chat-section .label {
+  margin: 0;
+}
+
+#section-chat .chat-vs-selector {
+  display: grid;
+  gap: 0.4rem;
+}
+
+#section-chat .chat-vs-head {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.5rem;
+}
+
+#section-chat .chat-vs-head .label {
+  margin: 0;
+}
+
+#section-chat .chat-vs-run-btn {
+  min-width: 7.2rem;
+  padding: 0.32rem 0.62rem;
+  border-radius: 9px;
+}
+
+#section-chat .chat-vs-hint {
+  margin: 0.2rem 0 0;
 }
 
 #section-chat .chat-shell textarea[name="message"] {
@@ -1825,6 +1865,7 @@ button.ghost {
 
 .chat-actions {
   justify-content: flex-start;
+  margin-top: 0.12rem;
 }
 
 .chat-progress {
@@ -2160,5 +2201,3 @@ button.ghost {
     white-space: normal;
   }
 }
-
-

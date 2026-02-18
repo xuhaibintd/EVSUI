@@ -1,5 +1,5 @@
 <div class="connect-grid" data-step1-connected="{% if evs.connected %}true{% else %}false{% endif %}">
-  <form class="stack connect-shell connect-fields" hx-post="/ui/evs/connect" hx-target="#section-connect-content" hx-swap="innerHTML" hx-encoding="multipart/form-data" enctype="multipart/form-data" hx-indicator="#connect-progress" hx-on::after-request="window.location.reload()">
+  <form class="stack connect-shell connect-fields" hx-post="/ui/evs/connect" hx-target="#section-connect-content" hx-swap="innerHTML" hx-encoding="multipart/form-data" enctype="multipart/form-data" hx-indicator="#connect-progress">
     <fieldset class="connect-group">
       <legend>Connection</legend>
     <label class="field">
@@ -60,7 +60,7 @@
           <span>Connecting...</span>
         </span>
       </button>
-      <button type="button" class="ghost progress-btn" data-progress-button hx-post="/ui/evs/reset" hx-trigger="click" hx-target="#section-connect-content" hx-swap="innerHTML" hx-on::after-request="window.location.reload()">
+      <button type="button" class="ghost progress-btn" data-progress-button hx-post="/ui/evs/reset" hx-trigger="click" hx-target="#section-connect-content" hx-swap="innerHTML">
         <span class="progress-btn-label">Disconnect</span>
         <span class="progress-btn-loading">
           <span class="progress-btn-spinner" aria-hidden="true"></span>
@@ -205,6 +205,4 @@
 <div id="top-op-stack-shell" class="top-op-stack" aria-live="polite" hx-swap-oob="outerHTML">
   {% include "partials/top_status.html" %}
 </div>
-{% set is_oob = true %}
-{% include "partials/selected_vector_store_card.html" %}
 {% endif %}

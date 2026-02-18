@@ -4,3 +4,4 @@ jinja2>=3.1.4
 python-multipart>=0.0.9
 teradataml
 teradatagenai
+packaging>=24.0

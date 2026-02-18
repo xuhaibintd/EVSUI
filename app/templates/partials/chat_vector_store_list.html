@@ -1,0 +1,46 @@
+<div id="chat-vs-selector-card" class="field chat-vs-selector chat-section" {% if is_oob %}hx-swap-oob="outerHTML"{% endif %}>
+  <div class="chat-vs-head">
+    <label class="label" for="chat-selected-vs">Vector Store List</label>
+    <button
+      type="button"
+      class="ghost progress-btn chat-vs-run-btn"
+      data-progress-button
+      hx-post="/ui/chat/vs-list"
+      hx-target="#chat-vs-selector-card"
+      hx-swap="outerHTML"
+      {% if not evs.connected %}disabled{% endif %}
+    >
+      <span class="progress-btn-label">Run List</span>
+      <span class="progress-btn-loading">
+        <span class="progress-btn-spinner" aria-hidden="true"></span>
+        <span>Running...</span>
+      </span>
+    </button>
+  </div>
+  {% set _vs_options = evs.chat_vs_options|default([]) if evs.chat_list_loaded_by_user else [] %}
+  {% set _current_vs_name = evs.selected_vs_name|default("")|trim %}
+  {% if evs.chat_list_loaded_by_user and _current_vs_name and _current_vs_name not in _vs_options %}
+    {% set _vs_options = [_current_vs_name] + _vs_options %}
+  {% endif %}
+  {% if evs.chat_list_loaded_by_user and (not _current_vs_name) and _vs_options %}
+    {% set _current_vs_name = _vs_options[0] %}
+  {% endif %}
+  <select
+    id="chat-selected-vs"
+    class="chat-vs-select"
+    name="selected_vs_name"
+    form="chat-form"
+    data-chat-selected-vs
+    {% if not evs.connected %}disabled{% endif %}
+  >
+    <option value="" {% if (not evs.chat_list_loaded_by_user) or (not _vs_options) %}selected{% endif %}>Please run list and choose one</option>
+    {% for vs_name in _vs_options %}
+    <option value="{{ vs_name }}" {% if vs_name == _current_vs_name %}selected{% endif %}>{{ vs_name }}</option>
+    {% endfor %}
+  </select>
+  {% if evs.connected and evs.chat_list_preview and not _vs_options %}
+  <p class="muted chat-vs-hint">{{ evs.chat_list_preview }}</p>
+  {% elif evs.connected and not _vs_options %}
+  <p class="muted chat-vs-hint">Click Run List to load options.</p>
+  {% endif %}
+</div>

@@ -12,13 +12,18 @@
 
   <form id="chat-form" class="stack chat-shell" hx-post="/ui/chat" hx-target="#chat-messages" hx-swap="innerHTML" hx-indicator="#chat-progress">
     {% set is_oob = false %}
-    {% include "partials/selected_vector_store_card.html" %}
-    <label class="label" for="validation-target">Retrieval Method</label>
-    <select name="validation_target" id="validation-target" {% if not evs.connected %}disabled{% endif %}>
-      <option value="vectorstore.ask">VectorStore.ask</option>
-      <option value="vectorstore.similarity_search">VectorStore.similarity_search</option>
-    </select>
-    <textarea name="message" rows="2" required {% if not evs.connected %}disabled{% endif %}></textarea>
+    {% include "partials/chat_vector_store_list.html" %}
+    <div class="chat-section chat-section-retrieval">
+      <label class="label" for="validation-target">Retrieval Method</label>
+      <select name="validation_target" id="validation-target" {% if not evs.connected %}disabled{% endif %}>
+        <option value="vectorstore.ask">VectorStore.ask</option>
+        <option value="vectorstore.similarity_search">VectorStore.similarity_search</option>
+      </select>
+    </div>
+    <div class="chat-section chat-section-question">
+      <label class="label" for="chat-message">Question</label>
+      <textarea id="chat-message" name="message" rows="2" required {% if not evs.connected %}disabled{% endif %}></textarea>
+    </div>
     <div class="stack-inline chat-actions">
       <button type="submit" class="progress-btn" data-progress-button {% if not evs.connected %}disabled{% endif %}>
         <span class="progress-btn-label">Send</span>

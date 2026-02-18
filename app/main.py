@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import hashlib
 import logging
@@ -693,7 +692,13 @@ def _clear_list_result(state: dict) -> None:
     state["list_columns"] = []
     state["list_rows"] = []
     state["list_row_count"] = 0
+    state["list_loaded_by_user"] = False
+
+
+def _clear_chat_list_result(state: dict) -> None:
     state["chat_vs_options"] = []
+    state["chat_list_preview"] = ""
+    state["chat_list_loaded_by_user"] = False
 
 
 def _clear_health_result(state: dict) -> None:
@@ -708,7 +713,7 @@ def _clear_destroy_result(state: dict) -> None:
     state["destroy_status"] = "neutral"
 
 
-def _apply_list_output_to_state(state: dict, list_output) -> tuple[int, int | None, str]:
+def _apply_list_output_to_state(state: dict, list_output, sync_chat_options: bool = False) -> tuple[int, int | None, str]:
     headers, all_rows_data = _table_from_result(list_output)
     username_filter = str(state.get("params", {}).get("username", "")).strip()
     rows_data = all_rows_data
@@ -718,24 +723,49 @@ def _apply_list_output_to_state(state: dict, list_output) -> tuple[int, int | No
     state["list_columns"] = headers
     state["list_rows"] = rows_data
     state["list_row_count"] = len(rows_data)
-    all_vs_options = _ordered_vs_name_values(headers, all_rows_data)
-    state["chat_vs_options"] = all_vs_options
+    # Keep dropdown options aligned with the same user-filtered rows shown in list view.
+    # For destroy-flow refresh, Step 1 can refresh without touching Step 3 options.
+    filtered_vs_options = _ordered_vs_name_values(headers, rows_data)
+    if sync_chat_options:
+        state["chat_vs_options"] = filtered_vs_options
     if username_filter and not rows_data:
         state["list_preview"] = f"No rows matched username '{username_filter}'."
     else:
         state["list_preview"] = _format_preview(list_output, max_chars=None)
 
+    total_rows: int | None = None
+    if hasattr(list_output, "shape"):
+        try:
+            total_rows = int(list_output.shape[0])
+        except Exception:
+            total_rows = None
+    return len(rows_data), total_rows, username_filter
+
+
+def _apply_chat_list_output_to_state(state: dict, list_output) -> tuple[int, int | None, str]:
+    headers, all_rows_data = _table_from_result(list_output)
+    username_filter = str(state.get("params", {}).get("username", "")).strip()
+    rows_data = all_rows_data
+    if username_filter:
+        rows_data = _filter_table_rows_by_username(headers, all_rows_data, username_filter)
+
+    filtered_vs_options = _ordered_vs_name_values(headers, rows_data)
+    state["chat_vs_options"] = filtered_vs_options
+    state["chat_list_loaded_by_user"] = True
+    if username_filter and not rows_data:
+        state["chat_list_preview"] = f"No rows matched username '{username_filter}'."
+    else:
+        state["chat_list_preview"] = _format_preview(list_output, max_chars=None)
+
     selected = str(state.get("selected_vs_name", "")).strip()
-    available_names = set(all_vs_options)
-    if selected and selected not in available_names:
-        selected = ""
-    if not selected and all_rows_data:
-        preferred = str(state.get("last_created_vs_name", "")).strip()
-        if preferred and preferred in available_names:
-            selected = preferred
-        else:
-            selected = _guess_latest_vs_name(headers, all_rows_data)
-    state["selected_vs_name"] = selected
+    available_names = set(filtered_vs_options)
+    if selected and selected in available_names:
+        state["selected_vs_name"] = selected
+    elif filtered_vs_options:
+        # Ensure Run List applies an actual selectable vector store, not only placeholder text.
+        state["selected_vs_name"] = filtered_vs_options[0]
+    else:
+        state["selected_vs_name"] = ""
 
     total_rows: int | None = None
     if hasattr(list_output, "shape"):
@@ -854,6 +884,9 @@ def _default_evs_state() -> dict:
         "list_rows": [],
         "list_row_count": 0,
         "chat_vs_options": [],
+        "chat_list_preview": "",
+        "chat_list_loaded_by_user": False,
+        "list_loaded_by_user": False,
         "selected_vs_name": "",
         "last_created_vs_name": "",
         "destroy_preview": "",
@@ -1045,14 +1078,6 @@ def _user_initials(username: str) -> str:
 
 def _build_home_context(request: Request) -> dict:
     state = app.state.evs_state
-    if state.get("connected") and not state.get("chat_vs_options"):
-        list_fn = getattr(VSManager, "list", None) if VSManager is not None else None
-        if callable(list_fn):
-            try:
-                list_output = list_fn()
-                _apply_list_output_to_state(state, list_output)
-            except Exception:
-                pass
 
     username = _current_user(request)
     return {
@@ -1192,6 +1217,7 @@ async def evs_connect(
         state["last_error"] = f"Missing required fields: {', '.join(missing)}"
         _clear_health_result(state)
         _clear_list_result(state)
+        _clear_chat_list_result(state)
         state["selected_vs_name"] = ""
         _clear_destroy_result(state)
         state["actual_params"] = actual_params
@@ -1214,6 +1240,7 @@ async def evs_connect(
         )
         _clear_health_result(state)
         _clear_list_result(state)
+        _clear_chat_list_result(state)
         state["selected_vs_name"] = ""
         _clear_destroy_result(state)
         state["actual_params"] = actual_params
@@ -1296,35 +1323,11 @@ async def evs_connect(
             state["last_success"] = "Step 1 completed. Database connection and VS authentication succeeded."
             _clear_health_result(state)
             _clear_list_result(state)
+            _clear_chat_list_result(state)
             state["selected_vs_name"] = ""
             _clear_destroy_result(state)
             state["actual_params"] = actual_params
-            list_fn = getattr(VSManager, "list", None)
-            if callable(list_fn):
-                try:
-                    list_output = list_fn()
-                    visible_rows, total_rows, username_filter = _apply_list_output_to_state(state, list_output)
-                    if total_rows is not None:
-                        if username_filter and visible_rows != total_rows:
-                            steps.append(
-                                _new_connect_step(
-                                    "VSManager.list()",
-                                    "ok",
-                                    f"Auto refresh completed. rows={visible_rows}/{total_rows} (table filtered by username='{username_filter}').",
-                                )
-                            )
-                        else:
-                            steps.append(
-                                _new_connect_step(
-                                    "VSManager.list()",
-                                    "ok",
-                                    f"Auto refresh completed. rows={total_rows}.",
-                                )
-                            )
-                    else:
-                        steps.append(_new_connect_step("VSManager.list()", "ok", "Auto refresh completed."))
-                except Exception as list_ex:
-                    steps.append(_new_connect_step("VSManager.list()", "warn", f"Auto refresh failed: {list_ex}"))
+            steps.append(_new_connect_step("VSManager.list()", "info", "Skipped on connect. Click 'Run List' manually."))
             state["connect_steps"] = steps
         except Exception as ex:
             cleanup_after_fail = _cleanup_context()
@@ -1342,6 +1345,7 @@ async def evs_connect(
             state["last_error"] = f"Connection/auth failed: {ex}"
             _clear_health_result(state)
             _clear_list_result(state)
+            _clear_chat_list_result(state)
             state["selected_vs_name"] = ""
             _clear_destroy_result(state)
             state["actual_params"] = actual_params
@@ -1487,14 +1491,12 @@ async def evs_run_list(request: Request):
     _clear_destroy_result(state)
     if not state["connected"]:
         _clear_list_result(state)
-        state["selected_vs_name"] = ""
         state["list_preview"] = "Connect in Step 1 first."
         state["last_error"] = "Run blocked: connection is not established."
         _append_connect_step(state, "VSManager.list()", "warn", "Blocked: Step 1 is not connected.")
         return _render_connect_panel(request)
     if VSManager is None:
         _clear_list_result(state)
-        state["selected_vs_name"] = ""
         state["list_preview"] = f"Cannot run: {TERADATA_IMPORT_ERROR}"
         state["last_error"] = "VS runtime is unavailable."
         _append_connect_step(state, "VSManager.list()", "error", f"Runtime unavailable: {TERADATA_IMPORT_ERROR}")
@@ -1502,14 +1504,18 @@ async def evs_run_list(request: Request):
     list_fn = getattr(VSManager, "list", None)
     if not callable(list_fn):
         _clear_list_result(state)
-        state["selected_vs_name"] = ""
         state["list_preview"] = "Cannot run: VSManager.list is not callable."
         state["last_error"] = "VSManager.list() is not callable."
         _append_connect_step(state, "VSManager.list()", "error", "VSManager.list is missing or not callable.")
         return _render_connect_panel(request)
     try:
         list_output = list_fn()
-        visible_rows, total_rows, username_filter = _apply_list_output_to_state(state, list_output)
+        visible_rows, total_rows, username_filter = _apply_list_output_to_state(
+            state,
+            list_output,
+            sync_chat_options=False,
+        )
+        state["list_loaded_by_user"] = True
         if total_rows is not None:
             if username_filter:
                 _append_connect_step(
@@ -1526,11 +1532,74 @@ async def evs_run_list(request: Request):
         state["last_success"] = "VSManager.list() completed."
     except Exception as ex:
         _clear_list_result(state)
-        state["selected_vs_name"] = ""
         state["list_preview"] = f"Error: {ex}"
         state["last_error"] = f"VSManager.list() failed: {ex}"
         _append_connect_step(state, "VSManager.list()", "error", f"Execution failed: {ex}")
     return _render_connect_panel(request)
+
+
+@app.post("/ui/chat/vs-list", response_class=HTMLResponse)
+async def chat_run_list(request: Request):
+    if not _is_logged_in(request):
+        return HTMLResponse("Unauthorized", status_code=401)
+
+    state = app.state.evs_state
+    if not state["connected"]:
+        _clear_chat_list_result(state)
+        state["chat_list_preview"] = "Connect in Step 1 first."
+        return templates.TemplateResponse(
+            request,
+            "partials/chat_vector_store_list.html",
+            {"evs": state, "is_oob": False},
+        )
+
+    if VSManager is None:
+        _clear_chat_list_result(state)
+        state["chat_list_preview"] = f"Cannot run: {TERADATA_IMPORT_ERROR}"
+        return templates.TemplateResponse(
+            request,
+            "partials/chat_vector_store_list.html",
+            {"evs": state, "is_oob": False},
+        )
+
+    list_fn = getattr(VSManager, "list", None)
+    if not callable(list_fn):
+        _clear_chat_list_result(state)
+        state["chat_list_preview"] = "Cannot run: VSManager.list is not callable."
+        return templates.TemplateResponse(
+            request,
+            "partials/chat_vector_store_list.html",
+            {"evs": state, "is_oob": False},
+        )
+
+    try:
+        list_output = list_fn()
+        visible_rows, total_rows, username_filter = _apply_chat_list_output_to_state(state, list_output)
+        if total_rows is not None:
+            if username_filter:
+                _append_connect_step(
+                    state,
+                    "Step 3 VSManager.list()",
+                    "ok",
+                    f"Called successfully. rows={visible_rows}/{total_rows} (filtered by username='{username_filter}').",
+                )
+            else:
+                _append_connect_step(state, "Step 3 VSManager.list()", "ok", f"Called successfully. rows={total_rows}.")
+        else:
+            _append_connect_step(state, "Step 3 VSManager.list()", "ok", "Called successfully.")
+        state["last_error"] = ""
+        state["last_success"] = "Step 3 Run List completed."
+    except Exception as ex:
+        _clear_chat_list_result(state)
+        state["chat_list_preview"] = f"Error: {ex}"
+        state["last_error"] = f"Step 3 Run List failed: {ex}"
+        _append_connect_step(state, "Step 3 VSManager.list()", "error", f"Execution failed: {ex}")
+
+    return templates.TemplateResponse(
+        request,
+        "partials/chat_vector_store_list.html",
+        {"evs": state, "is_oob": False},
+    )
 
 
 @app.post("/ui/evs/select", response_class=HTMLResponse)
@@ -1598,34 +1667,25 @@ async def evs_destroy_selected(request: Request, vs_name: str = Form(default="")
         state["last_success"] = f"VectorStore.destroy() completed for '{target_name}'."
         _append_connect_step(state, "VectorStore.destroy()", "ok", f"Destroyed vector store '{target_name}'.")
         state["selected_vs_name"] = ""
-
         list_fn = getattr(VSManager, "list", None) if VSManager is not None else None
         if callable(list_fn):
             try:
-                refresh_attempts = 3
-                for attempt in range(1, refresh_attempts + 1):
-                    list_output = list_fn()
-                    visible_rows, _total_rows, _username_filter = _apply_list_output_to_state(state, list_output)
-                    existing_names = _list_vs_name_values(state.get("list_columns", []), state.get("list_rows", []))
-                    if target_name not in existing_names:
-                        _append_connect_step(
-                            state,
-                            "VSManager.list()",
-                            "ok",
-                            f"List refreshed after destroy (attempt {attempt}/{refresh_attempts}). rows={visible_rows}.",
-                        )
-                        break
-                    if attempt < refresh_attempts:
-                        await asyncio.sleep(0.4)
-                else:
-                    _append_connect_step(
-                        state,
-                        "VSManager.list()",
-                        "warn",
-                        f"Destroy completed, but '{target_name}' is still visible after {refresh_attempts} refresh attempts.",
-                    )
+                list_output = list_fn()
+                visible_rows, _total_rows, _username_filter = _apply_list_output_to_state(
+                    state,
+                    list_output,
+                    sync_chat_options=False,
+                )
+                _append_connect_step(
+                    state,
+                    "VSManager.list()",
+                    "ok",
+                    f"Step 1 list refreshed after destroy. rows={visible_rows}.",
+                )
             except Exception as list_ex:
-                _append_connect_step(state, "VSManager.list()", "warn", f"Destroy succeeded, list refresh failed: {list_ex}")
+                _append_connect_step(state, "VSManager.list()", "warn", f"Destroy succeeded, Step 1 list refresh failed: {list_ex}")
+        else:
+            _append_connect_step(state, "VSManager.list()", "warn", "Destroy succeeded, but VSManager.list() is unavailable.")
     except Exception as ex:
         state["destroy_status"] = "err"
         state["destroy_preview"] = f"Delete failed for '{target_name}': {ex}"
@@ -1765,19 +1825,12 @@ async def upload_and_prepare_create(request: Request):
         app.state.evs_state["last_error"] = ""
         app.state.evs_state["last_success"] = result_message
         app.state.evs_state["last_created_vs_name"] = vector_store_name
-        app.state.evs_state["selected_vs_name"] = vector_store_name
-        list_fn = getattr(VSManager, "list", None) if VSManager is not None else None
-        if callable(list_fn):
-            try:
-                list_output = list_fn()
-                _apply_list_output_to_state(app.state.evs_state, list_output)
-            except Exception as list_ex:
-                _append_connect_step(
-                    app.state.evs_state,
-                    "VSManager.list()",
-                    "warn",
-                    f"Create succeeded, but list refresh failed: {list_ex}",
-                )
+        _append_connect_step(
+            app.state.evs_state,
+            "VSManager.list()",
+            "info",
+            "Skipped after create. Click 'Run List' manually.",
+        )
 
     return templates.TemplateResponse(
         request,

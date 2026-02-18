@@ -14,7 +14,6 @@
 {% if ns.vs_name_idx < 0 and evs.list_columns|length > 0 %}
   {% set ns.vs_name_idx = 0 %}
 {% endif %}
-<div class="monitor-list-summary">Rows: {{ evs.list_row_count }}</div>
 <div class="monitor-table-wrap monitor-table-wrap-list" style="--list-visible-rows: {{ _list_visible_rows }};">
   <table class="monitor-table" {% if _selectable %}data-vs-select-table{% endif %}>
     <thead>
