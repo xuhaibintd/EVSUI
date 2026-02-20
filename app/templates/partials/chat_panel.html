@@ -1,14 +1,7 @@
-<div class="stack {% if not evs.connected %}disabled-block{% endif %}">
-  <div
-    id="chat-messages"
-    class="chat-window"
-    style="overflow: hidden !important; scrollbar-width: none; -ms-overflow-style: none;"
-  >
+<div class="stack chat-layout {% if not evs.connected %}disabled-block{% endif %}">
+  <div id="chat-messages" class="chat-window">
     {% include "partials/chat_messages.html" %}
   </div>
-  <style>
-    #chat-messages::-webkit-scrollbar { width: 0; height: 0; }
-  </style>
 
   <form id="chat-form" class="stack chat-shell" hx-post="/ui/chat" hx-target="#chat-messages" hx-swap="innerHTML" hx-indicator="#chat-progress">
     {% set is_oob = false %}

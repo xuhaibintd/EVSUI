@@ -216,6 +216,46 @@ function bindAlgorithmParams(scope = document) {
   });
 }
 
+function bindDocPipelineParams(scope = document) {
+  const forms = scope.querySelectorAll("#section-create form[hx-post='/ui/create/upload']");
+  forms.forEach((form) => {
+    const modeSelect = form.querySelector("select[name='doc_pipeline_mode'][data-doc-pipeline-mode]");
+    const modeGroups = form.querySelectorAll("[data-doc-mode-for]");
+    if (!(modeSelect instanceof HTMLSelectElement) || !modeGroups.length) {
+      return;
+    }
+
+    const syncByMode = () => {
+      const currentMode = (modeSelect.value || "text_core").trim().toLowerCase();
+      modeGroups.forEach((group) => {
+        if (!(group instanceof HTMLElement)) {
+          return;
+        }
+        const targetMode = (group.dataset.docModeFor || "").trim().toLowerCase();
+        const show = targetMode === currentMode;
+        group.classList.toggle("doc-mode-hidden", !show);
+
+        const controls = group.querySelectorAll("input, select, textarea");
+        controls.forEach((control) => {
+          const key = "docModeInitialDisabled";
+          if (control.dataset[key] == null) {
+            control.dataset[key] = control.disabled ? "1" : "0";
+          }
+          const initialDisabled = control.dataset[key] === "1";
+          control.disabled = !show || initialDisabled;
+        });
+      });
+    };
+
+    if (modeSelect.dataset.docModeBound !== "1") {
+      modeSelect.dataset.docModeBound = "1";
+      modeSelect.addEventListener("change", syncByMode);
+    }
+
+    syncByMode();
+  });
+}
+
 function bindListRowSelection(scope = document) {
   const tables = scope.querySelectorAll("[data-vs-select-table]");
   tables.forEach((table) => {
@@ -342,6 +382,7 @@ document.body.addEventListener("htmx:afterSwap", (event) => {
   bindCustomFileInputs(document);
   enforceCreateInputLength(document);
   bindAlgorithmParams(document);
+  bindDocPipelineParams(document);
   bindListRowSelection(document);
   bindDestroyConfirmModal(document);
 });
@@ -480,6 +521,7 @@ document.addEventListener("DOMContentLoaded", () => {
   bindCustomFileInputs(document);
   enforceCreateInputLength(document);
   bindAlgorithmParams(document);
+  bindDocPipelineParams(document);
   bindListRowSelection(document);
   bindDestroyConfirmModal(document);
 });

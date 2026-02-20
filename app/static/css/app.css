@@ -9,8 +9,8 @@
   --content-max-w: 2200px;
   --connect-form-w: clamp(21rem, 26vw, 31rem);
   --create-result-h: clamp(280px, 44vh, 760px);
-  --chat-window-h: clamp(180px, 34vh, 420px);
-  --list-visible-rows: 15;
+  --chat-window-h: clamp(108px, 18vh, 220px);
+  --list-visible-rows: 5;
   --list-row-h: 2rem;
   --list-head-h: 2rem;
   --bg-root: #040b1b;
@@ -23,7 +23,7 @@
   --line: #263d70;
   --line-soft: #1d315b;
   --accent: #ff8a38;
-  --teradata-orange: #f68d3d;
+  --teradata-orange: #f47b2a;
   --primary: #3399ff;
   --success: #55d77e;
   --font-ui: "Manrope", "Segoe UI", "Trebuchet MS", sans-serif;
@@ -97,13 +97,15 @@ body {
 
 .brand-name {
   margin: 0;
-  font-size: 2rem;
-  font-family: "Avenir Next", "Avenir", "Manrope", "Segoe UI", sans-serif;
+  font-size: clamp(2rem, 1.3vw + 1.35rem, 2.45rem);
+  font-family: "Avenir Next", "Avenir Next LT Pro", "Avenir", "Trebuchet MS", "Segoe UI", sans-serif;
   font-weight: 700;
-  letter-spacing: 0.01em;
-  line-height: 1;
+  letter-spacing: -0.02em;
+  line-height: 0.96;
   color: var(--teradata-orange);
   text-transform: lowercase;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
 }
 
 .brand-wordmark {
@@ -113,7 +115,7 @@ body {
 .brand-dot {
   display: inline-block;
   color: var(--teradata-orange);
-  transform: translateY(-0.01em);
+  transform: none;
 }
 
 .brand-sub {
@@ -383,6 +385,7 @@ p {
   min-width: 0;
   height: 100%;
   min-height: 0;
+  overflow: hidden;
 }
 
 
@@ -412,7 +415,7 @@ p {
 
 .menu-section#section-connect .panel-content {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   gap: 0.65rem;
   align-content: start;
   overflow: hidden;
@@ -420,28 +423,28 @@ p {
 
 @media (max-height: 860px) {
   .menu-section#section-connect .panel-content {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr);
     gap: 0.65rem;
-    overflow: visible;
+    overflow: auto;
   }
 
   .connect-grid {
-    height: auto;
-    min-height: var(--connect-main-min);
-    overflow: visible;
+    height: 100%;
+    min-height: 0;
+    overflow: auto;
   }
 
   .connect-fields,
   .connect-monitor {
-    height: auto;
-    overflow: visible;
+    height: 100%;
+    overflow: auto;
   }
 
   .connect-monitor-group {
-    height: auto;
-    grid-template-rows: auto;
-    overflow: visible;
+    height: 100%;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: auto;
   }
 }
 
@@ -822,6 +825,10 @@ button.ghost {
 .select-docs-left {
   display: grid;
   gap: 0.55rem;
+  border: 1px solid #2a4a7b;
+  border-radius: 10px;
+  padding: 0.5rem 0.58rem 0.58rem;
+  background: rgba(6, 18, 40, 0.82);
 }
 
 .select-docs-right {
@@ -835,6 +842,48 @@ button.ghost {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.55rem;
+}
+
+.fusion-params-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.doc-pipeline-panel {
+  border: 1px solid #2a4a7b;
+  border-radius: 10px;
+  padding: 0.5rem 0.58rem 0.58rem;
+  background: rgba(6, 18, 40, 0.82);
+  display: grid;
+  gap: 0.45rem;
+}
+
+.doc-pipeline-mode-field {
+  margin: 0;
+}
+
+.doc-pipeline-groups {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.doc-pipeline-group {
+  border: 1px solid #2a4a7b;
+  border-radius: 9px;
+  padding: 0.45rem;
+  background: rgba(8, 22, 49, 0.9);
+}
+
+.doc-pipeline-title {
+  margin: 0 0 0.42rem;
+  color: #dce9ff;
+  font-family: var(--font-display);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.doc-pipeline-group.doc-mode-hidden {
+  display: none;
 }
 
 .basic-layout {
@@ -994,6 +1043,10 @@ button.ghost {
   .basic-row-second {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+
+  .fusion-params-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 1100px) {
@@ -1060,7 +1113,7 @@ button.ghost {
   border: 1px solid var(--line-soft);
   border-radius: 12px;
   background: rgba(5, 14, 33, 0.6);
-  overflow: hidden;
+  overflow: auto;
 }
 
 .connect-fields {
@@ -1070,7 +1123,7 @@ button.ghost {
   align-content: start;
   min-height: 0;
   height: 100%;
-  overflow: visible;
+  overflow: auto;
 }
 
 .connect-userpass-row {
@@ -1083,7 +1136,7 @@ button.ghost {
 .connect-monitor {
   min-height: 0;
   height: 100%;
-  overflow: hidden;
+  overflow: auto;
 }
 
 .connect-monitor-group {
@@ -1098,7 +1151,7 @@ button.ghost {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 0.6rem;
-  overflow: hidden;
+  overflow: auto;
 }
 
 .connect-monitor-group > legend {
@@ -1260,7 +1313,7 @@ button.ghost {
   max-height: none;
   line-height: 1.35;
   white-space: normal;
-  overflow: hidden;
+  overflow: auto;
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
@@ -1287,11 +1340,17 @@ button.ghost {
 .monitor-status-list-main {
   flex: 1 1 auto;
   min-height: 0;
+  overflow: auto;
+}
+
+/* Prevent list area collapse on smaller-height laptop displays. */
+.connect-monitor-group > .monitor-card:last-child .monitor-status.monitor-status-list-main {
+  min-height: clamp(96px, 16vh, 260px);
 }
 
 .monitor-table-wrap-list {
   flex: 0 1 auto;
-  min-height: 0;
+  min-height: clamp(88px, 14vh, 220px);
   max-height: min(calc((var(--list-visible-rows) * var(--list-row-h)) + var(--list-head-h)), 62vh);
   overflow-x: auto;
   overflow-y: auto;
@@ -1745,52 +1804,46 @@ button.ghost {
   overflow-x: auto;
 }
 
+#section-chat.menu-section .panel-content {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding-right: 0;
+}
+
+#section-chat.menu-section {
+  overflow: hidden;
+}
+
+#section-chat .chat-layout {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 0.42rem;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
 #section-chat .chat-window {
   border: 1px solid var(--line-soft);
   border-radius: 12px;
   padding: 0.6rem;
-  height: var(--chat-window-h);
-  min-height: var(--chat-window-h);
-  max-height: var(--chat-window-h);
-  overflow: hidden !important;
-  scrollbar-width: none;
+  min-height: 0;
+  max-height: none;
+  height: auto;
+  overflow: auto;
+  scrollbar-gutter: stable both-edges;
   background: rgba(7, 18, 42, 0.84);
-}
-
-#section-chat .chat-window::-webkit-scrollbar {
-  width: 0;
-  height: 0;
 }
 
 .chat-vs-field {
   gap: 0.34rem;
 }
 
-#section-chat.menu-section .panel-content {
-  overflow: hidden !important;
-  padding-right: 0;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-
-#section-chat.menu-section {
-  overflow: hidden !important;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-
-#section-chat.menu-section::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-}
-
-#section-chat.menu-section .panel-content::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-}
-
 #section-chat .chat-shell {
-  gap: 0.35rem;
+  min-height: 0;
+  gap: 0.32rem;
 }
 
 #section-chat .chat-section {
@@ -1799,8 +1852,8 @@ button.ghost {
 }
 
 #section-chat .chat-section + .chat-section {
-  margin-top: 0.15rem;
-  padding-top: 0.34rem;
+  margin-top: 0.12rem;
+  padding-top: 0.28rem;
 }
 
 #section-chat .chat-section .label {
@@ -1834,8 +1887,8 @@ button.ghost {
 }
 
 #section-chat .chat-shell textarea[name="message"] {
-  min-height: 4.2rem;
-  max-height: 8rem;
+  min-height: 3.4rem;
+  max-height: 6.2rem;
   overflow: hidden;
   resize: none;
 }
@@ -1928,11 +1981,34 @@ button.ghost {
   }
 }
 
-@media (max-height: 900px) and (min-width: 1101px) {
+@media (max-height: 900px) and (min-width: 1101px) and (max-width: 1600px) {
   :root {
     --ui-topbar-h: clamp(76px, 10vh, 92px);
     --create-result-h: clamp(220px, 40vh, 520px);
-    --chat-window-h: clamp(170px, 32vh, 320px);
+    --chat-window-h: clamp(90px, 16vh, 170px);
+  }
+
+  /* Allow vertical scrolling instead of clipping content on laptop-height screens. */
+  .page {
+    overflow: auto;
+  }
+
+  .menu-section .panel-content {
+    overflow: auto;
+    padding-right: 0.15rem;
+  }
+
+  .connect-grid {
+    height: 100%;
+    min-height: 0;
+    overflow: auto;
+  }
+
+  .connect-fields,
+  .connect-monitor,
+  .connect-monitor-group {
+    height: 100%;
+    overflow: auto;
   }
 }
 
@@ -1951,7 +2027,7 @@ button.ghost {
   .page {
     height: calc(100dvh - var(--ui-topbar-h));
     max-height: calc(100dvh - var(--ui-topbar-h));
-    overflow: hidden;
+    overflow: auto;
   }
 
   .brand-block {
@@ -2032,7 +2108,7 @@ button.ghost {
   }
 
   .menu-section .panel-content {
-    overflow: hidden;
+    overflow: auto;
     padding-right: 0;
   }
 
@@ -2056,9 +2132,9 @@ button.ghost {
   }
 
   .chat-window {
-    height: 34vh;
-    min-height: 34vh;
-    max-height: 34vh;
+    height: clamp(110px, 28vh, 220px);
+    min-height: clamp(110px, 28vh, 220px);
+    max-height: clamp(110px, 28vh, 220px);
   }
 
   #section-create #create-result {
@@ -2101,7 +2177,7 @@ button.ghost {
   .connect-fields,
   .connect-monitor {
     height: auto;
-    overflow: hidden;
+    overflow: auto;
   }
 
   .connect-userpass-row {
@@ -2111,7 +2187,7 @@ button.ghost {
   .connect-monitor-group {
     height: auto;
     grid-template-rows: auto;
-    overflow: hidden;
+    overflow: auto;
   }
 
   .step-results-dock {
@@ -2129,8 +2205,9 @@ button.ghost {
     display: flex;
     flex-direction: column;
     gap: 0.65rem;
-    overflow: hidden;
+    overflow: auto;
   }
+
 }
 
 @media (max-width: 900px) {

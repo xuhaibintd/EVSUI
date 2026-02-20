@@ -33,28 +33,84 @@
         </div>
       </div>
       <div class="select-docs-right">
-        <div class="select-docs-options">
-          <label class="field">
-            <span>chunk_size</span>
-            <input type="number" name="chunk_size" value="{{ create_values.get('chunk_size', '') }}" placeholder="500" {% if not evs.connected %}disabled{% endif %} />
-          </label>
-          <label class="field">
-            <span>optimized_chunking</span>
-            <select name="optimized_chunking" {% if not evs.connected %}disabled{% endif %}>
-              <option value="">(not set)</option>
-              <option value="false" {% if create_values.get('optimized_chunking', '') == 'false' %}selected{% endif %}>false</option>
-              <option value="true" {% if create_values.get('optimized_chunking', '') == 'true' %}selected{% endif %}>true</option>
+        {% set _doc_pipeline_mode = create_values.get('doc_pipeline_mode', 'text_core') %}
+        <section class="doc-pipeline-panel" aria-label="Content processing mode">
+          <label class="field doc-pipeline-mode-field">
+            <span>Content Processing Mode</span>
+            <select
+              name="doc_pipeline_mode"
+              data-doc-pipeline-mode
+              {% if not evs.connected %}disabled{% endif %}
+            >
+              <option value="text_core" {% if _doc_pipeline_mode != 'format_fusion' %}selected{% endif %}>Text Core</option>
+              <option value="format_fusion" {% if _doc_pipeline_mode == 'format_fusion' %}selected{% endif %}>Format Fusion</option>
             </select>
           </label>
-          <label class="field">
-            <span>header_height</span>
-            <input type="number" name="header_height" min="0" step="1" value="{{ create_values.get('header_height', '') }}" placeholder="" {% if not evs.connected %}disabled{% endif %} />
-          </label>
-          <label class="field">
-            <span>footer_height</span>
-            <input type="number" name="footer_height" min="0" step="1" value="{{ create_values.get('footer_height', '') }}" placeholder="" {% if not evs.connected %}disabled{% endif %} />
-          </label>
-        </div>
+          <div class="doc-pipeline-groups">
+            <section class="doc-pipeline-group {% if _doc_pipeline_mode == 'format_fusion' %}doc-mode-hidden{% endif %}" data-doc-mode-for="text_core">
+              <div class="select-docs-options">
+                <label class="field">
+                  <span>chunk_size</span>
+                  <input type="number" name="chunk_size" value="{{ create_values.get('chunk_size', '') }}" placeholder="500" {% if not evs.connected %}disabled{% endif %} />
+                </label>
+                <label class="field">
+                  <span>optimized_chunking</span>
+                  <select name="optimized_chunking" {% if not evs.connected %}disabled{% endif %}>
+                    <option value="">(not set)</option>
+                    <option value="false" {% if create_values.get('optimized_chunking', '') == 'false' %}selected{% endif %}>false</option>
+                    <option value="true" {% if create_values.get('optimized_chunking', '') == 'true' %}selected{% endif %}>true</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>header_height</span>
+                  <input type="number" name="header_height" min="0" step="1" value="{{ create_values.get('header_height', '') }}" placeholder="" {% if not evs.connected %}disabled{% endif %} />
+                </label>
+                <label class="field">
+                  <span>footer_height</span>
+                  <input type="number" name="footer_height" min="0" step="1" value="{{ create_values.get('footer_height', '') }}" placeholder="" {% if not evs.connected %}disabled{% endif %} />
+                </label>
+              </div>
+            </section>
+            <section class="doc-pipeline-group {% if _doc_pipeline_mode != 'format_fusion' %}doc-mode-hidden{% endif %}" data-doc-mode-for="format_fusion">
+              <div class="select-docs-options fusion-params-grid">
+                <label class="field">
+                  <span>fusion_strategy</span>
+                  <select name="fusion_strategy" {% if not evs.connected %}disabled{% endif %}>
+                    <option value="auto" {% if create_values.get('fusion_strategy', 'auto') == 'auto' %}selected{% endif %}>auto</option>
+                    <option value="layout" {% if create_values.get('fusion_strategy', '') == 'layout' %}selected{% endif %}>layout</option>
+                    <option value="fast" {% if create_values.get('fusion_strategy', '') == 'fast' %}selected{% endif %}>fast</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>fusion_chunk_size</span>
+                  <input type="number" name="fusion_chunk_size" value="{{ create_values.get('fusion_chunk_size', '600') }}" placeholder="600" {% if not evs.connected %}disabled{% endif %} />
+                </label>
+                <label class="field">
+                  <span>fusion_chunk_overlap</span>
+                  <input type="number" name="fusion_chunk_overlap" value="{{ create_values.get('fusion_chunk_overlap', '80') }}" placeholder="80" {% if not evs.connected %}disabled{% endif %} />
+                </label>
+                <label class="field">
+                  <span>fusion_ocr_languages</span>
+                  <input type="text" name="fusion_ocr_languages" value="{{ create_values.get('fusion_ocr_languages', 'ja,en') }}" placeholder="ja,en" {% if not evs.connected %}disabled{% endif %} />
+                </label>
+                <label class="field">
+                  <span>fusion_keep_tables</span>
+                  <select name="fusion_keep_tables" {% if not evs.connected %}disabled{% endif %}>
+                    <option value="true" {% if create_values.get('fusion_keep_tables', 'true') == 'true' %}selected{% endif %}>true</option>
+                    <option value="false" {% if create_values.get('fusion_keep_tables', '') == 'false' %}selected{% endif %}>false</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>fusion_extract_images</span>
+                  <select name="fusion_extract_images" {% if not evs.connected %}disabled{% endif %}>
+                    <option value="false" {% if create_values.get('fusion_extract_images', 'false') == 'false' %}selected{% endif %}>false</option>
+                    <option value="true" {% if create_values.get('fusion_extract_images', '') == 'true' %}selected{% endif %}>true</option>
+                  </select>
+                </label>
+              </div>
+            </section>
+          </div>
+        </section>
       </div>
     </div>
   </section>
