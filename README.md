@@ -17,7 +17,7 @@ Teradata Vector Store is a `FastAPI + Jinja2 + HTMX` three-step interface for co
 - Supports multi-file upload
 - Full `VectorStore.create(...)` parameter form
 - Built-in parameter sets for `VECTORDISTANCE / KMEANS / HNSW`
-- `Format Fusion` mode runs Unstructured Workflow (`teradata-sql` destination connector) and writes processed text rows into a Teradata table automatically.
+- `Format Fusion` mode runs Unstructured Workflow (`teradata-sql` destination connector), creates a Teradata table first, and writes processed text rows into `<Vector Store Name>_unstructured`.
 
 3. Step 3: Retrieval Chat
 - Supports `VectorStore.ask` and `VectorStore.similarity_search`
@@ -43,16 +43,26 @@ Teradata Vector Store is a `FastAPI + Jinja2 + HTMX` three-step interface for co
   - `unstructured-client`
   - `packaging`
 
-## Format Fusion Environment
+## Format Fusion Config
 
-- Required:
-  - `UNSTRUCTURED_API_KEY`
-- Optional:
-  - `UNSTRUCTURED_PLATFORM_URL` (default: `https://platform.unstructuredapp.io/`)
+- Configure Unstructured credentials in `app/config/unstructured.json`:
+
+```json
+{
+  "key_id": "your-unstructured-api-key",
+  "UNSTRUCTURED_API_URL": "https://platform.unstructuredapp.io/api/v1"
+}
+```
+
+- Optional runtime env (still supported as fallback):
   - `UNSTRUCTURED_WORKFLOW_POLL_SECONDS` (default: `120`)
   - `UNSTRUCTURED_WORKFLOW_POLL_INTERVAL` (default: `2`)
   - `UNSTRUCTURED_TERADATA_BATCH_SIZE` (default: `200`)
   - `UNSTRUCTURED_KEEP_WORKFLOW_RESOURCES` (`true/false`, default: `false`)
+
+Notes:
+- Web console sign-in URL: `https://platform.unstructured.io`
+- Workflow API URL: `https://platform.unstructuredapp.io/api/v1` (or your account-specific API URL)
 
 ## Quick Start
 
@@ -78,12 +88,32 @@ Open: `http://127.0.0.1:8010`
 
 ## Login
 
-- Default username: `admin`
-- Default password: `admin`
+- Configure users in `app/config/auth_users.json`:
+
+```json
+{
+  "users": {
+    "admin": "change-me",
+    "alice": "alice-pass",
+    "bob": "bob-pass"
+  }
+}
+```
+
+- Optional:
+  - `POC_AUTH_FILE` to point to a different JSON file path.
+  - Fallback single-user env vars: `POC_ADMIN_USER`, `POC_ADMIN_PASSWORD` (used only when config file has no users).
+
+- Multi-user isolation:
+  - Each login gets its own session (`evsui_sid`) and independent UI state.
 
 ## Project Structure
 
-- Application entry: `app/main.py`
+- Application entry and routes: `app/main.py`
+- Auth config: `app/config/auth_users.json`
+- Service layer:
+  - `app/services/create_config.py` (create form schema/coercion)
+  - `app/services/format_fusion.py` (multi-format preprocessing pipeline)
 - Templates: `app/templates/`
 - Static assets: `app/static/`
 - Upload directories:

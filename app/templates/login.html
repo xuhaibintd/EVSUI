@@ -5,7 +5,7 @@
   <article class="panel login-panel">
     <div class="login-header">
       <h2>Sign in</h2>
-      <p class="muted">Default credentials: admin / admin</p>
+      <p class="muted">Use credentials configured in auth config.</p>
     </div>
     {% if error %}
     <p class="status err">{{ error }}</p>
@@ -13,11 +13,11 @@
     <form class="stack" method="post" action="/login" autocomplete="on">
       <label class="field">
         <span>Username</span>
-        <input type="text" name="username" value="admin" placeholder="admin" required />
+        <input type="text" name="username" value="{{ username }}" placeholder="username" required />
       </label>
       <label class="field">
         <span>Password</span>
-        <input type="password" name="password" value="admin" placeholder="admin" required />
+        <input type="password" name="password" value="" placeholder="password" required />
       </label>
       <button type="submit" class="login-btn">Login</button>
     </form>
