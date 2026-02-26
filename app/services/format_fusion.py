@@ -15,10 +15,48 @@ UNSTRUCTURED_CONFIG_FILE_DEFAULT = Path(__file__).resolve().parents[1] / "config
 UNSTRUCTURED_WORKFLOW_API_URL_DEFAULT = "https://platform.unstructuredapp.io/api/v1"
 UNSTRUCTURED_WORKFLOW_POLL_SECONDS_DEFAULT = 120
 UNSTRUCTURED_WORKFLOW_POLL_INTERVAL_DEFAULT = 2
+UNSTRUCTURED_TERADATA_FLUSH_WAIT_SECONDS_DEFAULT = 20
+UNSTRUCTURED_TERADATA_FLUSH_WAIT_INTERVAL_DEFAULT = 2
 
 
 ExecuteSqlFn = Callable[[str], Any]
 ResolvePathFn = Callable[[str], str]
+
+
+UNSTRUCTURED_CHUNK_COLUMNS: list[tuple[str, str]] = [
+    ("id", 'VARCHAR(64) NOT NULL'),
+    ("record_id", "VARCHAR(64)"),
+    ("element_id", "VARCHAR(64)"),
+    ("text", "VARCHAR(32000) CHARACTER SET UNICODE"),
+    ("type", "VARCHAR(50)"),
+    ("last_modified", "VARCHAR(50)"),
+    ("file_directory", "VARCHAR(500)"),
+    ("filename", "VARCHAR(255)"),
+    ("filetype", "VARCHAR(50)"),
+    ("record_locator", "VARCHAR(1000)"),
+    ("date_created", "VARCHAR(50)"),
+    ("date_modified", "VARCHAR(50)"),
+    ("date_processed", "VARCHAR(50)"),
+    ("permissions_data", "VARCHAR(1000)"),
+    ("filesize_bytes", "INTEGER"),
+    ("parent_id", "VARCHAR(64)"),
+]
+
+
+def _build_unstructured_table_ddl(
+    qualified_table: str,
+) -> str:
+    column_lines: list[str] = ['  "id" VARCHAR(64) NOT NULL', '  PRIMARY KEY ("id")']
+    for name, col_type in UNSTRUCTURED_CHUNK_COLUMNS:
+        if name == "id":
+            continue
+        column_lines.append(f'  "{name}" {col_type}')
+    ddl_body = ",\n".join(column_lines)
+    return f"""
+CREATE SET TABLE {qualified_table} (
+{ddl_body}
+)
+"""
 
 
 def normalize_document_files_for_create(
@@ -51,15 +89,6 @@ def normalize_document_files_for_create(
     exec_payload["document_files"] = resolved_items
 
     return exec_payload, warnings
-
-
-def _to_bool(raw: str, default: bool = False) -> bool:
-    value = str(raw).strip().lower()
-    if value in {"1", "true", "yes", "on"}:
-        return True
-    if value in {"0", "false", "no", "off"}:
-        return False
-    return default
 
 
 def _to_int(raw: str, default: int, minimum: int = 0, maximum: int | None = None) -> int:
@@ -98,6 +127,18 @@ def _split_object_name_hint(raw_object_name: str) -> tuple[str, str]:
     return lhs.strip(), rhs.strip()
 
 
+def _base_vector_store_name(raw_name: str) -> str:
+    name = str(raw_name or "").strip()
+    if not name:
+        return ""
+    lowered = name.lower()
+    for suffix in ("_unstructured", "_unstractured"):
+        if lowered.endswith(suffix):
+            trimmed = name[: -len(suffix)].strip().strip("_")
+            return trimmed or name
+    return name
+
+
 def _resolve_format_fusion_table_target(
     exec_payload: dict,
     create_values: dict[str, str],
@@ -118,7 +159,8 @@ def _resolve_format_fusion_table_target(
     target_database_raw = str(exec_payload.get("target_database") or create_values.get("target_database", "")).strip()
     if target_database_raw:
         schema_hint = target_database_raw
-    table_hint = f"{vector_store_name}_unstructured"
+    vs_base_name = _base_vector_store_name(vector_store_name) or vector_store_name
+    table_hint = f"{vs_base_name}_unstructured"
 
     table_name = _sanitize_teradata_identifier(table_hint, fallback="unstructured")
     schema_name = _sanitize_teradata_identifier(schema_hint, fallback="", allow_empty=True) or None
@@ -154,6 +196,11 @@ def _cursor_first_scalar(cursor) -> str | int | None:
         if isinstance(row, (list, tuple)) and row:
             return row[0]
         if row is not None:
+            try:
+                return row[0]  # tuple-like row wrappers
+            except Exception:
+                pass
+        if row is not None:
             return row
 
     fetchall = getattr(cursor, "fetchall", None)
@@ -171,6 +218,10 @@ def _cursor_first_scalar(cursor) -> str | int | None:
             return None
         if isinstance(first, (list, tuple)) and first:
             return first[0]
+        try:
+            return first[0]  # tuple-like row wrappers
+        except Exception:
+            pass
         return first
     return None
 
@@ -188,6 +239,47 @@ def _teradata_table_exists(qualified_table_sql: str, execute_sql_fn: ExecuteSqlF
         raise
 
 
+def _teradata_column_exists(
+    schema_name: str | None,
+    table_name: str,
+    column_name: str,
+    execute_sql_fn: ExecuteSqlFn | None,
+) -> bool:
+    if execute_sql_fn is None:
+        raise RuntimeError("teradataml.execute_sql is unavailable.")
+    qualified_table = _qualified_table_sql(schema_name, table_name)
+    quoted_column = column_name.replace('"', '""')
+    try:
+        execute_sql_fn(f'SELECT TOP 1 "{quoted_column}" FROM {qualified_table}')
+        return True
+    except Exception as ex:
+        msg = str(ex).lower()
+        if "3810" in msg or ("column" in msg and ("does not exist" in msg or "not found" in msg)):
+            return False
+        raise
+
+
+def _drop_teradata_column_if_exists(
+    schema_name: str | None,
+    table_name: str,
+    column_name: str,
+    execute_sql_fn: ExecuteSqlFn | None,
+) -> bool:
+    if execute_sql_fn is None:
+        raise RuntimeError("teradataml.execute_sql is unavailable.")
+    if not _teradata_column_exists(
+        schema_name=schema_name,
+        table_name=table_name,
+        column_name=column_name,
+        execute_sql_fn=execute_sql_fn,
+    ):
+        return False
+    qualified_table = _qualified_table_sql(schema_name, table_name)
+    quoted_column = column_name.replace('"', '""')
+    execute_sql_fn(f'ALTER TABLE {qualified_table} DROP "{quoted_column}"')
+    return True
+
+
 def _ensure_unstructured_teradata_table(
     schema_name: str | None,
     table_name: str,
@@ -202,30 +294,21 @@ def _ensure_unstructured_teradata_table(
     table_exists = _teradata_table_exists(qualified_table, execute_sql_fn=execute_sql_fn)
 
     if not table_exists:
-        create_sql = f"""
-CREATE SET TABLE {qualified_table} (
-  "id" VARCHAR(64) NOT NULL,
-  PRIMARY KEY ("id"),
-  "record_id" VARCHAR(64),
-  "element_id" VARCHAR(64),
-  "text" VARCHAR(32000) CHARACTER SET UNICODE,
-  "type" VARCHAR(50),
-  "embeddings" VARCHAR(32000),
-  "last_modified" VARCHAR(50),
-  "languages" VARCHAR(200),
-  "file_directory" VARCHAR(500),
-  "filename" VARCHAR(255),
-  "filetype" VARCHAR(50),
-  "record_locator" VARCHAR(1000),
-  "date_created" VARCHAR(50),
-  "date_modified" VARCHAR(50),
-  "date_processed" VARCHAR(50),
-  "permissions_data" VARCHAR(1000),
-  "filesize_bytes" INTEGER,
-  "parent_id" VARCHAR(64)
-)
-"""
+        create_sql = _build_unstructured_table_ddl(
+            qualified_table=qualified_table,
+        )
         execute_sql_fn(create_sql)
+    else:
+        # Remove legacy column from previous schema versions.
+        try:
+            _drop_teradata_column_if_exists(
+                schema_name=schema_name,
+                table_name=table_name,
+                column_name="languages",
+                execute_sql_fn=execute_sql_fn,
+            )
+        except Exception as ex:
+            warnings.append(f'Failed to drop legacy column "languages": {ex}')
 
     if clear_rows:
         try:
@@ -252,23 +335,185 @@ def _count_teradata_rows(schema_name: str | None, table_name: str, execute_sql_f
         return None
 
 
-def _workflow_file_inputs(document_files: list[str], resolve_path_hint: ResolvePathFn):
-    from unstructured_client.models import shared
-
-    inputs = []
-    for path_hint in document_files:
-        resolved = resolve_path_hint(path_hint)
-        src = Path(resolved)
-        if not src.exists() or not src.is_file():
-            raise RuntimeError(f"format_fusion source file is missing: {path_hint}")
-        inputs.append(
-            shared.BodyRunWorkflowInputFiles(
-                content=src.read_bytes(),
-                file_name=src.name,
-                content_type=mimetypes.guess_type(src.name)[0] or "application/octet-stream",
-            )
+def _wait_for_table_rows(
+    schema_name: str | None,
+    table_name: str,
+    execute_sql_fn: ExecuteSqlFn | None,
+    timeout_seconds: int,
+    poll_interval_seconds: int,
+) -> int:
+    started = time.time()
+    last_count = 0
+    while True:
+        current = _count_teradata_rows(
+            schema_name=schema_name,
+            table_name=table_name,
+            execute_sql_fn=execute_sql_fn,
         )
-    return inputs
+        if current is not None:
+            last_count = current
+            if current > 0:
+                return current
+        if time.time() - started >= timeout_seconds:
+            return last_count
+        time.sleep(max(1, poll_interval_seconds))
+
+
+def _parse_langs(raw: str) -> list[str]:
+    items = [chunk.strip() for chunk in str(raw or "").replace("\n", ",").split(",") if chunk.strip()]
+    return items
+
+
+def _resolve_partition_strategy(raw: str) -> str:
+    value = str(raw or "auto").strip().lower()
+    if value == "fast":
+        return "fast"
+    if value == "layout":
+        return "hi_res"
+    return "auto"
+
+
+def _now_ts() -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _as_text(value: Any, max_len: int | None = None) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value
+    elif isinstance(value, (dict, list, tuple)):
+        text = json.dumps(value, ensure_ascii=False)
+    else:
+        text = str(value)
+    text = text.strip()
+    if not text:
+        return None
+    if max_len is not None and len(text) > max_len:
+        return text[:max_len]
+    return text
+
+
+def _as_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
+def _sql_literal(value: Any) -> str:
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, int):
+        return str(value)
+    text = str(value).replace("'", "''")
+    return f"'{text}'"
+
+
+def _element_to_chunk_row(element: dict[str, Any], src: Path, content_type: str) -> dict[str, Any] | None:
+    metadata = element.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    text = _as_text(element.get("text"), max_len=32000)
+    if not text:
+        return None
+
+    row_id = uuid.uuid4().hex
+    element_id = _as_text(element.get("element_id") or element.get("id"), max_len=64)
+    record_id = _as_text(metadata.get("record_id") or element_id or row_id, max_len=64)
+    filetype = _as_text(metadata.get("filetype"), max_len=50) or _as_text(content_type, max_len=50)
+
+    row = {
+        "id": row_id,
+        "record_id": record_id,
+        "element_id": element_id,
+        "text": text,
+        "type": _as_text(element.get("type"), max_len=50),
+        "last_modified": _as_text(metadata.get("last_modified"), max_len=50),
+        "file_directory": _as_text(metadata.get("file_directory") or str(src.parent), max_len=500),
+        "filename": _as_text(metadata.get("filename") or src.name, max_len=255),
+        "filetype": filetype,
+        "record_locator": _as_text(metadata.get("record_locator") or metadata.get("url") or metadata.get("source"), max_len=1000),
+        "date_created": _as_text(metadata.get("date_created"), max_len=50),
+        "date_modified": _as_text(metadata.get("date_modified"), max_len=50),
+        "date_processed": _now_ts(),
+        "permissions_data": _as_text(metadata.get("permissions_data") or metadata.get("permissions"), max_len=1000),
+        "filesize_bytes": _as_int(metadata.get("filesize_bytes") or metadata.get("file_size") or src.stat().st_size),
+        "parent_id": _as_text(metadata.get("parent_id"), max_len=64),
+    }
+    return row
+
+
+def _partition_document_chunks(
+    client,
+    src: Path,
+    *,
+    chunk_size: int,
+    chunk_overlap: int,
+    partition_strategy: str,
+    languages: list[str],
+) -> list[dict[str, Any]]:
+    from unstructured_client.models import operations
+
+    content_type = mimetypes.guess_type(src.name)[0] or "application/octet-stream"
+    partition_parameters: dict[str, Any] = {
+        "files": {
+            "content": src.read_bytes(),
+            "file_name": src.name,
+            "content_type": content_type,
+        },
+        "strategy": partition_strategy,
+        "chunking_strategy": "basic",
+        "max_characters": chunk_size,
+        "new_after_n_chars": chunk_size,
+        "overlap": chunk_overlap,
+        "overlap_all": False,
+        "include_orig_elements": False,
+    }
+    if languages:
+        partition_parameters["languages"] = languages
+
+    resp = client.general.partition(
+        request=operations.PartitionRequest(
+            partition_parameters=partition_parameters,
+        )
+    )
+    if int(getattr(resp, "status_code", 0) or 0) >= 400:
+        raise RuntimeError(f"Unstructured partition failed. status={getattr(resp, 'status_code', '?')}")
+    elements = getattr(resp, "elements", None) or []
+    rows: list[dict[str, Any]] = []
+    for element in elements:
+        if not isinstance(element, dict):
+            continue
+        row = _element_to_chunk_row(element, src=src, content_type=content_type)
+        if row:
+            rows.append(row)
+    return rows
+
+
+def _insert_chunk_rows(
+    schema_name: str | None,
+    table_name: str,
+    rows: list[dict[str, Any]],
+    execute_sql_fn: ExecuteSqlFn | None,
+) -> int:
+    if execute_sql_fn is None:
+        raise RuntimeError("teradataml.execute_sql is unavailable.")
+    if not rows:
+        return 0
+    qualified_table = _qualified_table_sql(schema_name, table_name)
+    columns = [name for name, _ in UNSTRUCTURED_CHUNK_COLUMNS]
+    quoted_cols = ", ".join(f'"{name}"' for name in columns)
+    inserted = 0
+    for row in rows:
+        values_sql = ", ".join(_sql_literal(row.get(col)) for col in columns)
+        execute_sql_fn(f"INSERT INTO {qualified_table} ({quoted_cols}) VALUES ({values_sql})")
+        inserted += 1
+    return inserted
 
 
 def _load_unstructured_runtime_config() -> tuple[str, str]:
@@ -312,150 +557,6 @@ def _new_unstructured_client():
     return UnstructuredClient(api_key_auth=api_key, server_url=api_url.rstrip("/"))
 
 
-def _create_teradata_destination_connector(client, connection_params: dict, database_name: str, table_name: str) -> str:
-    from unstructured_client.models import operations, shared
-
-    host = str(connection_params.get("host", "")).strip()
-    username = str(connection_params.get("username", "")).strip()
-    password = str(connection_params.get("password", ""))
-    missing = []
-    if not host:
-        missing.append("host")
-    if not username:
-        missing.append("username")
-    if not password:
-        missing.append("password")
-    if not database_name:
-        missing.append("database")
-    if missing:
-        raise RuntimeError(f"format_fusion connector config missing: {', '.join(missing)}")
-
-    destination_config = {
-        "host": host,
-        "database": database_name,
-        "table_name": table_name,
-        "batch_size": _to_int(os.getenv("UNSTRUCTURED_TERADATA_BATCH_SIZE", "200"), default=200, minimum=1, maximum=50000),
-        "record_id_key": "record_id",
-        "user": username,
-        "password": password,
-    }
-    connector_name = f"evsui_ff_dest_{uuid.uuid4().hex[:10]}"
-
-    resp = client.destinations.create_destination(
-        request=operations.CreateDestinationRequest(
-            create_destination_connector=shared.CreateDestinationConnector(
-                name=connector_name,
-                type="teradata",
-                config=destination_config,
-            )
-        )
-    )
-    info = getattr(resp, "destination_connector_information", None)
-    destination_id = str(getattr(info, "id", "")).strip() if info else ""
-    if not destination_id:
-        raise RuntimeError(f"Failed to create Teradata destination connector. status={getattr(resp, 'status_code', '?')}")
-    return destination_id
-
-
-def _create_unstructured_workflow(client, destination_id: str) -> str:
-    from unstructured_client.models import operations, shared
-
-    workflow_name = f"evsui_ff_workflow_{uuid.uuid4().hex[:10]}"
-    resp = client.workflows.create_workflow(
-        request=operations.CreateWorkflowRequest(
-            create_workflow=shared.CreateWorkflow(
-                name=workflow_name,
-                workflow_type="basic",
-                destination_id=destination_id,
-            )
-        )
-    )
-    info = getattr(resp, "workflow_information", None)
-    workflow_id = str(getattr(info, "id", "")).strip() if info else ""
-    if not workflow_id:
-        raise RuntimeError(f"Failed to create workflow. status={getattr(resp, 'status_code', '?')}")
-    return workflow_id
-
-
-def _run_unstructured_workflow(client, workflow_id: str, document_files: list[str], resolve_path_hint: ResolvePathFn) -> str:
-    from unstructured_client.models import operations, shared
-
-    run_inputs = _workflow_file_inputs(document_files, resolve_path_hint=resolve_path_hint)
-    resp = client.workflows.run_workflow(
-        request=operations.RunWorkflowRequest(
-            workflow_id=workflow_id,
-            body_run_workflow=shared.BodyRunWorkflow(input_files=run_inputs),
-        )
-    )
-    info = getattr(resp, "job_information", None)
-    job_id = str(getattr(info, "id", "")).strip() if info else ""
-    if not job_id:
-        raise RuntimeError(f"Failed to start workflow run. status={getattr(resp, 'status_code', '?')}")
-    return job_id
-
-
-def _wait_for_unstructured_job(client, job_id: str, timeout_seconds: int, poll_interval_seconds: int) -> str:
-    from unstructured_client.models import operations
-
-    def _normalize_job_status(raw_status: Any) -> str:
-        # SDK may return enum instances (e.g., JobStatus.COMPLETED) instead of plain strings.
-        candidate = getattr(raw_status, "value", raw_status)
-        status_text = str(candidate).strip() if candidate is not None else ""
-        if not status_text:
-            status_text = str(raw_status).strip() if raw_status is not None else "UNKNOWN"
-        normalized = status_text.upper()
-        if "." in normalized:
-            normalized = normalized.rsplit(".", 1)[-1]
-        return normalized or "UNKNOWN"
-
-    started = time.time()
-    last_status = "UNKNOWN"
-    while True:
-        resp = client.jobs.get_job(
-            request=operations.GetJobRequest(
-                job_id=job_id,
-            )
-        )
-        info = getattr(resp, "job_information", None)
-        current_status = _normalize_job_status(getattr(info, "status", last_status))
-        last_status = current_status
-        if current_status in {"COMPLETED", "SUCCESS"}:
-            return current_status
-        if current_status in {"FAILED", "STOPPED", "ERROR", "CANCELLED", "CANCELED"}:
-            raise RuntimeError(f"Workflow job ended with status={current_status}. job_id={job_id}")
-
-        if time.time() - started >= timeout_seconds:
-            raise RuntimeError(
-                f"Workflow job polling timed out after {timeout_seconds}s. last_status={last_status}, job_id={job_id}"
-            )
-        time.sleep(max(1, poll_interval_seconds))
-
-
-def _cleanup_unstructured_resources(client, workflow_id: str, destination_id: str) -> list[str]:
-    from unstructured_client.models import operations
-
-    warnings: list[str] = []
-    if workflow_id:
-        try:
-            client.workflows.delete_workflow(
-                request=operations.DeleteWorkflowRequest(
-                    workflow_id=workflow_id,
-                )
-            )
-        except Exception as ex:
-            warnings.append(f"Failed to delete workflow {workflow_id}: {ex}")
-    if destination_id:
-        try:
-            client.destinations.delete_destination(
-                request=operations.DeleteDestinationRequest(
-                    destination_id=destination_id,
-                )
-            )
-        except Exception as ex:
-            warnings.append(f"Failed to delete destination connector {destination_id}: {ex}")
-    return warnings
-
-
 def apply_format_fusion_pipeline(
     exec_payload: dict,
     create_values: dict[str, str],
@@ -481,6 +582,8 @@ def apply_format_fusion_pipeline(
     chunk_overlap = _to_int(create_values.get("fusion_chunk_overlap", "80"), default=80, minimum=0, maximum=2000)
     if chunk_overlap >= chunk_size:
         chunk_overlap = max(0, chunk_size // 5)
+    partition_strategy = _resolve_partition_strategy(create_values.get("fusion_strategy", "auto"))
+    ocr_languages = _parse_langs(create_values.get("fusion_ocr_languages", ""))
 
     table_name, schema_name, qualified_name, target_warnings = _resolve_format_fusion_table_target(
         exec_payload,
@@ -511,74 +614,80 @@ def apply_format_fusion_pipeline(
     )
 
     client = _new_unstructured_client()
-    destination_id = ""
-    workflow_id = ""
-    job_id = ""
-    cleanup_warnings: list[str] = []
-    try:
-        destination_id = _create_teradata_destination_connector(
+    inserted_rows = 0
+    partition_warnings: list[str] = []
+    for path_hint in document_files:
+        resolved = resolve_path_hint(path_hint)
+        src = Path(resolved)
+        if not src.exists() or not src.is_file():
+            raise RuntimeError(f"format_fusion source file is missing: {path_hint}")
+        rows = _partition_document_chunks(
             client,
-            connection_params=connection_params,
-            database_name=database_name,
+            src,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            partition_strategy=partition_strategy,
+            languages=ocr_languages,
+        )
+        if not rows:
+            partition_warnings.append(f"No chunks extracted from file: {src.name}")
+            continue
+        inserted_rows += _insert_chunk_rows(
+            schema_name=effective_schema_name,
             table_name=table_name,
-        )
-        workflow_id = _create_unstructured_workflow(client, destination_id=destination_id)
-        job_id = _run_unstructured_workflow(
-            client,
-            workflow_id=workflow_id,
-            document_files=document_files,
-            resolve_path_hint=resolve_path_hint,
+            rows=rows,
+            execute_sql_fn=execute_sql_fn,
         )
 
-        timeout_seconds = _to_int(
-            os.getenv("UNSTRUCTURED_WORKFLOW_POLL_SECONDS", str(UNSTRUCTURED_WORKFLOW_POLL_SECONDS_DEFAULT)),
-            default=UNSTRUCTURED_WORKFLOW_POLL_SECONDS_DEFAULT,
-            minimum=10,
-            maximum=1800,
+    flush_wait_seconds = _to_int(
+        os.getenv("UNSTRUCTURED_TERADATA_FLUSH_WAIT_SECONDS", str(UNSTRUCTURED_TERADATA_FLUSH_WAIT_SECONDS_DEFAULT)),
+        default=UNSTRUCTURED_TERADATA_FLUSH_WAIT_SECONDS_DEFAULT,
+        minimum=1,
+        maximum=300,
+    )
+    flush_wait_interval_seconds = _to_int(
+        os.getenv("UNSTRUCTURED_TERADATA_FLUSH_WAIT_INTERVAL", str(UNSTRUCTURED_TERADATA_FLUSH_WAIT_INTERVAL_DEFAULT)),
+        default=UNSTRUCTURED_TERADATA_FLUSH_WAIT_INTERVAL_DEFAULT,
+        minimum=1,
+        maximum=30,
+    )
+    chunk_count = _wait_for_table_rows(
+        schema_name=effective_schema_name,
+        table_name=table_name,
+        execute_sql_fn=execute_sql_fn,
+        timeout_seconds=flush_wait_seconds,
+        poll_interval_seconds=flush_wait_interval_seconds,
+    )
+    if chunk_count <= 0:
+        raise RuntimeError(
+            "format_fusion partition completed but destination table has 0 rows. "
+            f"table={qualified_name}"
         )
-        poll_interval_seconds = _to_int(
-            os.getenv("UNSTRUCTURED_WORKFLOW_POLL_INTERVAL", str(UNSTRUCTURED_WORKFLOW_POLL_INTERVAL_DEFAULT)),
-            default=UNSTRUCTURED_WORKFLOW_POLL_INTERVAL_DEFAULT,
-            minimum=1,
-            maximum=30,
-        )
-        _wait_for_unstructured_job(
-            client,
-            job_id=job_id,
-            timeout_seconds=timeout_seconds,
-            poll_interval_seconds=poll_interval_seconds,
-        )
-    finally:
-        keep_resources = _to_bool(os.getenv("UNSTRUCTURED_KEEP_WORKFLOW_RESOURCES", "false"), default=False)
-        if not keep_resources and (workflow_id or destination_id):
-            cleanup_warnings.extend(
-                _cleanup_unstructured_resources(
-                    client,
-                    workflow_id=workflow_id,
-                    destination_id=destination_id,
-                )
-            )
-
-    row_count = _count_teradata_rows(schema_name=effective_schema_name, table_name=table_name, execute_sql_fn=execute_sql_fn)
-    chunk_count = row_count if row_count is not None else 0
 
     patched_payload = dict(exec_payload)
     patched_payload["object_names"] = qualified_name
     patched_payload["data_columns"] = ["text"]
     patched_payload.setdefault("key_columns", ["id"])
-    patched_payload["chunk_size"] = chunk_size
-    patched_payload["optimized_chunking"] = False
+
+    # format_fusion already writes chunked content into Teradata.
+    # For content-based vector store creation, chunking inputs must be omitted.
+    patched_payload.pop("chunk_size", None)
+    patched_payload.pop("optimized_chunking", None)
+    patched_payload.pop("header_height", None)
+    patched_payload.pop("footer_height", None)
     patched_payload.pop("document_files", None)
 
     summary = {
         "table_name": qualified_name,
         "chunk_count": chunk_count,
         "document_count": len(document_files),
-        "job_id": job_id,
-        "workflow_id": workflow_id,
-        "destination_id": destination_id,
-        "warnings": target_warnings + cleanup_warnings,
-        "workflow_mode": "teradata-sql destination",
+        "job_id": "",
+        "workflow_id": "",
+        "destination_id": "",
+        "warnings": target_warnings + partition_warnings,
+        "workflow_mode": "partition-api direct insert",
+        "inserted_rows": inserted_rows,
+        "chunk_size": chunk_size,
         "chunk_overlap": chunk_overlap,
     }
     return patched_payload, summary

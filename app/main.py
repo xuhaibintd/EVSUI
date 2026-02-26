@@ -87,10 +87,99 @@ logger.setLevel(logging.INFO)
 JP_KANA_RE = re.compile(r"[\u3040-\u30ff]")
 LATIN_RE = re.compile(r"[A-Za-z]")
 HAN_RE = re.compile(r"[\u4e00-\u9fff]")
+TERADATA_IDENTIFIER_MAX_LEN = 30
 
 
 def _now_ts() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _is_vectorstore_already_exists_error(raw_error: str) -> bool:
+    text = str(raw_error or "").lower()
+    if "already exists" not in text:
+        return False
+    return "vector store" in text or "responsecode: 409" in text or "response code: 409" in text
+
+
+def _normalize_header_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(value).strip().lower())
+
+
+def _find_list_row_for_vs(state: dict, vs_name: str) -> tuple[list[str], list[str] | None]:
+    headers = list(state.get("list_columns", []) or [])
+    rows = list(state.get("list_rows", []) or [])
+    idx = _vs_name_column_index(headers)
+    if idx < 0:
+        return headers, None
+    target = str(vs_name).strip()
+    for row in rows:
+        if idx < len(row) and str(row[idx]).strip() == target:
+            return headers, row
+    return headers, None
+
+
+def _row_value_by_header(headers: list[str], row: list[str], key_markers: tuple[str, ...]) -> str:
+    for idx, header in enumerate(headers):
+        if idx >= len(row):
+            continue
+        normalized = _normalize_header_key(header)
+        if any(marker in normalized for marker in key_markers):
+            return str(row[idx]).strip()
+    return ""
+
+
+def _is_content_based_vs_row(headers: list[str], row: list[str] | None) -> bool:
+    if not row:
+        return False
+    type_value = _row_value_by_header(headers, row, ("type", "mode", "storetype", "vectorstoretype"))
+    if type_value:
+        low = type_value.lower()
+        if "content" in low and "based" in low:
+            return True
+    for cell in row:
+        low = str(cell).strip().lower()
+        if "content" in low and "based" in low:
+            return True
+    return False
+
+
+def _base_vector_store_name_for_chunk(raw_name: str) -> str:
+    name = str(raw_name or "").strip()
+    if not name:
+        return ""
+    lowered = name.lower()
+    for suffix in ("_unstructured", "_unstractured"):
+        if lowered.endswith(suffix):
+            trimmed = name[: -len(suffix)].strip().strip("_")
+            return trimmed or name
+    return name
+
+
+def _sanitize_teradata_identifier(raw: str, fallback: str, allow_empty: bool = False) -> str:
+    candidate = re.sub(r"[^0-9A-Za-z_]", "_", str(raw or "").strip())
+    candidate = re.sub(r"_+", "_", candidate).strip("_")
+    if not candidate:
+        return "" if allow_empty else fallback
+    if candidate[0].isdigit():
+        candidate = f"t_{candidate}"
+    if len(candidate) <= TERADATA_IDENTIFIER_MAX_LEN:
+        return candidate
+    digest = hashlib.sha1(candidate.encode("utf-8")).hexdigest()[:6]
+    keep = max(1, TERADATA_IDENTIFIER_MAX_LEN - len(digest) - 1)
+    return f"{candidate[:keep]}_{digest}"
+
+
+def _chunk_table_sql_for_vs(headers: list[str], row: list[str] | None, vs_name: str, state: dict) -> tuple[str, str, str]:
+    schema_from_row = _row_value_by_header(headers, row or [], ("database", "schema", "targetdatabase"))
+    schema_hint = schema_from_row or str(state.get("params", {}).get("username", "")).strip()
+    schema_name = _sanitize_teradata_identifier(schema_hint, fallback="", allow_empty=True)
+    base_name = _base_vector_store_name_for_chunk(vs_name) or vs_name
+    table_name = _sanitize_teradata_identifier(f"{base_name}_unstructured", fallback="unstructured")
+    if schema_name:
+        qualified_sql = f'"{schema_name}"."{table_name}"'
+    else:
+        qualified_sql = f'"{table_name}"'
+    return schema_name, table_name, qualified_sql
 
 
 def _derive_base_url(ues_url: str) -> str:
@@ -1579,6 +1668,14 @@ async def evs_destroy_selected(request: Request, vs_name: str = Form(default="")
     state = app.state.evs_state
     target_name = vs_name.strip() or str(state.get("selected_vs_name", "")).strip()
     state["selected_vs_name"] = target_name
+    list_headers, selected_row = _find_list_row_for_vs(state, target_name)
+    should_drop_chunk_table = _is_content_based_vs_row(list_headers, selected_row)
+    chunk_schema_name, chunk_table_name, chunk_table_sql = _chunk_table_sql_for_vs(
+        list_headers,
+        selected_row,
+        target_name,
+        state,
+    )
 
     if not state["connected"]:
         state["destroy_status"] = "warn"
@@ -1609,14 +1706,63 @@ async def evs_destroy_selected(request: Request, vs_name: str = Form(default="")
 
         destroy_output = destroy_fn()
         output_preview = _format_preview(destroy_output, max_chars=500)
+        chunk_drop_note = ""
+        if should_drop_chunk_table:
+            if execute_sql is None:
+                chunk_drop_note = f" Chunk table cleanup skipped: execute_sql unavailable for {chunk_table_sql}."
+                _append_connect_step(
+                    state,
+                    "Chunk table cleanup",
+                    "warn",
+                    f"Skipped (execute_sql unavailable): {chunk_table_sql}",
+                )
+            else:
+                try:
+                    execute_sql(f"DROP TABLE {chunk_table_sql}")
+                    chunk_drop_note = f" Removed chunk table {chunk_table_sql}."
+                    _append_connect_step(
+                        state,
+                        "Chunk table cleanup",
+                        "ok",
+                        f"Dropped content-based chunk table {chunk_table_sql}.",
+                    )
+                except Exception as drop_ex:
+                    drop_msg = str(drop_ex).lower()
+                    if "3807" in drop_msg or "does not exist" in drop_msg or "not found" in drop_msg:
+                        chunk_drop_note = f" Chunk table {chunk_table_sql} not found (already removed)."
+                        _append_connect_step(
+                            state,
+                            "Chunk table cleanup",
+                            "warn",
+                            f"Chunk table already absent: {chunk_table_sql}.",
+                        )
+                    else:
+                        chunk_drop_note = f" Chunk table cleanup failed for {chunk_table_sql}: {drop_ex}"
+                        _append_connect_step(
+                            state,
+                            "Chunk table cleanup",
+                            "warn",
+                            f"Failed to drop chunk table {chunk_table_sql}: {drop_ex}",
+                        )
         if output_preview and output_preview != "None":
-            state["destroy_preview"] = f"Deleted '{target_name}'. Result: {output_preview}"
+            state["destroy_preview"] = f"Deleted '{target_name}'. Result: {output_preview}{chunk_drop_note}"
         else:
-            state["destroy_preview"] = f"Deleted '{target_name}'."
+            state["destroy_preview"] = f"Deleted '{target_name}'.{chunk_drop_note}"
         state["destroy_status"] = "ok"
         state["last_error"] = ""
-        state["last_success"] = f"VectorStore.destroy() completed for '{target_name}'."
-        _append_connect_step(state, "VectorStore.destroy()", "ok", f"Destroyed vector store '{target_name}'.")
+        state["last_success"] = f"VectorStore.destroy() completed for '{target_name}'.{chunk_drop_note}"
+        if should_drop_chunk_table:
+            _append_connect_step(
+                state,
+                "VectorStore.destroy()",
+                "ok",
+                (
+                    f"Destroyed vector store '{target_name}'. "
+                    f"Chunk table target: {chunk_table_sql} (schema='{chunk_schema_name or '<default>'}', table='{chunk_table_name}')."
+                ),
+            )
+        else:
+            _append_connect_step(state, "VectorStore.destroy()", "ok", f"Destroyed vector store '{target_name}'.")
         state["selected_vs_name"] = ""
         list_fn = getattr(VSManager, "list", None) if VSManager is not None else None
         if callable(list_fn):
@@ -1692,12 +1838,12 @@ async def upload_and_prepare_create(request: Request):
         create_preset = selected_search_algorithm.lower()
     else:
         create_preset = "vectordistance"
-    create_values["vector_store_name"] = vector_store_name
-    create_values["create_preset"] = create_preset
-    create_values["create_mode"] = create_mode
     doc_pipeline_mode = str(form.get("doc_pipeline_mode", "text_core")).strip().lower()
     if doc_pipeline_mode not in {"text_core", "format_fusion"}:
         doc_pipeline_mode = "text_core"
+    create_values["vector_store_name"] = vector_store_name
+    create_values["create_preset"] = create_preset
+    create_values["create_mode"] = create_mode
     create_values["doc_pipeline_mode"] = doc_pipeline_mode
     for ui_field, default_value in DOC_PIPELINE_UI_DEFAULTS.items():
         ui_raw = str(form.get(ui_field, default_value)).strip()
@@ -1787,8 +1933,32 @@ async def upload_and_prepare_create(request: Request):
                     f"{format_fusion_summary.get('document_count')} file(s))."
                 )
         except Exception as ex:
-            result_status = "error"
-            result_message = f"Step 2 failed while executing VectorStore.create(): {ex}"
+            ex_text = str(ex)
+            if _is_vectorstore_already_exists_error(ex_text):
+                warnings.append(
+                    f"VectorStore '{vector_store_name}' already exists. Skipped create() and reused existing store."
+                )
+                vector_store_obj = locals().get("vector_store")
+                status_fn = getattr(vector_store_obj, "status", None)
+                if callable(status_fn):
+                    try:
+                        status_output_preview = _format_preview(status_fn())
+                    except Exception as status_ex:
+                        status_output_preview = f"Status check failed: {status_ex}"
+                result_status = "ok_with_warnings"
+                result_message = (
+                    f"Step 2 skipped VectorStore.create(): '{vector_store_name}' already exists."
+                )
+                if format_fusion_summary:
+                    result_message += (
+                        " "
+                        f"format_fusion chunks saved to {format_fusion_summary.get('table_name')} "
+                        f"({format_fusion_summary.get('chunk_count')} rows from "
+                        f"{format_fusion_summary.get('document_count')} file(s))."
+                    )
+            else:
+                result_status = "error"
+                result_message = f"Step 2 failed while executing VectorStore.create(): {ex}"
 
     result = {
         "status": result_status,
