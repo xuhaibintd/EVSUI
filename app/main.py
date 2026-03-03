@@ -29,8 +29,8 @@ from app.services.create_config import (
     default_create_values,
     group_create_fields,
 )
-from app.services.format_fusion import (
-    apply_format_fusion_pipeline,
+from app.services.multi_format import (
+    apply_multi_format_pipeline,
     normalize_document_files_for_create,
 )
 
@@ -1839,7 +1839,7 @@ async def upload_and_prepare_create(request: Request):
     else:
         create_preset = "vectordistance"
     doc_pipeline_mode = str(form.get("doc_pipeline_mode", "text_core")).strip().lower()
-    if doc_pipeline_mode not in {"text_core", "format_fusion"}:
+    if doc_pipeline_mode not in {"text_core", "multi_format"}:
         doc_pipeline_mode = "text_core"
     create_values["vector_store_name"] = vector_store_name
     create_values["create_preset"] = create_preset
@@ -1885,11 +1885,11 @@ async def upload_and_prepare_create(request: Request):
         resolve_path_hint=_resolve_path_hint,
     )
     warnings.extend(path_warnings)
-    format_fusion_summary: dict | None = None
-    format_fusion_error = ""
-    if doc_pipeline_mode == "format_fusion":
+    multi_format_summary: dict | None = None
+    multi_format_error = ""
+    if doc_pipeline_mode == "multi_format":
         try:
-            exec_payload, format_fusion_summary = apply_format_fusion_pipeline(
+            exec_payload, multi_format_summary = apply_multi_format_pipeline(
                 exec_payload=exec_payload,
                 create_values=create_values,
                 vector_store_name=vector_store_name,
@@ -1897,16 +1897,16 @@ async def upload_and_prepare_create(request: Request):
                 execute_sql_fn=execute_sql,
                 resolve_path_hint=_resolve_path_hint,
             )
-            warnings.extend(format_fusion_summary.get("warnings", []))
+            warnings.extend(multi_format_summary.get("warnings", []))
         except Exception as ex:
-            format_fusion_error = str(ex)
+            multi_format_error = str(ex)
 
     execution_output_preview = ""
     status_output_preview = ""
 
-    if format_fusion_error:
+    if multi_format_error:
         result_status = "error"
-        result_message = f"Step 2 failed during format_fusion preprocessing: {format_fusion_error}"
+        result_message = f"Step 2 failed during multi format preprocessing: {multi_format_error}"
     elif VectorStore is None:
         result_status = "error"
         result_message = "Step 2 failed: VectorStore runtime is unavailable in current environment."
@@ -1925,12 +1925,12 @@ async def upload_and_prepare_create(request: Request):
 
             result_status = "ok_with_warnings" if warnings else "ok"
             result_message = "Step 2 completed. VectorStore.create() executed successfully."
-            if format_fusion_summary:
+            if multi_format_summary:
                 result_message += (
                     " "
-                    f"format_fusion chunks saved to {format_fusion_summary.get('table_name')} "
-                    f"({format_fusion_summary.get('chunk_count')} rows from "
-                    f"{format_fusion_summary.get('document_count')} file(s))."
+                    f"multi format chunks saved to {multi_format_summary.get('table_name')} "
+                    f"({multi_format_summary.get('chunk_count')} rows from "
+                    f"{multi_format_summary.get('document_count')} file(s))."
                 )
         except Exception as ex:
             ex_text = str(ex)
@@ -1949,12 +1949,12 @@ async def upload_and_prepare_create(request: Request):
                 result_message = (
                     f"Step 2 skipped VectorStore.create(): '{vector_store_name}' already exists."
                 )
-                if format_fusion_summary:
+                if multi_format_summary:
                     result_message += (
                         " "
-                        f"format_fusion chunks saved to {format_fusion_summary.get('table_name')} "
-                        f"({format_fusion_summary.get('chunk_count')} rows from "
-                        f"{format_fusion_summary.get('document_count')} file(s))."
+                        f"multi format chunks saved to {multi_format_summary.get('table_name')} "
+                        f"({multi_format_summary.get('chunk_count')} rows from "
+                        f"{multi_format_summary.get('document_count')} file(s))."
                     )
             else:
                 result_status = "error"
@@ -1974,7 +1974,7 @@ async def upload_and_prepare_create(request: Request):
         "create_call_preview": build_create_call_preview(vector_store_name, create_payload),
         "execution_output_preview": execution_output_preview,
         "status_output_preview": status_output_preview,
-        "format_fusion_summary": format_fusion_summary,
+        "multi_format_summary": multi_format_summary,
     }
     app.state.last_create_operation = result
     if result_status == "error":

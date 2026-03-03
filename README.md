@@ -17,7 +17,7 @@ Teradata Vector Store is a `FastAPI + Jinja2 + HTMX` three-step interface for co
 - Supports multi-file upload
 - Full `VectorStore.create(...)` parameter form
 - Built-in parameter sets for `VECTORDISTANCE / KMEANS / HNSW`
-- `Format Fusion` mode runs Unstructured Workflow (`teradata-sql` destination connector), creates a Teradata table first, and writes processed text rows into `<Vector Store Name>_unstructured`.
+- `Multi Format` mode runs Unstructured Workflow (`teradata-sql` destination connector), creates a Teradata table first, and writes processed text rows into `<Vector Store Name>_unstructured`.
 
 3. Step 3: Retrieval Chat
 - Supports `VectorStore.ask` and `VectorStore.similarity_search`
@@ -43,7 +43,7 @@ Teradata Vector Store is a `FastAPI + Jinja2 + HTMX` three-step interface for co
   - `unstructured-client`
   - `packaging`
 
-## Format Fusion Config
+## Multi Format Config
 
 - Configure Unstructured credentials in `app/config/unstructured.json`:
 
@@ -113,7 +113,7 @@ Open: `http://127.0.0.1:8010`
 - Auth config: `app/config/auth_users.json`
 - Service layer:
   - `app/services/create_config.py` (create form schema/coercion)
-  - `app/services/format_fusion.py` (multi-format preprocessing pipeline)
+  - `app/services/multi_format.py` (multi-format preprocessing pipeline)
 - Templates: `app/templates/`
 - Static assets: `app/static/`
 - Upload directories:

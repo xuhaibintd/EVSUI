@@ -93,12 +93,12 @@ _CSV_FIELDS = {
 }
 _FORCE_LIST_CSV_FIELDS = {"data_columns"}
 DOC_PIPELINE_UI_DEFAULTS = {
-    "fusion_strategy": "auto",
-    "fusion_chunk_size": "600",
-    "fusion_chunk_overlap": "80",
-    "fusion_ocr_languages": "ja,en",
-    "fusion_keep_tables": "true",
-    "fusion_extract_images": "false",
+    "multi_format_strategy": "auto",
+    "multi_format_chunk_size": "600",
+    "multi_format_chunk_overlap": "80",
+    "multi_format_ocr_languages": "ja,en",
+    "multi_format_keep_tables": "true",
+    "multi_format_extract_images": "false",
 }
 
 CORE_CREATE_FIELDS = {

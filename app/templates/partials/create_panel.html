@@ -42,12 +42,12 @@
               data-doc-pipeline-mode
               {% if not evs.connected %}disabled{% endif %}
             >
-              <option value="text_core" {% if _doc_pipeline_mode != 'format_fusion' %}selected{% endif %}>Text</option>
-              <option value="format_fusion" {% if _doc_pipeline_mode == 'format_fusion' %}selected{% endif %}>Multi-Format</option>
+              <option value="text_core" {% if _doc_pipeline_mode != 'multi_format' %}selected{% endif %}>Text</option>
+              <option value="multi_format" {% if _doc_pipeline_mode == 'multi_format' %}selected{% endif %}>Multi-Format</option>
             </select>
           </label>
           <div class="doc-pipeline-groups">
-            <section class="doc-pipeline-group {% if _doc_pipeline_mode == 'format_fusion' %}doc-mode-hidden{% endif %}" data-doc-mode-for="text_core">
+            <section class="doc-pipeline-group {% if _doc_pipeline_mode == 'multi_format' %}doc-mode-hidden{% endif %}" data-doc-mode-for="text_core">
               <div class="select-docs-options">
                 <label class="field">
                   <span>chunk_size</span>
@@ -71,40 +71,40 @@
                 </label>
               </div>
             </section>
-            <section class="doc-pipeline-group {% if _doc_pipeline_mode != 'format_fusion' %}doc-mode-hidden{% endif %}" data-doc-mode-for="format_fusion">
-              <div class="select-docs-options fusion-params-grid">
+            <section class="doc-pipeline-group {% if _doc_pipeline_mode != 'multi_format' %}doc-mode-hidden{% endif %}" data-doc-mode-for="multi_format">
+              <div class="select-docs-options multi-format-params-grid">
                 <label class="field">
-                  <span>fusion_strategy</span>
-                  <select name="fusion_strategy" {% if not evs.connected %}disabled{% endif %}>
-                    <option value="auto" {% if create_values.get('fusion_strategy', 'auto') == 'auto' %}selected{% endif %}>auto</option>
-                    <option value="layout" {% if create_values.get('fusion_strategy', '') == 'layout' %}selected{% endif %}>layout</option>
-                    <option value="fast" {% if create_values.get('fusion_strategy', '') == 'fast' %}selected{% endif %}>fast</option>
+                  <span>multi_format_strategy</span>
+                  <select name="multi_format_strategy" {% if not evs.connected %}disabled{% endif %}>
+                    <option value="auto" {% if create_values.get('multi_format_strategy', 'auto') == 'auto' %}selected{% endif %}>auto</option>
+                    <option value="layout" {% if create_values.get('multi_format_strategy', '') == 'layout' %}selected{% endif %}>layout</option>
+                    <option value="fast" {% if create_values.get('multi_format_strategy', '') == 'fast' %}selected{% endif %}>fast</option>
                   </select>
                 </label>
                 <label class="field">
-                  <span>fusion_chunk_size</span>
-                  <input type="number" name="fusion_chunk_size" value="{{ create_values.get('fusion_chunk_size', '600') }}" placeholder="600" {% if not evs.connected %}disabled{% endif %} />
+                  <span>multi_format_chunk_size</span>
+                  <input type="number" name="multi_format_chunk_size" value="{{ create_values.get('multi_format_chunk_size', '600') }}" placeholder="600" {% if not evs.connected %}disabled{% endif %} />
                 </label>
                 <label class="field">
-                  <span>fusion_chunk_overlap</span>
-                  <input type="number" name="fusion_chunk_overlap" value="{{ create_values.get('fusion_chunk_overlap', '80') }}" placeholder="80" {% if not evs.connected %}disabled{% endif %} />
+                  <span>multi_format_chunk_overlap</span>
+                  <input type="number" name="multi_format_chunk_overlap" value="{{ create_values.get('multi_format_chunk_overlap', '80') }}" placeholder="80" {% if not evs.connected %}disabled{% endif %} />
                 </label>
                 <label class="field">
-                  <span>fusion_ocr_languages</span>
-                  <input type="text" name="fusion_ocr_languages" value="{{ create_values.get('fusion_ocr_languages', 'ja,en') }}" placeholder="ja,en" {% if not evs.connected %}disabled{% endif %} />
+                  <span>multi_format_ocr_languages</span>
+                  <input type="text" name="multi_format_ocr_languages" value="{{ create_values.get('multi_format_ocr_languages', 'ja,en') }}" placeholder="ja,en" {% if not evs.connected %}disabled{% endif %} />
                 </label>
                 <label class="field">
-                  <span>fusion_keep_tables</span>
-                  <select name="fusion_keep_tables" {% if not evs.connected %}disabled{% endif %}>
-                    <option value="true" {% if create_values.get('fusion_keep_tables', 'true') == 'true' %}selected{% endif %}>true</option>
-                    <option value="false" {% if create_values.get('fusion_keep_tables', '') == 'false' %}selected{% endif %}>false</option>
+                  <span>multi_format_keep_tables</span>
+                  <select name="multi_format_keep_tables" {% if not evs.connected %}disabled{% endif %}>
+                    <option value="true" {% if create_values.get('multi_format_keep_tables', 'true') == 'true' %}selected{% endif %}>true</option>
+                    <option value="false" {% if create_values.get('multi_format_keep_tables', '') == 'false' %}selected{% endif %}>false</option>
                   </select>
                 </label>
                 <label class="field">
-                  <span>fusion_extract_images</span>
-                  <select name="fusion_extract_images" {% if not evs.connected %}disabled{% endif %}>
-                    <option value="false" {% if create_values.get('fusion_extract_images', 'false') == 'false' %}selected{% endif %}>false</option>
-                    <option value="true" {% if create_values.get('fusion_extract_images', '') == 'true' %}selected{% endif %}>true</option>
+                  <span>multi_format_extract_images</span>
+                  <select name="multi_format_extract_images" {% if not evs.connected %}disabled{% endif %}>
+                    <option value="false" {% if create_values.get('multi_format_extract_images', 'false') == 'false' %}selected{% endif %}>false</option>
+                    <option value="true" {% if create_values.get('multi_format_extract_images', '') == 'true' %}selected{% endif %}>true</option>
                   </select>
                 </label>
               </div>

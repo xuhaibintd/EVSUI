@@ -139,7 +139,7 @@ def _base_vector_store_name(raw_name: str) -> str:
     return name
 
 
-def _resolve_format_fusion_table_target(
+def _resolve_multi_format_table_target(
     exec_payload: dict,
     create_values: dict[str, str],
     vector_store_name: str,
@@ -151,7 +151,7 @@ def _resolve_format_fusion_table_target(
         if raw_object_names:
             object_hint = str(raw_object_names[0]).strip()
         if len(raw_object_names) > 1:
-            warnings.append("format_fusion uses only the first object_names entry.")
+            warnings.append("multi format uses only the first object_names entry.")
     elif raw_object_names is not None:
         object_hint = str(raw_object_names).strip()
 
@@ -166,9 +166,9 @@ def _resolve_format_fusion_table_target(
     schema_name = _sanitize_teradata_identifier(schema_hint, fallback="", allow_empty=True) or None
 
     if table_name != table_hint:
-        warnings.append(f"format_fusion table normalized to '{table_name}'.")
+        warnings.append(f"multi format table normalized to '{table_name}'.")
     if schema_hint and schema_name and schema_name != schema_hint:
-        warnings.append(f"format_fusion target_database normalized to '{schema_name}'.")
+        warnings.append(f"multi format target_database normalized to '{schema_name}'.")
 
     qualified = f"{schema_name}.{table_name}" if schema_name else table_name
     return table_name, schema_name, qualified, warnings
@@ -557,7 +557,7 @@ def _new_unstructured_client():
     return UnstructuredClient(api_key_auth=api_key, server_url=api_url.rstrip("/"))
 
 
-def apply_format_fusion_pipeline(
+def apply_multi_format_pipeline(
     exec_payload: dict,
     create_values: dict[str, str],
     vector_store_name: str,
@@ -576,16 +576,16 @@ def apply_format_fusion_pipeline(
     else:
         document_files = []
     if not document_files:
-        raise RuntimeError("format_fusion requires at least one document file.")
+        raise RuntimeError("multi format requires at least one document file.")
 
-    chunk_size = _to_int(create_values.get("fusion_chunk_size", "600"), default=600, minimum=100, maximum=8000)
-    chunk_overlap = _to_int(create_values.get("fusion_chunk_overlap", "80"), default=80, minimum=0, maximum=2000)
+    chunk_size = _to_int(create_values.get("multi_format_chunk_size", "600"), default=600, minimum=100, maximum=8000)
+    chunk_overlap = _to_int(create_values.get("multi_format_chunk_overlap", "80"), default=80, minimum=0, maximum=2000)
     if chunk_overlap >= chunk_size:
         chunk_overlap = max(0, chunk_size // 5)
-    partition_strategy = _resolve_partition_strategy(create_values.get("fusion_strategy", "auto"))
-    ocr_languages = _parse_langs(create_values.get("fusion_ocr_languages", ""))
+    partition_strategy = _resolve_partition_strategy(create_values.get("multi_format_strategy", "auto"))
+    ocr_languages = _parse_langs(create_values.get("multi_format_ocr_languages", ""))
 
-    table_name, schema_name, qualified_name, target_warnings = _resolve_format_fusion_table_target(
+    table_name, schema_name, qualified_name, target_warnings = _resolve_multi_format_table_target(
         exec_payload,
         create_values,
         vector_store_name,
@@ -594,9 +594,9 @@ def apply_format_fusion_pipeline(
     if not database_name:
         database_name = str(connection_params.get("username", "")).strip()
         if database_name:
-            target_warnings.append(f"format_fusion target_database not set; fallback to '{database_name}'.")
+            target_warnings.append(f"multi format target_database not set; fallback to '{database_name}'.")
     if not database_name:
-        raise RuntimeError("format_fusion requires target_database (or object_names with schema prefix).")
+        raise RuntimeError("multi format requires target_database (or object_names with schema prefix).")
 
     effective_schema_name = schema_name
     if not effective_schema_name:
@@ -620,7 +620,7 @@ def apply_format_fusion_pipeline(
         resolved = resolve_path_hint(path_hint)
         src = Path(resolved)
         if not src.exists() or not src.is_file():
-            raise RuntimeError(f"format_fusion source file is missing: {path_hint}")
+            raise RuntimeError(f"multi format source file is missing: {path_hint}")
         rows = _partition_document_chunks(
             client,
             src,
@@ -660,7 +660,7 @@ def apply_format_fusion_pipeline(
     )
     if chunk_count <= 0:
         raise RuntimeError(
-            "format_fusion partition completed but destination table has 0 rows. "
+            "multi format partition completed but destination table has 0 rows. "
             f"table={qualified_name}"
         )
 
@@ -669,7 +669,7 @@ def apply_format_fusion_pipeline(
     patched_payload["data_columns"] = ["text"]
     patched_payload.setdefault("key_columns", ["id"])
 
-    # format_fusion already writes chunked content into Teradata.
+    # multi format already writes chunked content into Teradata.
     # For content-based vector store creation, chunking inputs must be omitted.
     patched_payload.pop("chunk_size", None)
     patched_payload.pop("optimized_chunking", None)
