@@ -231,8 +231,12 @@ function bindDocPipelineParams(scope = document) {
         if (!(group instanceof HTMLElement)) {
           return;
         }
-        const targetMode = (group.dataset.docModeFor || "").trim().toLowerCase();
-        const show = targetMode === currentMode;
+        const targetModes = (group.dataset.docModeFor || "")
+          .trim()
+          .toLowerCase()
+          .split(/\s+/)
+          .filter(Boolean);
+        const show = targetModes.includes(currentMode);
         group.classList.toggle("doc-mode-hidden", !show);
 
         const controls = group.querySelectorAll("input, select, textarea");

@@ -108,14 +108,31 @@ def _normalize_header_key(value: str) -> str:
 def _find_list_row_for_vs(state: dict, vs_name: str) -> tuple[list[str], list[str] | None]:
     headers = list(state.get("list_columns", []) or [])
     rows = list(state.get("list_rows", []) or [])
+    return headers, _find_vs_row_by_name(headers, rows, vs_name)
+
+
+def _find_vs_row_by_name(headers: list[str], rows: list[list[str]], vs_name: str) -> list[str] | None:
     idx = _vs_name_column_index(headers)
     if idx < 0:
-        return headers, None
+        return None
     target = str(vs_name).strip()
     for row in rows:
         if idx < len(row) and str(row[idx]).strip() == target:
-            return headers, row
-    return headers, None
+            return row
+    return None
+
+
+def _destroy_output_indicates_failure(raw_output: str) -> bool:
+    text = str(raw_output or "").strip().lower()
+    if not text or text == "none":
+        return False
+    if "destroy failed" in text:
+        return True
+    if "responsecode" in text and any(code in text for code in ("400", "401", "403", "404", "409", "500", "503")):
+        return True
+    if any(marker in text for marker in ("error", "exception", "traceback")):
+        return True
+    return False
 
 
 def _row_value_by_header(headers: list[str], row: list[str], key_markers: tuple[str, ...]) -> str:
@@ -1706,68 +1723,30 @@ async def evs_destroy_selected(request: Request, vs_name: str = Form(default="")
 
         destroy_output = destroy_fn()
         output_preview = _format_preview(destroy_output, max_chars=500)
+        destroy_output_failed = _destroy_output_indicates_failure(output_preview)
         chunk_drop_note = ""
-        if should_drop_chunk_table:
-            if execute_sql is None:
-                chunk_drop_note = f" Chunk table cleanup skipped: execute_sql unavailable for {chunk_table_sql}."
-                _append_connect_step(
-                    state,
-                    "Chunk table cleanup",
-                    "warn",
-                    f"Skipped (execute_sql unavailable): {chunk_table_sql}",
-                )
-            else:
-                try:
-                    execute_sql(f"DROP TABLE {chunk_table_sql}")
-                    chunk_drop_note = f" Removed chunk table {chunk_table_sql}."
-                    _append_connect_step(
-                        state,
-                        "Chunk table cleanup",
-                        "ok",
-                        f"Dropped content-based chunk table {chunk_table_sql}.",
-                    )
-                except Exception as drop_ex:
-                    drop_msg = str(drop_ex).lower()
-                    if "3807" in drop_msg or "does not exist" in drop_msg or "not found" in drop_msg:
-                        chunk_drop_note = f" Chunk table {chunk_table_sql} not found (already removed)."
-                        _append_connect_step(
-                            state,
-                            "Chunk table cleanup",
-                            "warn",
-                            f"Chunk table already absent: {chunk_table_sql}.",
-                        )
-                    else:
-                        chunk_drop_note = f" Chunk table cleanup failed for {chunk_table_sql}: {drop_ex}"
-                        _append_connect_step(
-                            state,
-                            "Chunk table cleanup",
-                            "warn",
-                            f"Failed to drop chunk table {chunk_table_sql}: {drop_ex}",
-                        )
-        if output_preview and output_preview != "None":
-            state["destroy_preview"] = f"Deleted '{target_name}'. Result: {output_preview}{chunk_drop_note}"
-        else:
-            state["destroy_preview"] = f"Deleted '{target_name}'.{chunk_drop_note}"
-        state["destroy_status"] = "ok"
-        state["last_error"] = ""
-        state["last_success"] = f"VectorStore.destroy() completed for '{target_name}'.{chunk_drop_note}"
-        if should_drop_chunk_table:
-            _append_connect_step(
-                state,
-                "VectorStore.destroy()",
-                "ok",
-                (
-                    f"Destroyed vector store '{target_name}'. "
-                    f"Chunk table target: {chunk_table_sql} (schema='{chunk_schema_name or '<default>'}', table='{chunk_table_name}')."
-                ),
-            )
-        else:
-            _append_connect_step(state, "VectorStore.destroy()", "ok", f"Destroyed vector store '{target_name}'.")
-        state["selected_vs_name"] = ""
+
+        post_check_failed = False
+        post_check_note = ""
         list_fn = getattr(VSManager, "list", None) if VSManager is not None else None
         if callable(list_fn):
             try:
                 list_output = list_fn()
+                headers_all, rows_all = _table_from_result(list_output)
+                row_after = _find_vs_row_by_name(headers_all, rows_all, target_name)
+                status_after = _row_value_by_header(
+                    headers_all,
+                    row_after or [],
+                    ("status", "state", "lifecycle", "vsstatus"),
+                )
+                status_after_low = status_after.lower()
+                if row_after is None:
+                    post_check_note = "Post-check: target not present in VSManager.list()."
+                elif any(marker in status_after_low for marker in ("deleted", "destroyed", "dropped", "removed")):
+                    post_check_note = f"Post-check: target has terminal status '{status_after}'."
+                else:
+                    post_check_failed = True
+                    post_check_note = f"Post-check failed: target still listed with status '{status_after or 'unknown'}'."
                 visible_rows, _total_rows, _username_filter = _apply_list_output_to_state(
                     state,
                     list_output,
@@ -1776,13 +1755,90 @@ async def evs_destroy_selected(request: Request, vs_name: str = Form(default="")
                 _append_connect_step(
                     state,
                     "VSManager.list()",
-                    "ok",
-                    f"Step 1 list refreshed after destroy. rows={visible_rows}.",
+                    "warn" if post_check_failed else "ok",
+                    f"Step 1 list refreshed after destroy. rows={visible_rows}. {post_check_note}",
                 )
             except Exception as list_ex:
-                _append_connect_step(state, "VSManager.list()", "warn", f"Destroy succeeded, Step 1 list refresh failed: {list_ex}")
+                post_check_failed = True
+                post_check_note = f"Post-check failed: Step 1 list refresh failed: {list_ex}"
+                _append_connect_step(state, "VSManager.list()", "warn", post_check_note)
         else:
-            _append_connect_step(state, "VSManager.list()", "warn", "Destroy succeeded, but VSManager.list() is unavailable.")
+            post_check_note = "Post-check skipped: VSManager.list() unavailable."
+            _append_connect_step(state, "VSManager.list()", "warn", post_check_note)
+
+        destroy_failed = destroy_output_failed or post_check_failed
+        if destroy_failed:
+            reason_parts: list[str] = []
+            if destroy_output_failed:
+                reason_parts.append(f"destroy output indicates failure: {output_preview}")
+            if post_check_note:
+                reason_parts.append(post_check_note)
+            reason = " ".join(reason_parts).strip()
+            if not reason:
+                reason = "destroy did not pass verification."
+            state["destroy_status"] = "err"
+            state["destroy_preview"] = f"Delete failed for '{target_name}': {reason}{chunk_drop_note}"
+            state["last_error"] = f"VectorStore.destroy() failed for '{target_name}': {reason}"
+            state["last_success"] = ""
+            _append_connect_step(state, "VectorStore.destroy()", "error", f"Verification failed: {reason}")
+        else:
+            if should_drop_chunk_table:
+                if execute_sql is None:
+                    chunk_drop_note = f" Chunk table cleanup skipped: execute_sql unavailable for {chunk_table_sql}."
+                    _append_connect_step(
+                        state,
+                        "Chunk table cleanup",
+                        "warn",
+                        f"Skipped (execute_sql unavailable): {chunk_table_sql}",
+                    )
+                else:
+                    try:
+                        execute_sql(f"DROP TABLE {chunk_table_sql}")
+                        chunk_drop_note = f" Removed chunk table {chunk_table_sql}."
+                        _append_connect_step(
+                            state,
+                            "Chunk table cleanup",
+                            "ok",
+                            f"Dropped content-based chunk table {chunk_table_sql}.",
+                        )
+                    except Exception as drop_ex:
+                        drop_msg = str(drop_ex).lower()
+                        if "3807" in drop_msg or "does not exist" in drop_msg or "not found" in drop_msg:
+                            chunk_drop_note = f" Chunk table {chunk_table_sql} not found (already removed)."
+                            _append_connect_step(
+                                state,
+                                "Chunk table cleanup",
+                                "warn",
+                                f"Chunk table already absent: {chunk_table_sql}.",
+                            )
+                        else:
+                            chunk_drop_note = f" Chunk table cleanup failed for {chunk_table_sql}: {drop_ex}"
+                            _append_connect_step(
+                                state,
+                                "Chunk table cleanup",
+                                "warn",
+                                f"Failed to drop chunk table {chunk_table_sql}: {drop_ex}",
+                            )
+            if output_preview and output_preview != "None":
+                state["destroy_preview"] = f"Deleted '{target_name}'. Result: {output_preview}{chunk_drop_note}"
+            else:
+                state["destroy_preview"] = f"Deleted '{target_name}'.{chunk_drop_note}"
+            state["destroy_status"] = "ok"
+            state["last_error"] = ""
+            state["last_success"] = f"VectorStore.destroy() completed for '{target_name}'.{chunk_drop_note}"
+            if should_drop_chunk_table:
+                _append_connect_step(
+                    state,
+                    "VectorStore.destroy()",
+                    "ok",
+                    (
+                        f"Destroyed vector store '{target_name}'. "
+                        f"Chunk table target: {chunk_table_sql} (schema='{chunk_schema_name or '<default>'}', table='{chunk_table_name}')."
+                    ),
+                )
+            else:
+                _append_connect_step(state, "VectorStore.destroy()", "ok", f"Destroyed vector store '{target_name}'.")
+            state["selected_vs_name"] = ""
     except Exception as ex:
         state["destroy_status"] = "err"
         state["destroy_preview"] = f"Delete failed for '{target_name}': {ex}"
@@ -1839,7 +1895,7 @@ async def upload_and_prepare_create(request: Request):
     else:
         create_preset = "vectordistance"
     doc_pipeline_mode = str(form.get("doc_pipeline_mode", "text_core")).strip().lower()
-    if doc_pipeline_mode not in {"text_core", "multi_format"}:
+    if doc_pipeline_mode not in {"text_core", "multi_format", "multi_format_bookrag"}:
         doc_pipeline_mode = "text_core"
     create_values["vector_store_name"] = vector_store_name
     create_values["create_preset"] = create_preset
@@ -1887,7 +1943,7 @@ async def upload_and_prepare_create(request: Request):
     warnings.extend(path_warnings)
     multi_format_summary: dict | None = None
     multi_format_error = ""
-    if doc_pipeline_mode == "multi_format":
+    if doc_pipeline_mode in {"multi_format", "multi_format_bookrag"}:
         try:
             exec_payload, multi_format_summary = apply_multi_format_pipeline(
                 exec_payload=exec_payload,

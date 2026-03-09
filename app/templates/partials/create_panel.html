@@ -42,12 +42,13 @@
               data-doc-pipeline-mode
               {% if not evs.connected %}disabled{% endif %}
             >
-              <option value="text_core" {% if _doc_pipeline_mode != 'multi_format' %}selected{% endif %}>Text</option>
+              <option value="text_core" {% if _doc_pipeline_mode not in ['multi_format', 'multi_format_bookrag'] %}selected{% endif %}>Text</option>
               <option value="multi_format" {% if _doc_pipeline_mode == 'multi_format' %}selected{% endif %}>Multi-Format</option>
+              <option value="multi_format_bookrag" {% if _doc_pipeline_mode == 'multi_format_bookrag' %}selected{% endif %}>Multi-Format BookRAG</option>
             </select>
           </label>
           <div class="doc-pipeline-groups">
-            <section class="doc-pipeline-group {% if _doc_pipeline_mode == 'multi_format' %}doc-mode-hidden{% endif %}" data-doc-mode-for="text_core">
+            <section class="doc-pipeline-group {% if _doc_pipeline_mode in ['multi_format', 'multi_format_bookrag'] %}doc-mode-hidden{% endif %}" data-doc-mode-for="text_core">
               <div class="select-docs-options">
                 <label class="field">
                   <span>chunk_size</span>
@@ -71,7 +72,7 @@
                 </label>
               </div>
             </section>
-            <section class="doc-pipeline-group {% if _doc_pipeline_mode != 'multi_format' %}doc-mode-hidden{% endif %}" data-doc-mode-for="multi_format">
+            <section class="doc-pipeline-group {% if _doc_pipeline_mode not in ['multi_format', 'multi_format_bookrag'] %}doc-mode-hidden{% endif %}" data-doc-mode-for="multi_format multi_format_bookrag">
               <div class="select-docs-options multi-format-params-grid">
                 <label class="field">
                   <span>multi_format_strategy</span>
@@ -92,20 +93,6 @@
                 <label class="field">
                   <span>multi_format_ocr_languages</span>
                   <input type="text" name="multi_format_ocr_languages" value="{{ create_values.get('multi_format_ocr_languages', 'ja,en') }}" placeholder="ja,en" {% if not evs.connected %}disabled{% endif %} />
-                </label>
-                <label class="field">
-                  <span>multi_format_keep_tables</span>
-                  <select name="multi_format_keep_tables" {% if not evs.connected %}disabled{% endif %}>
-                    <option value="true" {% if create_values.get('multi_format_keep_tables', 'true') == 'true' %}selected{% endif %}>true</option>
-                    <option value="false" {% if create_values.get('multi_format_keep_tables', '') == 'false' %}selected{% endif %}>false</option>
-                  </select>
-                </label>
-                <label class="field">
-                  <span>multi_format_extract_images</span>
-                  <select name="multi_format_extract_images" {% if not evs.connected %}disabled{% endif %}>
-                    <option value="false" {% if create_values.get('multi_format_extract_images', 'false') == 'false' %}selected{% endif %}>false</option>
-                    <option value="true" {% if create_values.get('multi_format_extract_images', '') == 'true' %}selected{% endif %}>true</option>
-                  </select>
                 </label>
               </div>
             </section>
