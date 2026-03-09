@@ -1,0 +1,344 @@
+@media (min-width: 1800px) {
+  :root {
+    --left-rail-w: clamp(220px, 10.8vw, 300px);
+    --connect-form-w: clamp(23rem, 24vw, 35rem);
+    --content-max-w: 2460px;
+  }
+}
+
+@media (min-width: 1101px) {
+  #section-create.menu-section .panel-content {
+    overflow: hidden;
+    padding-right: 0;
+  }
+
+  #section-create form.stack {
+    gap: clamp(0.35rem, 0.5vh, 0.55rem);
+  }
+
+  #section-create .param-group {
+    padding: clamp(0.42rem, 0.58vh, 0.6rem);
+  }
+
+  #section-create .param-group h3 {
+    margin: 0.04rem 0 clamp(0.2rem, 0.35vh, 0.36rem);
+    font-size: clamp(0.92rem, 0.42vw, 1.04rem);
+    line-height: 1.2;
+  }
+
+  #section-create .field > span {
+    margin-bottom: clamp(0.12rem, 0.2vh, 0.22rem);
+    font-size: clamp(0.76rem, 0.3vw, 0.9rem);
+    line-height: 1.15;
+  }
+
+  #section-create input,
+  #section-create select,
+  #section-create textarea {
+    min-height: clamp(2.05rem, 3.3vh, 2.35rem);
+    padding-top: clamp(0.3rem, 0.45vh, 0.44rem);
+    padding-bottom: clamp(0.3rem, 0.45vh, 0.44rem);
+  }
+
+  #section-create .stack-inline {
+    margin-top: clamp(0.12rem, 0.24vh, 0.2rem);
+  }
+}
+
+@media (max-height: 900px) and (min-width: 1101px) and (max-width: 1600px) {
+  :root {
+    --ui-topbar-h: clamp(76px, 10vh, 92px);
+    --create-result-h: clamp(220px, 40vh, 520px);
+    --chat-window-h: clamp(90px, 16vh, 170px);
+  }
+
+  /* Allow vertical scrolling instead of clipping content on laptop-height screens. */
+  .page {
+    overflow: auto;
+  }
+
+  .menu-section .panel-content {
+    overflow: auto;
+    padding-right: 0.15rem;
+  }
+
+  .connect-grid {
+    height: 100%;
+    min-height: 0;
+    overflow: auto;
+  }
+
+  .connect-fields,
+  .connect-monitor,
+  .connect-monitor-group {
+    height: 100%;
+    overflow: auto;
+  }
+}
+
+@media (max-width: 1100px) {
+  html,
+  body {
+    overflow: hidden;
+  }
+
+  .topbar {
+    grid-template-columns: 1fr;
+    gap: 0.65rem;
+    height: auto;
+  }
+
+  .page {
+    height: calc(100dvh - var(--ui-topbar-h));
+    max-height: calc(100dvh - var(--ui-topbar-h));
+    overflow: auto;
+  }
+
+  .brand-block {
+    border-right: 0;
+    border-bottom: 1px solid #203564;
+    padding-right: 0;
+    padding-bottom: 0.45rem;
+  }
+
+  .menu-layout,
+  .workflow-layout,
+  .grid-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .menu-layout {
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    height: 100%;
+    min-height: 0;
+    max-width: 100%;
+  }
+
+  .left-menu {
+    min-height: 0;
+    max-height: none;
+    height: 100%;
+    overflow: hidden;
+    width: min(100%, 320px);
+    max-width: 320px;
+    margin: 0;
+    justify-self: start;
+  }
+
+  .panel.left-menu {
+    padding: 0.72rem;
+    border-radius: 14px;
+  }
+
+  .eyebrow {
+    font-size: clamp(0.58rem, 1.2vw, 0.72rem);
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+    overflow: visible;
+    text-overflow: clip;
+  }
+
+  .menu-item {
+    font-size: clamp(0.66rem, 1.35vw, 0.82rem);
+    font-family: var(--font-ui);
+    letter-spacing: 0;
+    line-height: 1.15;
+    padding: 0.42rem 0.52rem;
+  }
+
+  .menu-hint {
+    font-size: clamp(0.62rem, 1.1vw, 0.72rem);
+  }
+
+  .wizard-nav {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .wizard-actions {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .menu-section {
+    max-height: none;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .menu-section.active {
+    display: flex;
+  }
+
+  .menu-section .panel-content {
+    overflow: auto;
+    padding-right: 0;
+  }
+
+  .panel-span2 {
+    grid-column: auto;
+  }
+
+  .panel {
+    min-height: auto;
+  }
+
+  .feature-layout {
+    grid-template-columns: 1fr;
+    min-height: auto;
+  }
+
+  .workflow-rail .panel,
+  .workflow-main .panel {
+    max-height: none;
+    overflow: auto;
+  }
+
+  .chat-window {
+    height: clamp(110px, 28vh, 220px);
+    min-height: clamp(110px, 28vh, 220px);
+    max-height: clamp(110px, 28vh, 220px);
+  }
+
+  #section-create #create-result {
+    height: 36vh;
+    min-height: 36vh;
+    max-height: 36vh;
+  }
+
+  .param-grid,
+  .param-grid.compact,
+  .param-grid.compact.compact-tight {
+    grid-template-columns: 1fr;
+  }
+
+  #section-create .param-grid.compact.compact-tight {
+    grid-template-columns: 1fr;
+  }
+
+
+  .connect-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) !important;
+    height: auto;
+    min-height: auto;
+    max-height: none;
+  }
+
+  .monitor-status {
+    min-height: 36px;
+  }
+
+  .monitor-status-list {
+    min-height: 96px;
+  }
+
+  .connect-status-zone {
+    height: auto;
+    min-height: auto;
+  }
+
+  .connect-fields,
+  .connect-monitor {
+    height: auto;
+    overflow: auto;
+  }
+
+  .connect-userpass-row {
+    grid-template-columns: 1fr;
+  }
+
+  .connect-monitor-group {
+    height: auto;
+    grid-template-rows: auto;
+    overflow: auto;
+  }
+
+  .step-results-dock {
+    height: auto;
+    min-height: auto;
+    max-height: none;
+  }
+
+  .step-log-scroll {
+    max-height: 30vh;
+    flex: none;
+  }
+
+  .menu-section#section-connect .panel-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+    overflow: auto;
+  }
+
+}
+
+@media (max-width: 900px) {
+  .connect-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+@media (max-width: 520px) {
+  :root {
+    --ui-font-base: 14px;
+  }
+
+  .page {
+    padding: 0.5rem;
+  }
+
+  .menu-layout {
+    gap: 0.5rem;
+  }
+
+  .panel.left-menu {
+    padding: 0.65rem;
+    border-radius: 14px;
+  }
+
+  .left-menu {
+    gap: 0.42rem;
+  }
+
+  .eyebrow {
+    font-size: 0.62rem;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+    overflow: visible;
+    text-overflow: clip;
+  }
+
+  .menu-item {
+    font-size: 0.68rem;
+    font-family: var(--font-ui);
+    font-weight: 600;
+    letter-spacing: 0;
+    white-space: nowrap;
+    overflow: visible;
+    text-overflow: clip;
+    line-height: 1.15;
+    padding: 0.4rem 0.48rem;
+    border-radius: 10px;
+  }
+
+  .menu-hint {
+    font-size: 0.68rem;
+    margin-top: 0.35rem;
+  }
+
+  .file-input-shell {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .file-input-btn {
+    min-height: 2rem;
+  }
+
+  .file-input-name {
+    width: 100%;
+    white-space: normal;
+  }
+}

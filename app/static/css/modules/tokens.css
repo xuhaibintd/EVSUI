@@ -1,0 +1,37 @@
+:root {
+  --ui-topbar-h: clamp(84px, 9.5vh, 106px);
+  --left-rail-w: clamp(210px, 12.8vw, 260px);
+  --ui-font-base: clamp(15px, 0.3vw + 11px, 19px);
+  --page-pad: clamp(0.75rem, 0.8vw, 1.35rem);
+  --layout-gap: clamp(0.7rem, 0.75vw, 1.15rem);
+  --content-max-w: 2200px;
+  --connect-form-w: clamp(21rem, 26vw, 31rem);
+  --create-result-h: clamp(280px, 44vh, 760px);
+  --chat-window-h: clamp(108px, 18vh, 220px);
+  --list-visible-rows: 5;
+  --list-row-h: 2rem;
+  --list-head-h: 2rem;
+  --bg-root: #040b1b;
+  --bg-grad-a: #0a1733;
+  --bg-grad-b: #111f45;
+  --ink: #edf4ff;
+  --muted: #9bb0d5;
+  --panel: rgba(9, 23, 51, 0.72);
+  --panel-strong: rgba(7, 18, 42, 0.9);
+  --line: #263d70;
+  --line-soft: #1d315b;
+  --accent: #ff8a38;
+  --teradata-orange: #f47b2a;
+  --primary: #3399ff;
+  --success: #55d77e;
+  --font-ui: "Manrope", "Segoe UI", "Trebuchet MS", sans-serif;
+  --font-display: "Sora", "Segoe UI", "Trebuchet MS", sans-serif;
+  --font-mono: "JetBrains Mono", "Consolas", "Courier New", monospace;
+  --connect-status-h: 88px;
+  --connect-main-h-compact: clamp(460px, 58vh, 700px);
+  --connect-main-h-backlog: clamp(360px, 46vh, 560px);
+  --connect-main-min: 360px;
+  --connect-steps-h-compact: clamp(180px, 20vh, 260px);
+  --connect-steps-h-backlog: clamp(300px, 36vh, 520px);
+  --connect-steps-min: 180px;
+}
