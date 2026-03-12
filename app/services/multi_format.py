@@ -17,6 +17,18 @@ UNSTRUCTURED_WORKFLOW_POLL_SECONDS_DEFAULT = 120
 UNSTRUCTURED_WORKFLOW_POLL_INTERVAL_DEFAULT = 2
 UNSTRUCTURED_TERADATA_FLUSH_WAIT_SECONDS_DEFAULT = 20
 UNSTRUCTURED_TERADATA_FLUSH_WAIT_INTERVAL_DEFAULT = 2
+UNSTRUCTURED_DEBUG_DIR_DEFAULT = Path(__file__).resolve().parents[2] / "uploads" / "unstructured_debug"
+BOOKRAG_PDF_IMAGE_EXTENSIONS = {
+    ".pdf",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".tif",
+    ".tiff",
+    ".bmp",
+    ".gif",
+    ".webp",
+}
 
 
 ExecuteSqlFn = Callable[[str], Any]
@@ -377,6 +389,68 @@ def _now_ts() -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _safe_stem(src: Path) -> str:
+    stem = re.sub(r"[^0-9A-Za-z._-]", "_", src.stem.strip())
+    return stem or "document"
+
+
+def _prepare_unstructured_debug_dir(vector_store_name: str) -> Path:
+    vs_name = _sanitize_teradata_identifier(vector_store_name, fallback="bookrag")
+    run_id = time.strftime("%Y%m%d_%H%M%S")
+    debug_dir = UNSTRUCTURED_DEBUG_DIR_DEFAULT / f"{vs_name}_{run_id}"
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    return debug_dir
+
+
+def _write_unstructured_debug_file(
+    debug_dir: Path | None,
+    src: Path,
+    raw_elements: list[dict[str, Any]],
+    rows: list[dict[str, Any]],
+    request_parameters: dict[str, Any],
+) -> str | None:
+    if debug_dir is None:
+        return None
+    payload = {
+        "source_file": str(src),
+        "saved_at": _now_ts(),
+        "raw_element_count": len(raw_elements),
+        "row_count": len(rows),
+        "request_parameters": _json_safe_value(request_parameters),
+        "raw_elements": raw_elements,
+        "table_rows": rows,
+    }
+    out_path = debug_dir / f"{_safe_stem(src)}.json"
+    out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return str(out_path)
+
+
+def _json_safe_value(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, bytes):
+        return {"type": "bytes", "length": len(value)}
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, dict):
+        return {str(key): _json_safe_value(val) for key, val in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe_value(item) for item in value]
+    return str(value)
+
+
+def _bookrag_partition_options_for_file(
+    src: Path,
+    default_strategy: str,
+    default_languages: list[str],
+) -> tuple[str, list[str], bool]:
+    suffix = src.suffix.lower()
+    include_orig_elements = True
+    if suffix in BOOKRAG_PDF_IMAGE_EXTENSIONS:
+        return "hi_res", ["jpn"], include_orig_elements
+    return default_strategy, default_languages or ["jpn"], include_orig_elements
+
+
 def _as_text(value: Any, max_len: int | None = None) -> str | None:
     if value is None:
         return None
@@ -456,7 +530,8 @@ def _partition_document_chunks(
     chunk_overlap: int,
     partition_strategy: str,
     languages: list[str],
-) -> list[dict[str, Any]]:
+    include_orig_elements: bool,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     from unstructured_client.models import operations
 
     content_type = mimetypes.guess_type(src.name)[0] or "application/octet-stream"
@@ -472,7 +547,7 @@ def _partition_document_chunks(
         "new_after_n_chars": chunk_size,
         "overlap": chunk_overlap,
         "overlap_all": False,
-        "include_orig_elements": False,
+        "include_orig_elements": include_orig_elements,
     }
     if languages:
         partition_parameters["languages"] = languages
@@ -492,7 +567,7 @@ def _partition_document_chunks(
         row = _element_to_chunk_row(element, src=src, content_type=content_type)
         if row:
             rows.append(row)
-    return rows
+    return rows, elements, partition_parameters
 
 
 def _insert_chunk_rows(
@@ -565,6 +640,7 @@ def apply_multi_format_pipeline(
     *,
     execute_sql_fn: ExecuteSqlFn | None,
     resolve_path_hint: ResolvePathFn,
+    pipeline_mode: str = "multi_format",
 ) -> tuple[dict, dict]:
     connection_params = connection_params or {}
 
@@ -584,6 +660,7 @@ def apply_multi_format_pipeline(
         chunk_overlap = max(0, chunk_size // 5)
     partition_strategy = _resolve_partition_strategy(create_values.get("multi_format_strategy", "auto"))
     ocr_languages = _parse_langs(create_values.get("multi_format_ocr_languages", ""))
+    include_orig_elements = False
 
     table_name, schema_name, qualified_name, target_warnings = _resolve_multi_format_table_target(
         exec_payload,
@@ -614,21 +691,40 @@ def apply_multi_format_pipeline(
     )
 
     client = _new_unstructured_client()
+    debug_dir = _prepare_unstructured_debug_dir(vector_store_name) if pipeline_mode == "multi_format_bookrag" else None
     inserted_rows = 0
     partition_warnings: list[str] = []
+    debug_files: list[str] = []
     for path_hint in document_files:
         resolved = resolve_path_hint(path_hint)
         src = Path(resolved)
         if not src.exists() or not src.is_file():
             raise RuntimeError(f"multi format source file is missing: {path_hint}")
-        rows = _partition_document_chunks(
+        file_partition_strategy = partition_strategy
+        file_ocr_languages = ocr_languages
+        file_include_orig_elements = include_orig_elements
+        if pipeline_mode == "multi_format_bookrag":
+            (
+                file_partition_strategy,
+                file_ocr_languages,
+                file_include_orig_elements,
+            ) = _bookrag_partition_options_for_file(
+                src,
+                default_strategy=partition_strategy,
+                default_languages=ocr_languages,
+            )
+        rows, raw_elements, request_parameters = _partition_document_chunks(
             client,
             src,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
-            partition_strategy=partition_strategy,
-            languages=ocr_languages,
+            partition_strategy=file_partition_strategy,
+            languages=file_ocr_languages,
+            include_orig_elements=file_include_orig_elements,
         )
+        debug_file = _write_unstructured_debug_file(debug_dir, src, raw_elements, rows, request_parameters)
+        if debug_file:
+            debug_files.append(debug_file)
         if not rows:
             partition_warnings.append(f"No chunks extracted from file: {src.name}")
             continue
@@ -689,5 +785,15 @@ def apply_multi_format_pipeline(
         "inserted_rows": inserted_rows,
         "chunk_size": chunk_size,
         "chunk_overlap": chunk_overlap,
+        "debug_dir": str(debug_dir) if debug_dir else "",
+        "debug_files": debug_files,
+        "effective_partition_strategy": partition_strategy,
+        "effective_ocr_languages": ocr_languages,
+        "include_orig_elements": include_orig_elements,
+        "file_mode": (
+            "per-extension"
+            if pipeline_mode == "multi_format_bookrag"
+            else "shared"
+        ),
     }
     return patched_payload, summary

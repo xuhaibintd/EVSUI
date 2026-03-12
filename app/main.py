@@ -26,9 +26,12 @@ from app.session_state import (
     user_initials,
 )
 from app.services.create_config import (
+    build_create_ui_sections,
+    build_text_core_ui_fields,
     default_create_values,
-    group_create_fields,
 )
+from app.services.doc_modes.common import build_multi_format_ui_fields
+from app.services.doc_modes.registry import DOC_PIPELINE_OPTIONS
 from app.utils.table_state import (
     apply_chat_list_output_to_state,
     apply_list_output_to_state,
@@ -107,6 +110,8 @@ DEFAULT_PAT_TOKEN = "<redacted-pat-token>"
 DEFAULT_CHAT_VS_NAME = "TokioMarine_test"
 AUTH_USERS_FILE_DEFAULT = BASE_DIR / "config" / "auth_users.json"
 SESSION_COOKIE_NAME = "evsui_sid"
+DEFAULT_LOGIN_USERNAME = "admin"
+DEFAULT_LOGIN_PASSWORD = "<redacted-password>"
 logger = logging.getLogger("evsui.connect")
 logger.setLevel(logging.INFO)
 
@@ -119,9 +124,48 @@ def _now_ts() -> str:
 
 def _is_vectorstore_already_exists_error(raw_error: str) -> bool:
     text = str(raw_error or "").lower()
-    if "already exists" not in text:
+    if "already exists" not in text and "already exist" not in text:
         return False
-    return "vector store" in text or "responsecode: 409" in text or "response code: 409" in text
+    vectorstore_markers = (
+        "vector store",
+        "vectorstore",
+        "vector-store",
+    )
+    return any(marker in text for marker in vectorstore_markers)
+
+
+def _verify_vectorstore_exists(vector_store_name: str) -> tuple[bool, str, str]:
+    target = str(vector_store_name or "").strip()
+    if not target:
+        return False, "", "empty vector store name"
+    if VSManager is None:
+        return False, "", "VSManager runtime is unavailable"
+
+    list_fn = getattr(VSManager, "list", None)
+    if not callable(list_fn):
+        return False, "", "VSManager.list() is not callable"
+
+    try:
+        list_output = list_fn(return_type="json")
+    except Exception as ex:
+        return False, "", str(ex)
+
+    headers, rows = _table_from_result(list_output)
+    matched_row = _find_vs_row_by_name(headers, rows, target)
+    if matched_row:
+        owner = _row_value_by_header(headers, matched_row, ("username", "user", "owner", "creator", "createdby"))
+        database = _row_value_by_header(headers, matched_row, ("database", "schema", "targetdatabase"))
+        permission = _row_value_by_header(headers, matched_row, ("permission", "role", "access"))
+        detail_parts = []
+        if owner:
+            detail_parts.append(f"owner='{owner}'")
+        if database:
+            detail_parts.append(f"database='{database}'")
+        if permission:
+            detail_parts.append(f"permission='{permission}'")
+        detail = ", ".join(detail_parts) if detail_parts else f"row={_format_preview(dict(zip(headers[1:], matched_row[1:])), max_chars=300)}"
+        return True, f"VSManager.list() confirmed '{target}' exists ({detail}).", ""
+    return False, f"VSManager.list() did not contain '{target}'.", ""
 
 
 _normalize_header_key = normalize_header_key
@@ -380,8 +424,11 @@ def _build_home_context(request: Request) -> dict:
     return {
         "messages": app.state.chat_history,
         "evs": state,
-        "create_param_groups": group_create_fields(),
+        "create_ui_sections": build_create_ui_sections(),
+        "text_core_ui_fields": build_text_core_ui_fields(),
+        "multi_format_ui_fields": build_multi_format_ui_fields(),
         "create_values": app.state.create_form_values,
+        "doc_pipeline_options": DOC_PIPELINE_OPTIONS,
         "create_result": app.state.last_create_operation,
         "document_uploads": app.state.document_uploads,
         "document_upload_error": "",
@@ -430,7 +477,13 @@ async def login_page(request: Request):
     return templates.TemplateResponse(
         request,
         "login.html",
-        {"error": "", "logged_in": False, "username": "", "user_initials": ""},
+        {
+            "error": "",
+            "logged_in": False,
+            "username": DEFAULT_LOGIN_USERNAME,
+            "password": DEFAULT_LOGIN_PASSWORD,
+            "user_initials": "",
+        },
     )
 
 
@@ -456,7 +509,13 @@ async def login_submit(request: Request, username: str = Form(default=""), passw
     return templates.TemplateResponse(
         request,
         "login.html",
-        {"error": error_message, "logged_in": False, "username": clean_username, "user_initials": ""},
+        {
+            "error": error_message,
+            "logged_in": False,
+            "username": clean_username or DEFAULT_LOGIN_USERNAME,
+            "password": password or DEFAULT_LOGIN_PASSWORD,
+            "user_initials": "",
+        },
     )
 
 
@@ -949,7 +1008,7 @@ async def evs_select_from_list(request: Request, vs_name: str = Form(default="")
     state["selected_vs_name"] = selected_name
     state["destroy_status"] = "neutral"
     if selected_name:
-        state["destroy_preview"] = f"Selected '{selected_name}'. Click Destroy Selected to delete."
+        state["destroy_preview"] = f"Selected '{selected_name}'. Click Delete to delete."
         _append_connect_step(state, "Vector Store selection", "ok", f"Selected '{selected_name}'.")
     else:
         state["destroy_preview"] = "Click a row in list, then destroy it here."
@@ -993,6 +1052,7 @@ async def upload_and_prepare_create(request: Request):
         now_ts=_now_ts,
         is_htmx=is_htmx,
         is_vectorstore_already_exists_error_fn=_is_vectorstore_already_exists_error,
+        verify_vectorstore_exists_fn=_verify_vectorstore_exists,
         append_connect_step=_append_connect_step,
     )
     _persist_active_session_state(request)

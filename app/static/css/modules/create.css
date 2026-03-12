@@ -260,3 +260,29 @@
 }
 
 
+
+.field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.38rem;
+  flex-wrap: wrap;
+}
+
+.field-required {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.04rem 0.34rem;
+  border: 1px solid #2d5b93;
+  border-radius: 999px;
+  background: rgba(20, 50, 88, 0.72);
+  color: #cfe3ff;
+  font-size: 0.68rem;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.field-note {
+  color: #89a4d2;
+  font-size: 0.72rem;
+  line-height: 1.3;
+}

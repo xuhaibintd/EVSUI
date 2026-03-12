@@ -1,3 +1,4 @@
+<div data-uploaded-count="{{ document_uploads|length }}">
 {% if document_upload_error %}
 <p class="status err">{{ document_upload_error }}</p>
 {% endif %}
@@ -26,3 +27,5 @@
 <p class="uploaded-files-title">Uploaded files (0)</p>
 <p class="muted">No files uploaded yet.</p>
 {% endif %}
+
+</div>

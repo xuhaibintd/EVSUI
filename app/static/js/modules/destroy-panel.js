@@ -35,7 +35,7 @@
             destroyButton.disabled = false;
           }
           if (feedback) {
-            feedback.textContent = `Selected '${vsName}'. Click Destroy Selected to delete.`;
+            feedback.textContent = `Selected '${vsName}'. Click Delete to delete.`;
             feedback.classList.remove("ok", "warn", "err");
             feedback.classList.add("neutral");
           }

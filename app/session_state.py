@@ -15,16 +15,21 @@ def load_connect_defaults(
     vs_basics_dir: Path,
     default_pat_token: str,
 ) -> dict[str, str]:
-    _ = latest_uploaded_pem_relative
     _ = vs_basics_dir
-    _ = default_pat_token
+    preferred_pem = "uploads\\pem\\<redacted-user>__jcb.pem"
+    pem_path = preferred_pem
+    try:
+        if not Path(preferred_pem).exists():
+            pem_path = latest_uploaded_pem_relative() or preferred_pem
+    except Exception:
+        pem_path = preferred_pem
     return {
-        "host": "",
-        "username": "",
-        "password": "",
-        "ues_url": "",
-        "pat_token": "",
-        "pem_file": "",
+        "host": "<redacted-host>",
+        "username": "<redacted-user>",
+        "password": "<redacted-user>",
+        "ues_url": "https://tddemos.innovationlabs.teradata.com/api/accounts/1ca5520e-5abd-441d-ba25-40c83ff23b2e/open-analytics",
+        "pat_token": default_pat_token,
+        "pem_file": pem_path,
     }
 
 

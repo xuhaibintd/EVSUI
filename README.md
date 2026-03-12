@@ -29,6 +29,10 @@ Teradata Vector Store is a `FastAPI + Jinja2 + HTMX` three-step interface for co
 - In Step 3, clicking `Run List` loads real vector stores and displays an available item by default.
 - Step 1 `destroy` refreshes only Step 1 list data, not the Step 3 dropdown.
 - No auto-list on connect; list execution is manual.
+- Step 2 submit validation blocks create unless `vector_store_name`, `doc_pipeline_mode`, `embeddings_model`, and uploaded files are present.
+- For uploaded-file create flow, `object_names` is not auto-filled by the UI.
+- Step 2 does not report success when `VectorStore.create()` merely returns; it waits until `VectorStore.status()` reaches `Ready`.
+- If `create()` reports `already exists`, the app verifies existence with unfiltered `VSManager.list()` and only reuses the store when its current status is `Ready`.
 
 ## Requirements
 
@@ -45,24 +49,29 @@ Teradata Vector Store is a `FastAPI + Jinja2 + HTMX` three-step interface for co
 
 ## Multi Format Config
 
-- Configure Unstructured credentials in `app/config/unstructured.json`:
+- Configure Unstructured credentials in `app/config/unstructured.json`.
+- Supported API key fields: `api_key`, `key_id`, `UNSTRUCTURED_API_KEY`, `UNSTRUCTURED_API_KEY_AUTH`
+- Supported API URL fields: `api_url`, `UNSTRUCTURED_API_URL`, `UNSTRUCTURED_PLATFORM_URL`
+
+Example:
 
 ```json
 {
-  "key_id": "your-unstructured-api-key",
-  "UNSTRUCTURED_API_URL": "https://platform.unstructuredapp.io/api/v1"
+  "api_key": "your-unstructured-api-key",
+  "api_url": "https://platform.unstructuredapp.io/api/v1"
 }
 ```
 
-- Optional runtime env (still supported as fallback):
+- Optional runtime env:
   - `UNSTRUCTURED_WORKFLOW_POLL_SECONDS` (default: `120`)
   - `UNSTRUCTURED_WORKFLOW_POLL_INTERVAL` (default: `2`)
-  - `UNSTRUCTURED_TERADATA_BATCH_SIZE` (default: `200`)
-  - `UNSTRUCTURED_KEEP_WORKFLOW_RESOURCES` (`true/false`, default: `false`)
+  - `UNSTRUCTURED_TERADATA_FLUSH_WAIT_SECONDS` (default: `20`)
+  - `UNSTRUCTURED_TERADATA_FLUSH_WAIT_INTERVAL` (default: `2`)
 
 Notes:
 - Web console sign-in URL: `https://platform.unstructured.io`
-- Workflow API URL: `https://platform.unstructuredapp.io/api/v1` (or your account-specific API URL)
+- Workflow API URL default: `https://platform.unstructuredapp.io/api/v1`
+- If the config file exists but does not contain an API key, multi-format create will fail with `Unstructured API key missing`.
 
 ## Quick Start
 
@@ -88,7 +97,18 @@ Open: `http://127.0.0.1:8010`
 
 ## Login
 
-- Configure users in `app/config/auth_users.json`:
+- Configure users in `app/config/auth_users.json`.
+- The repository currently ships with:
+
+```json
+{
+  "users": {
+    "admin": "<redacted-password>"
+  }
+}
+```
+
+- You can replace it with your own users, for example:
 
 ```json
 {
@@ -127,6 +147,7 @@ Open: `http://127.0.0.1:8010`
 - `GET /` Home
 - `GET /login`, `POST /login`, `POST /logout`
 - `POST /ui/evs/connect`, `POST /ui/evs/reset`
+- `POST /ui/evs/upload-pem`
 - `POST /ui/evs/health`, `POST /ui/evs/list`
 - `POST /ui/chat/vs-list`
 - `POST /ui/evs/select`, `POST /ui/evs/destroy`

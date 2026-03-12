@@ -1,0 +1,30 @@
+{% macro render_attrs(attrs) -%}
+{%- if attrs -%}
+{%- for attr_name, attr_value in attrs.items() %} {{ attr_name }}="{{ attr_value }}"{%- endfor -%}
+{%- endif -%}
+{%- endmacro %}
+
+{% macro render_field(field, create_values, connected) -%}
+<label class="{{ field.get('wrapper_class', 'field') }}"{{ render_attrs(field.get('wrapper_attrs')) }}>
+  <span class="field-label">{{ field.get('label', field.get('name', '')) }}</span>
+  {% set value = create_values.get(field.get('name', ''), field.get('default', '')) %}
+  {% if field.get('kind') == 'select' %}
+  <select name="{{ field.get('name', '') }}"{% if field.get('required') %} required{% endif %}{% if not connected %} disabled{% endif %}{{ render_attrs(field.get('input_attrs')) }}>
+    {% for option in field.get('options', []) %}
+    <option value="{{ option.get('value', '') }}" {% if value == option.get('value', '') %}selected{% endif %}>{{ option.get('label', option.get('value', '')) }}</option>
+    {% endfor %}
+    {% for group in field.get('option_groups', []) %}
+    <optgroup label="{{ group.get('label', '') }}">
+      {% for option in group.get('options', []) %}
+      <option value="{{ option.get('value', '') }}" {% if value == option.get('value', '') %}selected{% endif %}>{{ option.get('label', option.get('value', '')) }}</option>
+      {% endfor %}
+    </optgroup>
+    {% endfor %}
+  </select>
+  {% elif field.get('kind') == 'textarea' %}
+  <textarea name="{{ field.get('name', '') }}"{% if field.get('required') %} required{% endif %}{% if not connected %} disabled{% endif %}{{ render_attrs(field.get('input_attrs')) }} placeholder="{{ field.get('placeholder', '') }}">{{ value }}</textarea>
+  {% else %}
+  <input type="{{ field.get('kind', 'text') }}" name="{{ field.get('name', '') }}" value="{{ value }}" placeholder="{{ field.get('placeholder', '') }}"{% if field.get('required') %} required{% endif %}{% if not connected %} disabled{% endif %}{{ render_attrs(field.get('input_attrs')) }} />
+  {% endif %}
+</label>
+{%- endmacro %}

@@ -1,0 +1,9 @@
+{% import "partials/create_field_macros.html" as fields %}
+
+<section class="doc-pipeline-group {% if _doc_pipeline_mode != 'text_core' %}doc-mode-hidden{% endif %}" data-doc-mode-for="text_core">
+  <div class="select-docs-options">
+    {% for field in text_core_ui_fields %}
+    {{ fields.render_field(field, create_values, evs.connected) }}
+    {% endfor %}
+  </div>
+</section>

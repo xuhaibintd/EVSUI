@@ -31,6 +31,10 @@
         if (nameNode instanceof HTMLElement) {
           nameNode.textContent = defaultText;
         }
+        const form = fileInput.closest("form");
+        if (form instanceof HTMLFormElement) {
+          form.dispatchEvent(new CustomEvent("evsui:uploaded-files-updated"));
+        }
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -100,6 +104,98 @@
     });
   }
 
+  function bindCreateValidation(scope = document) {
+    const createForm = scope.querySelector("#section-create form[hx-post='/ui/create/upload']");
+    if (!(createForm instanceof HTMLFormElement)) {
+      return;
+    }
+    if (createForm.dataset.validationBound === "1") {
+      return;
+    }
+    createForm.dataset.validationBound = "1";
+
+    const vectorStoreName = createForm.querySelector("[name='vector_store_name']");
+    const docPipelineMode = createForm.querySelector("[name='doc_pipeline_mode']");
+    const embeddingsModel = createForm.querySelector("[name='embeddings_model']");
+    const objectNames = createForm.querySelector("[name='object_names']");
+    const uploadInput = createForm.querySelector("input[type='file'][name='files']");
+    const uploadedPreview = createForm.querySelector("[data-selected-doc-paths]");
+
+    const getUploadedCount = () => {
+      const node = createForm.querySelector("[data-uploaded-count]");
+      const raw = node instanceof HTMLElement ? node.dataset.uploadedCount || "0" : "0";
+      const count = Number.parseInt(raw, 10);
+      return Number.isFinite(count) ? count : 0;
+    };
+
+    const clearValidity = (field) => {
+      if (
+        field instanceof HTMLInputElement ||
+        field instanceof HTMLSelectElement ||
+        field instanceof HTMLTextAreaElement
+      ) {
+        field.setCustomValidity("");
+      }
+    };
+
+    const syncConditionalRules = () => {
+      clearValidity(vectorStoreName);
+      clearValidity(docPipelineMode);
+      clearValidity(embeddingsModel);
+      clearValidity(objectNames);
+      clearValidity(uploadInput);
+
+      const uploadedCount = getUploadedCount();
+      if (embeddingsModel instanceof HTMLSelectElement) {
+        embeddingsModel.required = true;
+        if (!embeddingsModel.value.trim()) {
+          embeddingsModel.setCustomValidity("embeddings_model is required.");
+        }
+      }
+      if (uploadInput instanceof HTMLInputElement) {
+        uploadInput.required = false;
+        if (uploadedCount === 0) {
+          uploadInput.setCustomValidity("Uploaded files is required.");
+        }
+      }
+      if (objectNames instanceof HTMLInputElement) {
+        objectNames.required = false;
+      }
+    };
+
+    [vectorStoreName, docPipelineMode, embeddingsModel, objectNames, uploadInput].forEach((field) => {
+      if (
+        field instanceof HTMLInputElement ||
+        field instanceof HTMLSelectElement ||
+        field instanceof HTMLTextAreaElement
+      ) {
+        field.addEventListener("input", syncConditionalRules);
+        field.addEventListener("change", syncConditionalRules);
+      }
+    });
+
+    createForm.addEventListener(
+      "submit",
+      (event) => {
+        syncConditionalRules();
+        if (!createForm.checkValidity()) {
+          event.preventDefault();
+          createForm.reportValidity();
+        }
+      },
+      true
+    );
+
+    createForm.addEventListener("evsui:uploaded-files-updated", syncConditionalRules);
+    if (uploadedPreview instanceof HTMLElement && uploadedPreview.dataset.validationObserverBound !== "1") {
+      uploadedPreview.dataset.validationObserverBound = "1";
+      const observer = new MutationObserver(() => syncConditionalRules());
+      observer.observe(uploadedPreview, { childList: true, subtree: true, attributes: true });
+    }
+
+    syncConditionalRules();
+  }
+
   function enforceCreateInputLength(scope = document) {
     const fields = scope.querySelectorAll("#section-create input:not([type='file']), #section-create textarea");
     const clamp = (field) => {
@@ -144,8 +240,10 @@
   app.bindCreateFileUpload = bindCreateFileUpload;
   app.bindCustomFileInputs = bindCustomFileInputs;
   app.enforceCreateInputLength = enforceCreateInputLength;
+  app.bindCreateValidation = bindCreateValidation;
 
   app.registerBinder(bindCreateFileUpload);
   app.registerBinder(bindCustomFileInputs);
   app.registerBinder(enforceCreateInputLength);
+  app.registerBinder(bindCreateValidation);
 })(window);

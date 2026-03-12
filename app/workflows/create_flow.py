@@ -1,22 +1,128 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 from app.services.create_config import (
     CORE_CREATE_FIELDS,
     CREATE_FIELDS,
     CREATE_FIELD_MAX_LEN,
-    DOC_PIPELINE_UI_DEFAULTS,
     NON_NEGATIVE_INT_FIELDS,
     apply_create_preset,
     build_create_call_preview,
     coerce_create_param,
+    default_create_values,
 )
-from app.services.multi_format import (
-    apply_multi_format_pipeline,
-    normalize_document_files_for_create,
-)
-from app.utils.table_state import format_preview
+from app.services.doc_modes.common import collect_doc_pipeline_ui_values
+from app.services.doc_modes.registry import get_doc_pipeline_handler
+from app.services.multi_format import normalize_document_files_for_create
+from app.utils.table_state import format_preview, row_value_by_header, table_from_result
+
+
+CREATE_READY_TIMEOUT_SECONDS = 120
+CREATE_READY_POLL_INTERVAL_SECONDS = 2
+
+
+def _classify_vectorstore_status(status_output) -> tuple[str, str, str]:
+    preview = format_preview(status_output, max_chars=None)
+    headers, rows = table_from_result(status_output)
+
+    status_text = ""
+    for row in rows:
+        status_text = row_value_by_header(headers, row, ("status", "state", "lifecycle", "operationstatus", "collectionstatus"))
+        if status_text:
+            break
+
+    normalized = status_text.strip().lower()
+    retry_after_text = ""
+    for row in rows:
+        retry_after_text = row_value_by_header(headers, row, ("retryafter",))
+        if retry_after_text:
+            break
+    if (not normalized) and isinstance(status_output, str):
+        status_text = status_output.strip()
+        normalized = status_text.lower()
+
+    if retry_after_text and not normalized:
+        return "in_progress", retry_after_text, preview
+    if retry_after_text:
+        return "in_progress", status_text or retry_after_text, preview
+    if not normalized:
+        return "unknown", status_text, preview
+    if "ready" in normalized:
+        return "ready", status_text, preview
+    if "failed" in normalized or "error" in normalized:
+        return "failed", status_text, preview
+
+    in_progress_markers = (
+        "initialized",
+        "ingested",
+        "ingested_partially",
+        "create_load_data_completed",
+        "create_generating_embeddings_completed",
+        "generate_embeddings_completed",
+        "create_index_completed",
+        "creating",
+        "initializing",
+        "pending",
+        "processing",
+        "ingesting",
+        "loading",
+        "generating",
+        "indexing",
+        "submitted",
+        "updating",
+        "create_",
+        "update_",
+        "create ",
+        "update ",
+    )
+    if any(marker in normalized for marker in in_progress_markers):
+        return "in_progress", status_text, preview
+    return "unknown", status_text, preview
+
+
+def _read_vectorstore_status(vector_store) -> tuple[str, str, str, str]:
+    status_fn = getattr(vector_store, "status", None)
+    if not callable(status_fn):
+        return "unknown", "", "", "VectorStore.status() is not callable."
+    try:
+        status_output = status_fn()
+    except Exception as ex:
+        return "unknown", "", "", f"Status check failed: {ex}"
+
+    state, status_text, preview = _classify_vectorstore_status(status_output)
+    return state, status_text, preview, ""
+
+
+async def _wait_for_vectorstore_ready(vector_store) -> tuple[bool, str, str, str]:
+    attempts = max(1, int(CREATE_READY_TIMEOUT_SECONDS / CREATE_READY_POLL_INTERVAL_SECONDS))
+    last_state = "unknown"
+    last_status_text = ""
+    last_preview = ""
+
+    for attempt in range(attempts):
+        state, status_text, preview, error = _read_vectorstore_status(vector_store)
+        last_state = state
+        last_status_text = status_text
+        last_preview = preview
+        if error:
+            return False, preview, error, status_text
+        if state == "ready":
+            return True, preview, "", status_text
+        if state == "failed":
+            detail = status_text or preview or "unknown failure"
+            return False, preview, f"VectorStore.status() reported failure: {detail}", status_text
+        if attempt < attempts - 1:
+            await asyncio.sleep(CREATE_READY_POLL_INTERVAL_SECONDS)
+
+    current_detail = last_status_text or last_preview or last_state or "unknown"
+    return (
+        False,
+        last_preview,
+        f"VectorStore.status() did not reach Ready within {CREATE_READY_TIMEOUT_SECONDS}s. Current status: {current_detail}",
+        last_status_text,
+    )
 
 
 async def handle_upload_and_prepare_create(
@@ -32,6 +138,7 @@ async def handle_upload_and_prepare_create(
     now_ts,
     is_htmx: bool,
     is_vectorstore_already_exists_error_fn,
+    verify_vectorstore_exists_fn,
     append_connect_step,
 ):
     if not app.state.evs_state["connected"]:
@@ -62,8 +169,8 @@ async def handle_upload_and_prepare_create(
         app.state.document_uploads = saved
     app.state.document_upload_notices = upload_notices
 
-    create_values: dict[str, str] = {}
-    vector_store_name = str(form.get("vector_store_name", "")).strip() or "TokioMarine"
+    create_values: dict[str, str] = default_create_values()
+    vector_store_name = str(form.get("vector_store_name", "")).strip()
     requested_preset = str(form.get("create_preset", "auto")).strip().lower() or "auto"
     create_mode = str(form.get("create_mode", "core")).strip().lower() or "core"
     selected_search_algorithm = str(form.get("search_algorithm", "")).strip().upper()
@@ -72,29 +179,60 @@ async def handle_upload_and_prepare_create(
     elif selected_search_algorithm in {"VECTORDISTANCE", "HNSW", "KMEANS"}:
         create_preset = selected_search_algorithm.lower()
     else:
-        create_preset = "vectordistance"
-    doc_pipeline_mode = str(form.get("doc_pipeline_mode", "text_core")).strip().lower()
-    if doc_pipeline_mode not in {"text_core", "multi_format", "multi_format_bookrag"}:
-        doc_pipeline_mode = "text_core"
+        create_preset = "auto"
+
+    raw_doc_pipeline_mode = str(form.get("doc_pipeline_mode", "")).strip()
+    doc_pipeline_mode = raw_doc_pipeline_mode
     create_values["vector_store_name"] = vector_store_name
     create_values["create_preset"] = create_preset
     create_values["create_mode"] = create_mode
     create_values["doc_pipeline_mode"] = doc_pipeline_mode
-    for ui_field, default_value in DOC_PIPELINE_UI_DEFAULTS.items():
-        ui_raw = str(form.get(ui_field, default_value)).strip()
-        create_values[ui_field] = ui_raw[:CREATE_FIELD_MAX_LEN]
+    create_values.update(collect_doc_pipeline_ui_values(form, field_max_len=CREATE_FIELD_MAX_LEN))
+
+    required_missing: list[str] = []
+    if not vector_store_name:
+        required_missing.append("vector_store_name")
+    if not raw_doc_pipeline_mode:
+        required_missing.append("doc_pipeline_mode")
+    embeddings_model_value = str(form.get("embeddings_model", "")).strip()
+    if not embeddings_model_value:
+        required_missing.append("embeddings_model")
+    has_uploaded_documents = bool(saved or app.state.document_uploads)
+    if not has_uploaded_documents:
+        required_missing.append("uploaded_files")
+
+    if required_missing:
+        app.state.create_form_values = create_values
+        return templates.TemplateResponse(
+            request,
+            "partials/create_result.html",
+            {
+                "create_result": {
+                    "status": "error",
+                    "time": now_ts(),
+                    "message": f"Required fields missing: {', '.join(required_missing)}",
+                },
+                "evs": app.state.evs_state,
+                "is_htmx": is_htmx,
+            },
+        )
+
+    doc_pipeline_handler = get_doc_pipeline_handler(raw_doc_pipeline_mode)
+    doc_pipeline_mode = doc_pipeline_handler.MODE
+    create_values["doc_pipeline_mode"] = doc_pipeline_mode
 
     create_payload: dict = {}
     warnings: list[str] = list(upload_notices)
     allowed_fields = CORE_CREATE_FIELDS if create_mode == "core" else {field["name"] for field in CREATE_FIELDS}
     for field in CREATE_FIELDS:
         field_name = field["name"]
-        raw = str(form.get(field_name, "")).strip()
-        if len(raw) > CREATE_FIELD_MAX_LEN:
+        posted = field_name in form
+        raw = str(form.get(field_name, "")).strip() if posted else create_values.get(field_name, "")
+        if posted and len(raw) > CREATE_FIELD_MAX_LEN:
             raw = raw[:CREATE_FIELD_MAX_LEN]
             warnings.append(f"Field [{field_name}] exceeded {CREATE_FIELD_MAX_LEN} chars and was truncated.")
         create_values[field_name] = raw
-        if field_name not in allowed_fields or not raw:
+        if (not posted) or field_name not in allowed_fields or not raw:
             continue
         try:
             create_payload[field_name] = coerce_create_param(field_name, raw)
@@ -111,6 +249,20 @@ async def handle_upload_and_prepare_create(
         create_payload["document_files"] = [item["saved_path"] for item in app.state.document_uploads]
 
     apply_create_preset(create_payload, create_preset, vector_store_name)
+    create_values["object_names"] = (
+        ",".join(create_payload["object_names"])
+        if isinstance(create_payload.get("object_names"), list)
+        else str(create_payload.get("object_names", ""))
+    )
+    create_values["data_columns"] = ",".join(create_payload.get("data_columns", []))
+    create_values["vector_column"] = str(create_payload.get("vector_column", ""))
+    create_values["chunk_size"] = str(create_payload.get("chunk_size", ""))
+    optimized_chunking = create_payload.get("optimized_chunking", "")
+    create_values["optimized_chunking"] = (
+        str(optimized_chunking).lower() if isinstance(optimized_chunking, bool) else str(optimized_chunking)
+    )
+    create_values["embeddings_model"] = str(create_payload.get("embeddings_model", ""))
+    create_values["top_k"] = str(create_payload.get("top_k", ""))
     app.state.create_form_values = create_values
 
     exec_payload, path_warnings = normalize_document_files_for_create(
@@ -118,28 +270,33 @@ async def handle_upload_and_prepare_create(
         resolve_path_hint=resolve_path_hint_fn,
     )
     warnings.extend(path_warnings)
-    multi_format_summary: dict | None = None
-    multi_format_error = ""
-    if doc_pipeline_mode in {"multi_format", "multi_format_bookrag"}:
-        try:
-            exec_payload, multi_format_summary = apply_multi_format_pipeline(
-                exec_payload=exec_payload,
-                create_values=create_values,
-                vector_store_name=vector_store_name,
-                connection_params=app.state.evs_state.get("params", {}),
-                execute_sql_fn=execute_sql_fn,
-                resolve_path_hint=resolve_path_hint_fn,
-            )
-            warnings.extend(multi_format_summary.get("warnings", []))
-        except Exception as ex:
-            multi_format_error = str(ex)
+
+    mode_summary: dict | None = None
+    mode_error = ""
+    try:
+        exec_payload, mode_summary = doc_pipeline_handler.preprocess_create_payload(
+            exec_payload=exec_payload,
+            create_values=create_values,
+            vector_store_name=vector_store_name,
+            connection_params=app.state.evs_state.get("params", {}),
+            execute_sql_fn=execute_sql_fn,
+            resolve_path_hint=resolve_path_hint_fn,
+        )
+        if mode_summary:
+            warnings.extend(mode_summary.get("warnings", []))
+    except Exception as ex:
+        mode_error = str(ex)
 
     execution_output_preview = ""
     status_output_preview = ""
 
-    if multi_format_error:
+    if mode_error:
         result_status = "error"
-        result_message = f"Step 2 failed during multi format preprocessing: {multi_format_error}"
+        result_message = f"Step 2 failed during {doc_pipeline_handler.LABEL} preprocessing: {mode_error}"
+    elif doc_pipeline_handler.SKIP_VECTORSTORE_CREATE:
+        result_status = "ok_with_warnings" if warnings else "ok"
+        result_message = doc_pipeline_handler.build_skip_create_message(mode_summary)
+        execution_output_preview = f"VectorStore.create() skipped intentionally for {doc_pipeline_handler.MODE}."
     elif vector_store_cls is None:
         result_status = "error"
         result_message = "Step 2 failed: VectorStore runtime is unavailable in current environment."
@@ -149,47 +306,82 @@ async def handle_upload_and_prepare_create(
             create_output = vector_store.create(**exec_payload)
             execution_output_preview = format_preview(create_output)
 
-            status_fn = getattr(vector_store, "status", None)
-            if callable(status_fn):
-                try:
-                    status_output_preview = format_preview(status_fn())
-                except Exception as status_ex:
-                    status_output_preview = f"Status check failed: {status_ex}"
-
-            result_status = "ok_with_warnings" if warnings else "ok"
-            result_message = "Step 2 completed. VectorStore.create() executed successfully."
-            if multi_format_summary:
-                result_message += (
-                    " "
-                    f"multi format chunks saved to {multi_format_summary.get('table_name')} "
-                    f"({multi_format_summary.get('chunk_count')} rows from "
-                    f"{multi_format_summary.get('document_count')} file(s))."
+            ready_confirmed, status_output_preview, readiness_error, _ready_status_text = await _wait_for_vectorstore_ready(
+                vector_store
+            )
+            if ready_confirmed:
+                result_status = "ok_with_warnings" if warnings else "ok"
+                result_message = "Step 2 completed. VectorStore.create() executed successfully and status is Ready."
+                append_message_fn = getattr(doc_pipeline_handler, "append_success_message", None)
+                if callable(append_message_fn):
+                    result_message = append_message_fn(result_message, mode_summary)
+            else:
+                result_status = "error"
+                result_message = (
+                    "Step 2 did not finish: VectorStore.create() returned, but "
+                    f"{readiness_error}"
                 )
         except Exception as ex:
             ex_text = str(ex)
-            if is_vectorstore_already_exists_error_fn(ex_text):
-                warnings.append(
-                    f"VectorStore '{vector_store_name}' already exists. Skipped create() and reused existing store."
-                )
-                vector_store_obj = locals().get("vector_store")
-                status_fn = getattr(vector_store_obj, "status", None)
-                if callable(status_fn):
-                    try:
-                        status_output_preview = format_preview(status_fn())
-                    except Exception as status_ex:
-                        status_output_preview = f"Status check failed: {status_ex}"
-                result_status = "ok_with_warnings"
-                result_message = f"Step 2 skipped VectorStore.create(): '{vector_store_name}' already exists."
-                if multi_format_summary:
-                    result_message += (
-                        " "
-                        f"multi format chunks saved to {multi_format_summary.get('table_name')} "
-                        f"({multi_format_summary.get('chunk_count')} rows from "
-                        f"{multi_format_summary.get('document_count')} file(s))."
+            already_exists = is_vectorstore_already_exists_error_fn(ex_text)
+            verified_existing_store = False
+            existence_check_error = ""
+            existence_check_detail = ""
+            if already_exists and callable(verify_vectorstore_exists_fn):
+                try:
+                    verified_existing_store, existence_check_detail, existence_check_error = verify_vectorstore_exists_fn(
+                        vector_store_name
                     )
+                except Exception as verify_ex:
+                    existence_check_error = str(verify_ex)
+            if existence_check_detail:
+                status_output_preview = existence_check_detail
+
+            if already_exists and verified_existing_store:
+                existing_vector_store = locals().get("vector_store")
+                if existing_vector_store is None:
+                    existing_vector_store = vector_store_cls(vector_store_name)
+                current_state, current_status_text, current_status_preview, current_status_error = _read_vectorstore_status(
+                    existing_vector_store
+                )
+                if current_status_preview:
+                    status_output_preview = current_status_preview
+                if current_state == "ready":
+                    warnings.append(
+                        f"VectorStore '{vector_store_name}' already exists. Skipped create() and reused existing store."
+                    )
+                    result_status = "ok_with_warnings"
+                    result_message = f"Step 2 skipped VectorStore.create(): '{vector_store_name}' already exists."
+                    if existence_check_detail:
+                        result_message = f"{result_message} {existence_check_detail}"
+                    append_message_fn = getattr(doc_pipeline_handler, "append_success_message", None)
+                    if callable(append_message_fn):
+                        result_message = append_message_fn(result_message, mode_summary)
+                else:
+                    result_status = "error"
+                    current_detail = current_status_error or current_status_text or current_status_preview or "unknown"
+                    result_message = (
+                        f"Step 2 blocked: VectorStore '{vector_store_name}' already exists, but current status is not Ready "
+                        f"({current_detail})."
+                    )
+                    if existence_check_detail:
+                        result_message = f"{result_message} {existence_check_detail}"
             else:
                 result_status = "error"
-                result_message = f"Step 2 failed while executing VectorStore.create(): {ex}"
+                if already_exists:
+                    if existence_check_error:
+                        verification_suffix = (
+                            f" (existence check failed for '{vector_store_name}': {existence_check_error})"
+                        )
+                    elif existence_check_detail:
+                        verification_suffix = (
+                            f" (existence check did not confirm '{vector_store_name}' actually exists)"
+                        )
+                    else:
+                        verification_suffix = ""
+                    result_message = f"Step 2 failed while executing VectorStore.create(): {ex}{verification_suffix}"
+                else:
+                    result_message = f"Step 2 failed while executing VectorStore.create(): {ex}"
 
     result = {
         "status": result_status,
@@ -205,7 +397,7 @@ async def handle_upload_and_prepare_create(
         "create_call_preview": build_create_call_preview(vector_store_name, create_payload),
         "execution_output_preview": execution_output_preview,
         "status_output_preview": status_output_preview,
-        "multi_format_summary": multi_format_summary,
+        "multi_format_summary": mode_summary,
     }
     app.state.last_create_operation = result
     if result_status == "error":

@@ -1,0 +1,7 @@
+{% import "partials/create_field_macros.html" as fields %}
+
+<div class="select-docs-options multi-format-params-grid">
+  {% for field in multi_format_ui_fields %}
+  {{ fields.render_field(field, create_values, evs.connected) }}
+  {% endfor %}
+</div>

@@ -23,21 +23,11 @@
         HNSW: "HNSW",
       };
 
-      fields.forEach((field) => {
-        if (!(field instanceof HTMLElement)) {
-          return;
-        }
-        const controls = field.querySelectorAll("input, select, textarea");
-        controls.forEach((control) => {
-          const key = "algoInitialDisabled";
-          if (control.dataset[key] == null) {
-            control.dataset[key] = control.disabled ? "1" : "0";
-          }
-        });
-      });
+      const isFormLocked = () => form.classList.contains("disabled-block");
 
       const syncByAlgorithm = () => {
-        const current = (algorithmSelect.value || "VECTORDISTANCE").trim().toUpperCase();
+        const current = (algorithmSelect.value || "").trim().toUpperCase();
+        const locked = isFormLocked();
         fields.forEach((field) => {
           if (!(field instanceof HTMLElement)) {
             return;
@@ -51,13 +41,12 @@
 
           const controls = field.querySelectorAll("input, select, textarea");
           controls.forEach((control) => {
-            const initialDisabled = control.dataset.algoInitialDisabled === "1";
-            control.disabled = !show || initialDisabled;
+            control.disabled = !show || locked;
           });
         });
 
         if (hint instanceof HTMLElement) {
-          hint.textContent = labels[current] || "VECTORDISTANCE";
+          hint.textContent = labels[current] || "";
         }
       };
 
@@ -76,7 +65,7 @@
       }
 
       const syncByMode = () => {
-        const currentMode = (modeSelect.value || "text_core").trim().toLowerCase();
+        const currentMode = (modeSelect.value || "").trim().toLowerCase();
         modeGroups.forEach((group) => {
           if (!(group instanceof HTMLElement)) {
             return;
@@ -90,13 +79,9 @@
           group.classList.toggle("doc-mode-hidden", !show);
 
           const controls = group.querySelectorAll("input, select, textarea");
+          const locked = form.classList.contains("disabled-block");
           controls.forEach((control) => {
-            const key = "docModeInitialDisabled";
-            if (control.dataset[key] == null) {
-              control.dataset[key] = control.disabled ? "1" : "0";
-            }
-            const initialDisabled = control.dataset[key] === "1";
-            control.disabled = !show || initialDisabled;
+            control.disabled = !show || locked;
           });
         });
       };

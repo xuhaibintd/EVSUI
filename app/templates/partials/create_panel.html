@@ -1,3 +1,5 @@
+{% import "partials/create_field_macros.html" as fields %}
+
 <p class="muted step-lock-note" {% if evs.connected %}hidden{% endif %}>Step 2 is locked. Complete Step 1 first.</p>
 
 <form
@@ -32,243 +34,60 @@
           {% include "partials/selected_documents.html" %}
         </div>
       </div>
+
       <div class="select-docs-right">
-        {% set _doc_pipeline_mode = create_values.get('doc_pipeline_mode', 'text_core') %}
+        {% set _doc_pipeline_mode = create_values.get('doc_pipeline_mode', '') %}
         <section class="doc-pipeline-panel" aria-label="Content processing mode">
           <label class="field doc-pipeline-mode-field">
-            <span>Content Processing Mode</span>
+            <span class="field-label">Content Processing Mode</span>
             <select
               name="doc_pipeline_mode"
               data-doc-pipeline-mode
+              required
               {% if not evs.connected %}disabled{% endif %}
             >
-              <option value="text_core" {% if _doc_pipeline_mode not in ['multi_format', 'multi_format_bookrag'] %}selected{% endif %}>Text</option>
-              <option value="multi_format" {% if _doc_pipeline_mode == 'multi_format' %}selected{% endif %}>Multi-Format</option>
-              <option value="multi_format_bookrag" {% if _doc_pipeline_mode == 'multi_format_bookrag' %}selected{% endif %}>Multi-Format BookRAG</option>
+              <option value="" {% if not _doc_pipeline_mode %}selected{% endif %}>(select)</option>
+              {% for mode in doc_pipeline_options %}
+              <option value="{{ mode.value }}" {% if _doc_pipeline_mode == mode.value %}selected{% endif %}>{{ mode.label }}</option>
+              {% endfor %}
             </select>
           </label>
           <div class="doc-pipeline-groups">
-            <section class="doc-pipeline-group {% if _doc_pipeline_mode in ['multi_format', 'multi_format_bookrag'] %}doc-mode-hidden{% endif %}" data-doc-mode-for="text_core">
-              <div class="select-docs-options">
-                <label class="field">
-                  <span>chunk_size</span>
-                  <input type="number" name="chunk_size" value="{{ create_values.get('chunk_size', '') }}" placeholder="500" {% if not evs.connected %}disabled{% endif %} />
-                </label>
-                <label class="field">
-                  <span>optimized_chunking</span>
-                  <select name="optimized_chunking" {% if not evs.connected %}disabled{% endif %}>
-                    <option value="">(not set)</option>
-                    <option value="false" {% if create_values.get('optimized_chunking', '') == 'false' %}selected{% endif %}>false</option>
-                    <option value="true" {% if create_values.get('optimized_chunking', '') == 'true' %}selected{% endif %}>true</option>
-                  </select>
-                </label>
-                <label class="field">
-                  <span>header_height</span>
-                  <input type="number" name="header_height" min="0" step="1" value="{{ create_values.get('header_height', '') }}" placeholder="" {% if not evs.connected %}disabled{% endif %} />
-                </label>
-                <label class="field">
-                  <span>footer_height</span>
-                  <input type="number" name="footer_height" min="0" step="1" value="{{ create_values.get('footer_height', '') }}" placeholder="" {% if not evs.connected %}disabled{% endif %} />
-                </label>
-              </div>
-            </section>
-            <section class="doc-pipeline-group {% if _doc_pipeline_mode not in ['multi_format', 'multi_format_bookrag'] %}doc-mode-hidden{% endif %}" data-doc-mode-for="multi_format multi_format_bookrag">
-              <div class="select-docs-options multi-format-params-grid">
-                <label class="field">
-                  <span>multi_format_strategy</span>
-                  <select name="multi_format_strategy" {% if not evs.connected %}disabled{% endif %}>
-                    <option value="auto" {% if create_values.get('multi_format_strategy', 'auto') == 'auto' %}selected{% endif %}>auto</option>
-                    <option value="layout" {% if create_values.get('multi_format_strategy', '') == 'layout' %}selected{% endif %}>layout</option>
-                    <option value="fast" {% if create_values.get('multi_format_strategy', '') == 'fast' %}selected{% endif %}>fast</option>
-                  </select>
-                </label>
-                <label class="field">
-                  <span>multi_format_chunk_size</span>
-                  <input type="number" name="multi_format_chunk_size" value="{{ create_values.get('multi_format_chunk_size', '600') }}" placeholder="600" {% if not evs.connected %}disabled{% endif %} />
-                </label>
-                <label class="field">
-                  <span>multi_format_chunk_overlap</span>
-                  <input type="number" name="multi_format_chunk_overlap" value="{{ create_values.get('multi_format_chunk_overlap', '80') }}" placeholder="80" {% if not evs.connected %}disabled{% endif %} />
-                </label>
-                <label class="field">
-                  <span>multi_format_ocr_languages</span>
-                  <input type="text" name="multi_format_ocr_languages" value="{{ create_values.get('multi_format_ocr_languages', 'ja,en') }}" placeholder="ja,en" {% if not evs.connected %}disabled{% endif %} />
-                </label>
-              </div>
-            </section>
+            {% include "partials/create_doc_modes/text_core.html" %}
+            {% include "partials/create_doc_modes/multi_format.html" %}
+            {% include "partials/create_doc_modes/multi_format_bookrag.html" %}
           </div>
         </section>
       </div>
     </div>
   </section>
 
-  <section class="param-group">
-    <h3>Basic</h3>
-    <input type="hidden" name="create_preset" value="auto" />
-    <div class="basic-layout">
-      <div class="basic-row basic-row-first">
-        <label class="field">
-          <span>Vector Store Name</span>
-          <input
-            type="text"
-            name="vector_store_name"
-            value="{{ create_values.get('vector_store_name', 'TokioMarine') }}"
-            placeholder="updated_vs or pdf_vs name"
-            {% if not evs.connected %}disabled{% endif %}
-          />
-        </label>
-      </div>
-      <div class="basic-row basic-row-second">
-        <label class="field">
-          <span>embeddings_model</span>
-          <select name="embeddings_model" {% if not evs.connected %}disabled{% endif %}>
-            <option value="">(not set)</option>
-            <optgroup label="AWS">
-              <option value="amazon.titan-embed-text-v1" {% if create_values.get('embeddings_model', '') == 'amazon.titan-embed-text-v1' %}selected{% endif %}>amazon.titan-embed-text-v1</option>
-              <option value="amazon.titan-embed-image-v1" {% if create_values.get('embeddings_model', '') == 'amazon.titan-embed-image-v1' %}selected{% endif %}>amazon.titan-embed-image-v1</option>
-              <option value="amazon.titan-embed-text-v2:0" {% if create_values.get('embeddings_model', '') == 'amazon.titan-embed-text-v2:0' %}selected{% endif %}>amazon.titan-embed-text-v2:0</option>
-            </optgroup>
-            <optgroup label="Azure">
-              <option value="text-embedding-ada-002" {% if create_values.get('embeddings_model', '') == 'text-embedding-ada-002' %}selected{% endif %}>text-embedding-ada-002</option>
-              <option value="text-embedding-3-small" {% if create_values.get('embeddings_model', '') == 'text-embedding-3-small' %}selected{% endif %}>text-embedding-3-small</option>
-              <option value="text-embedding-3-large" {% if create_values.get('embeddings_model', '') == 'text-embedding-3-large' %}selected{% endif %}>text-embedding-3-large</option>
-            </optgroup>
-          </select>
-        </label>
-        <label class="field">
-          <span>search_algorithm</span>
-          <select name="search_algorithm" {% if not evs.connected %}disabled{% endif %}>
-            <option value="VECTORDISTANCE" {% if create_values.get('search_algorithm', 'VECTORDISTANCE') == 'VECTORDISTANCE' %}selected{% endif %}>VECTORDISTANCE</option>
-            <option value="KMEANS" {% if create_values.get('search_algorithm', '') == 'KMEANS' %}selected{% endif %}>KMEANS</option>
-            <option value="HNSW" {% if create_values.get('search_algorithm', '') == 'HNSW' %}selected{% endif %}>HNSW</option>
-          </select>
-        </label>
-        <label class="field">
-          <span>top_k</span>
-          <input type="number" name="top_k" value="{{ create_values.get('top_k', '') }}" placeholder="5 or 10" {% if not evs.connected %}disabled{% endif %} />
-        </label>
-        <label class="field">
-          <span>object_names</span>
-          <input
-            type="text"
-            name="object_names"
-            value="{{ create_values.get('object_names', '') }}"
-            {% if not evs.connected %}disabled{% endif %}
-          />
-        </label>
-        <label class="field">
-          <span>data_columns (comma separated)</span>
-          <input type="text" name="data_columns" value="{{ create_values.get('data_columns', '') }}" {% if not evs.connected %}disabled{% endif %} />
-        </label>
-        <label class="field">
-          <span>vector_column</span>
-          <input type="text" name="vector_column" value="{{ create_values.get('vector_column', '') }}" {% if not evs.connected %}disabled{% endif %} />
-        </label>
-        <label class="field">
-          <span>metric</span>
-          <select name="metric" {% if not evs.connected %}disabled{% endif %}>
-            <option value="">(not set)</option>
-            <option value="COSINE" {% if create_values.get('metric', '') == 'COSINE' %}selected{% endif %}>COSINE</option>
-            <option value="EUCLIDEAN" {% if create_values.get('metric', '') == 'EUCLIDEAN' %}selected{% endif %}>EUCLIDEAN</option>
-            <option value="DOTPRODUCT" {% if create_values.get('metric', '') == 'DOTPRODUCT' %}selected{% endif %}>DOTPRODUCT</option>
-          </select>
-        </label>
-        <label class="field">
-          <span>key_columns (comma separated)</span>
-          <input type="text" name="key_columns" value="{{ create_values.get('key_columns', '') }}" placeholder="rev_id, aid" {% if not evs.connected %}disabled{% endif %} />
-        </label>
-      </div>
-    </div>
-  </section>
-
-  <section class="param-group" data-algorithm-panel>
-    <h3>Search Algorithm</h3>
+  <input type="hidden" name="create_preset" value="auto" />
+  {% for section in create_ui_sections %}
+  <section class="param-group" {% if section.get('title') == 'Search Algorithm' %}data-algorithm-panel{% endif %}>
+    <h3>{{ section.get('title') }}</h3>
+    {% if section.get('hint') %}
     <p class="muted algorithm-hint" data-algo-hint></p>
-    <div class="param-grid compact compact-tight" data-algo-param-scope>
-      <label class="field" data-algo-for="VECTORDISTANCE KMEANS">
-        <span>search_threshold</span>
-        <input type="number" step="any" name="search_threshold" value="{{ create_values.get('search_threshold', '') }}" placeholder="0.75" {% if not evs.connected %}disabled{% endif %} />
-      </label>
-      <label class="field" data-algo-for="KMEANS">
-        <span>initial_centroids_method</span>
-        <select name="initial_centroids_method" {% if not evs.connected %}disabled{% endif %}>
-          <option value="">(not set)</option>
-          <option value="RANDOM" {% if create_values.get('initial_centroids_method', '') == 'RANDOM' %}selected{% endif %}>RANDOM</option>
-          <option value="KMEANS++" {% if create_values.get('initial_centroids_method', '') == 'KMEANS++' %}selected{% endif %}>KMEANS++</option>
-        </select>
-      </label>
-      <label class="field" data-algo-for="KMEANS">
-        <span>train_numcluster</span>
-        <input type="number" name="train_numcluster" value="{{ create_values.get('train_numcluster', '') }}" placeholder="8" {% if not evs.connected %}disabled{% endif %} />
-      </label>
-      <label class="field" data-algo-for="KMEANS">
-        <span>max_iternum</span>
-        <input type="number" name="max_iternum" value="{{ create_values.get('max_iternum', '') }}" placeholder="10" {% if not evs.connected %}disabled{% endif %} />
-      </label>
-      <label class="field" data-algo-for="KMEANS">
-        <span>stop_threshold</span>
-        <input type="number" step="any" name="stop_threshold" value="{{ create_values.get('stop_threshold', '') }}" placeholder="0.0395" {% if not evs.connected %}disabled{% endif %} />
-      </label>
-      <label class="field" data-algo-for="KMEANS HNSW">
-        <span>seed</span>
-        <input type="number" name="seed" value="{{ create_values.get('seed', '') }}" placeholder="10" {% if not evs.connected %}disabled{% endif %} />
-      </label>
-      <label class="field" data-algo-for="KMEANS">
-        <span>num_init</span>
-        <input type="number" name="num_init" value="{{ create_values.get('num_init', '') }}" placeholder="1" {% if not evs.connected %}disabled{% endif %} />
-      </label>
-      <label class="field" data-algo-for="KMEANS">
-        <span>search_numcluster</span>
-        <input type="number" name="search_numcluster" value="{{ create_values.get('search_numcluster', '') }}" placeholder="4" {% if not evs.connected %}disabled{% endif %} />
-      </label>
-      <label class="field" data-algo-for="HNSW">
-        <span>ef_search</span>
-        <input type="number" name="ef_search" value="{{ create_values.get('ef_search', '') }}" placeholder="32" {% if not evs.connected %}disabled{% endif %} />
-      </label>
-      <label class="field" data-algo-for="HNSW">
-        <span>num_layer</span>
-        <input type="number" name="num_layer" value="{{ create_values.get('num_layer', '') }}" placeholder="2" {% if not evs.connected %}disabled{% endif %} />
-      </label>
-      <label class="field" data-algo-for="HNSW">
-        <span>ef_construction</span>
-        <input type="number" name="ef_construction" value="{{ create_values.get('ef_construction', '') }}" placeholder="32" {% if not evs.connected %}disabled{% endif %} />
-      </label>
-      <label class="field" data-algo-for="HNSW">
-        <span>num_connpernode</span>
-        <input type="number" name="num_connpernode" value="{{ create_values.get('num_connpernode', '') }}" placeholder="32" {% if not evs.connected %}disabled{% endif %} />
-      </label>
-      <label class="field" data-algo-for="HNSW">
-        <span>maxnum_connpernode</span>
-        <input type="number" name="maxnum_connpernode" value="{{ create_values.get('maxnum_connpernode', '') }}" placeholder="32" {% if not evs.connected %}disabled{% endif %} />
-      </label>
-      <label class="field" data-algo-for="HNSW">
-        <span>apply_heuristics</span>
-        <select name="apply_heuristics" {% if not evs.connected %}disabled{% endif %}>
-          <option value="">(not set)</option>
-          <option value="true" {% if create_values.get('apply_heuristics', '') == 'true' %}selected{% endif %}>true</option>
-          <option value="false" {% if create_values.get('apply_heuristics', '') == 'false' %}selected{% endif %}>false</option>
-        </select>
-      </label>
+    {% endif %}
+    {% if section.get('rows') %}
+    <div class="basic-layout">
+      {% for row in section.get('rows', []) %}
+      <div class="{{ row.get('class', '') }}">
+        {% for field in row.get('fields', []) %}
+        {{ fields.render_field(field, create_values, evs.connected) }}
+        {% endfor %}
+      </div>
+      {% endfor %}
     </div>
-  </section>
-
-  <section class="param-group">
-    <h3>Rerank</h3>
-    <div class="param-grid compact rerank-grid">
-      <label class="field">
-        <span>Rerank Weight</span>
-        <input type="number" step="any" name="rerank_weight" value="{{ create_values.get('rerank_weight', '') }}" placeholder="0.2" {% if not evs.connected %}disabled{% endif %} />
-      </label>
-      <label class="field">
-        <span>Relevance Top K</span>
-        <input type="number" name="relevance_top_k" value="{{ create_values.get('relevance_top_k', '') }}" placeholder="60" {% if not evs.connected %}disabled{% endif %} />
-      </label>
-      <label class="field">
-        <span>Relevance Threshold</span>
-        <input type="number" step="any" name="relevance_search_threshold" value="{{ create_values.get('relevance_search_threshold', '') }}" placeholder="0.2" {% if not evs.connected %}disabled{% endif %} />
-      </label>
+    {% else %}
+    <div class="{{ section.get('grid_class', 'param-grid') }}" {% if section.get('title') == 'Search Algorithm' %}data-algo-param-scope{% endif %}>
+      {% for field in section.get('fields', []) %}
+      {{ fields.render_field(field, create_values, evs.connected) }}
+      {% endfor %}
     </div>
+    {% endif %}
   </section>
+  {% endfor %}
 
   <div class="stack-inline">
     <button type="submit" name="create_mode" value="core" class="progress-btn" data-progress-button {% if not evs.connected %}disabled{% endif %}>
