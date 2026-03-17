@@ -10,6 +10,15 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
+from app.services.bookrag_graph import build_bookrag_entities
+from app.services.bookrag_schema import build_bookrag_table_targets, prepare_bookrag_tables
+from app.services.bookrag_storage import persist_bookrag_tree
+from app.services.bookrag_tree import (
+    build_bookrag_document_row,
+    build_bookrag_nodes,
+    elements_to_bookrag_blocks,
+)
+
 TERADATA_IDENTIFIER_MAX_LEN = 30
 UNSTRUCTURED_CONFIG_FILE_DEFAULT = Path(__file__).resolve().parents[1] / "config" / "unstructured.json"
 UNSTRUCTURED_WORKFLOW_API_URL_DEFAULT = "https://platform.unstructuredapp.io/api/v1"
@@ -18,6 +27,7 @@ UNSTRUCTURED_WORKFLOW_POLL_INTERVAL_DEFAULT = 2
 UNSTRUCTURED_TERADATA_FLUSH_WAIT_SECONDS_DEFAULT = 20
 UNSTRUCTURED_TERADATA_FLUSH_WAIT_INTERVAL_DEFAULT = 2
 UNSTRUCTURED_DEBUG_DIR_DEFAULT = Path(__file__).resolve().parents[2] / "uploads" / "unstructured_debug"
+BOOKRAG_CSV_STAGE_DIR_DEFAULT = Path(__file__).resolve().parents[2] / "uploads" / "bookrag_csv_stage"
 BOOKRAG_PDF_IMAGE_EXTENSIONS = {
     ".pdf",
     ".png",
@@ -371,6 +381,18 @@ def _wait_for_table_rows(
         time.sleep(max(1, poll_interval_seconds))
 
 
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    value = str(raw).strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
 def _parse_langs(raw: str) -> list[str]:
     items = [chunk.strip() for chunk in str(raw or "").replace("\n", ",").split(",") if chunk.strip()]
     return items
@@ -402,12 +424,21 @@ def _prepare_unstructured_debug_dir(vector_store_name: str) -> Path:
     return debug_dir
 
 
+def _prepare_bookrag_csv_stage_dir(vector_store_name: str) -> Path:
+    vs_name = _sanitize_teradata_identifier(vector_store_name, fallback="bookrag")
+    run_id = time.strftime("%Y%m%d_%H%M%S")
+    csv_stage_dir = BOOKRAG_CSV_STAGE_DIR_DEFAULT / f"{vs_name}_{run_id}"
+    csv_stage_dir.mkdir(parents=True, exist_ok=True)
+    return csv_stage_dir
+
+
 def _write_unstructured_debug_file(
     debug_dir: Path | None,
     src: Path,
     raw_elements: list[dict[str, Any]],
     rows: list[dict[str, Any]],
     request_parameters: dict[str, Any],
+    extra_payload: dict[str, Any] | None = None,
 ) -> str | None:
     if debug_dir is None:
         return None
@@ -420,6 +451,8 @@ def _write_unstructured_debug_file(
         "raw_elements": raw_elements,
         "table_rows": rows,
     }
+    if extra_payload:
+        payload.update(_json_safe_value(extra_payload))
     out_path = debug_dir / f"{_safe_stem(src)}.json"
     out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return str(out_path)
@@ -570,6 +603,40 @@ def _partition_document_chunks(
     return rows, elements, partition_parameters
 
 
+def _partition_document_elements(
+    client,
+    src: Path,
+    *,
+    partition_strategy: str,
+    languages: list[str],
+    include_orig_elements: bool,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    from unstructured_client.models import operations
+
+    content_type = mimetypes.guess_type(src.name)[0] or "application/octet-stream"
+    partition_parameters: dict[str, Any] = {
+        "files": {
+            "content": src.read_bytes(),
+            "file_name": src.name,
+            "content_type": content_type,
+        },
+        "strategy": partition_strategy,
+        "include_orig_elements": include_orig_elements,
+    }
+    if languages:
+        partition_parameters["languages"] = languages
+
+    resp = client.general.partition(
+        request=operations.PartitionRequest(
+            partition_parameters=partition_parameters,
+        )
+    )
+    if int(getattr(resp, "status_code", 0) or 0) >= 400:
+        raise RuntimeError(f"Unstructured partition failed. status={getattr(resp, 'status_code', '?')}")
+    elements = getattr(resp, "elements", None) or []
+    return elements, partition_parameters
+
+
 def _insert_chunk_rows(
     schema_name: str | None,
     table_name: str,
@@ -632,6 +699,206 @@ def _new_unstructured_client():
     return UnstructuredClient(api_key_auth=api_key, server_url=api_url.rstrip("/"))
 
 
+def _apply_bookrag_tree_pipeline(
+    exec_payload: dict,
+    create_values: dict[str, str],
+    vector_store_name: str,
+    *,
+    execute_sql_fn: ExecuteSqlFn | None,
+    resolve_path_hint: ResolvePathFn,
+    effective_schema_name: str | None,
+    document_files: list[str],
+    partition_strategy: str,
+    ocr_languages: list[str],
+    include_orig_elements: bool,
+    chunk_size: int,
+    chunk_overlap: int,
+    target_warnings: list[str],
+) -> tuple[dict, dict]:
+    bookrag_tables = build_bookrag_table_targets(vector_store_name)
+    target_warnings.extend(
+        prepare_bookrag_tables(
+            schema_name=effective_schema_name,
+            table_targets=bookrag_tables,
+            execute_sql_fn=execute_sql_fn,
+        )
+    )
+
+    client = _new_unstructured_client()
+    debug_dir = _prepare_unstructured_debug_dir(vector_store_name)
+    csv_stage_dir = _prepare_bookrag_csv_stage_dir(vector_store_name)
+    persist_block_metadata = _env_flag("BOOKRAG_PERSIST_BLOCK_METADATA", False)
+    validate_node_flush = _env_flag("BOOKRAG_VALIDATE_NODE_FLUSH", False)
+    partition_warnings: list[str] = []
+    debug_files: list[str] = []
+    inserted_rows = 0
+    insert_stats: dict[str, int] = {}
+    block_count = 0
+    node_count = 0
+    entity_count = 0
+    entity_link_count = 0
+    document_count = 0
+
+    qualified_tables = {
+        name: (f"{effective_schema_name}.{table_name}" if effective_schema_name else table_name)
+        for name, table_name in bookrag_tables.items()
+    }
+
+    for path_hint in document_files:
+        resolved = resolve_path_hint(path_hint)
+        src = Path(resolved)
+        if not src.exists() or not src.is_file():
+            raise RuntimeError(f"multi format source file is missing: {path_hint}")
+
+        (
+            file_partition_strategy,
+            file_ocr_languages,
+            file_include_orig_elements,
+        ) = _bookrag_partition_options_for_file(
+            src,
+            default_strategy=partition_strategy,
+            default_languages=ocr_languages,
+        )
+        raw_elements, request_parameters = _partition_document_elements(
+            client,
+            src,
+            partition_strategy=file_partition_strategy,
+            languages=file_ocr_languages,
+            include_orig_elements=file_include_orig_elements,
+        )
+        content_type = mimetypes.guess_type(src.name)[0] or "application/octet-stream"
+        doc_id = uuid.uuid4().hex
+        blocks = elements_to_bookrag_blocks(
+            doc_id=doc_id,
+            src=src,
+            content_type=content_type,
+            raw_elements=raw_elements,
+            profile="jp",
+            persist_metadata=persist_block_metadata,
+        )
+        if not blocks:
+            partition_warnings.append(f"No BookIndex blocks extracted from file: {src.name}")
+            continue
+        document_row = build_bookrag_document_row(
+            doc_id=doc_id,
+            vector_store_name=vector_store_name,
+            src=src,
+            filetype=content_type,
+            blocks=blocks,
+            languages=file_ocr_languages,
+            created_at=_now_ts(),
+        )
+        nodes = build_bookrag_nodes(document_row, blocks)
+        entities, entity_links = build_bookrag_entities(document_row, nodes)
+        debug_file = _write_unstructured_debug_file(
+            debug_dir,
+            src,
+            raw_elements,
+            blocks,
+            request_parameters,
+            extra_payload={
+                "book_nodes": nodes,
+                "book_entities": entities,
+                "book_entity_links": entity_links,
+            },
+        )
+        if debug_file:
+            debug_files.append(debug_file)
+        inserted_rows += persist_bookrag_tree(
+            schema_name=effective_schema_name,
+            table_targets=bookrag_tables,
+            document_row=document_row,
+            blocks=blocks,
+            nodes=nodes,
+            entities=entities,
+            entity_links=entity_links,
+            execute_sql_fn=execute_sql_fn,
+            csv_stage_dir=csv_stage_dir,
+            stats=insert_stats,
+        )
+        document_count += 1
+        block_count += len(blocks)
+        node_count += len(nodes)
+        entity_count += len(entities)
+        entity_link_count += len(entity_links)
+
+    if validate_node_flush:
+        flush_wait_seconds = _to_int(
+            os.getenv("UNSTRUCTURED_TERADATA_FLUSH_WAIT_SECONDS", str(UNSTRUCTURED_TERADATA_FLUSH_WAIT_SECONDS_DEFAULT)),
+            default=UNSTRUCTURED_TERADATA_FLUSH_WAIT_SECONDS_DEFAULT,
+            minimum=1,
+            maximum=300,
+        )
+        flush_wait_interval_seconds = _to_int(
+            os.getenv("UNSTRUCTURED_TERADATA_FLUSH_WAIT_INTERVAL", str(UNSTRUCTURED_TERADATA_FLUSH_WAIT_INTERVAL_DEFAULT)),
+            default=UNSTRUCTURED_TERADATA_FLUSH_WAIT_INTERVAL_DEFAULT,
+            minimum=1,
+            maximum=30,
+        )
+        persisted_node_count = _wait_for_table_rows(
+            schema_name=effective_schema_name,
+            table_name=bookrag_tables["nodes"],
+            execute_sql_fn=execute_sql_fn,
+            timeout_seconds=flush_wait_seconds,
+            poll_interval_seconds=flush_wait_interval_seconds,
+        )
+        if persisted_node_count <= 0:
+            raise RuntimeError(
+                "bookrag tree construction completed but destination node table has 0 rows. "
+                f"table={qualified_tables['nodes']}"
+            )
+    else:
+        persisted_node_count = node_count
+
+    patched_payload = dict(exec_payload)
+    patched_payload["object_names"] = qualified_tables["nodes"]
+    patched_payload["data_columns"] = ["content"]
+    patched_payload["key_columns"] = ["node_id"]
+    patched_payload.pop("chunk_size", None)
+    patched_payload.pop("optimized_chunking", None)
+    patched_payload.pop("header_height", None)
+    patched_payload.pop("footer_height", None)
+    patched_payload.pop("document_files", None)
+
+    summary = {
+        "table_name": qualified_tables["nodes"],
+        "chunk_count": persisted_node_count,
+        "document_count": document_count,
+        "job_id": "",
+        "workflow_id": "",
+        "destination_id": "",
+        "warnings": target_warnings + partition_warnings,
+        "workflow_mode": "bookindex tree direct insert",
+        "inserted_rows": inserted_rows,
+        "chunk_size": chunk_size,
+        "chunk_overlap": chunk_overlap,
+        "debug_dir": str(debug_dir),
+        "debug_files": debug_files,
+        "bookrag_csv_stage_dir": str(csv_stage_dir),
+        "bookrag_csv_stage_files": [
+            str(csv_stage_dir / f"{bookrag_tables['documents']}.csv"),
+            str(csv_stage_dir / f"{bookrag_tables['nodes']}.csv"),
+            str(csv_stage_dir / f"{bookrag_tables['entities']}.csv"),
+            str(csv_stage_dir / f"{bookrag_tables['entity_links']}.csv"),
+            str(csv_stage_dir / f"{bookrag_tables['blocks']}.csv"),
+        ],
+        "effective_partition_strategy": partition_strategy,
+        "effective_ocr_languages": ocr_languages,
+        "include_orig_elements": include_orig_elements,
+        "file_mode": "per-extension",
+        "block_count": block_count,
+        "node_count": persisted_node_count,
+        "entity_count": entity_count,
+        "entity_link_count": entity_link_count,
+        "bookrag_tables": qualified_tables,
+        "bookrag_profile": "jp",
+        "bookrag_persist_block_metadata": persist_block_metadata,
+        "bookrag_validate_node_flush": validate_node_flush,
+        "bookrag_insert_stats": insert_stats,
+    }
+    return patched_payload, summary
+
+
 def apply_multi_format_pipeline(
     exec_payload: dict,
     create_values: dict[str, str],
@@ -680,6 +947,23 @@ def apply_multi_format_pipeline(
         effective_schema_name = _sanitize_teradata_identifier(database_name, fallback="", allow_empty=True) or None
         if effective_schema_name:
             qualified_name = f"{effective_schema_name}.{table_name}"
+
+    if pipeline_mode == "multi_format_bookrag":
+        return _apply_bookrag_tree_pipeline(
+            exec_payload=exec_payload,
+            create_values=create_values,
+            vector_store_name=vector_store_name,
+            execute_sql_fn=execute_sql_fn,
+            resolve_path_hint=resolve_path_hint,
+            effective_schema_name=effective_schema_name,
+            document_files=document_files,
+            partition_strategy=partition_strategy,
+            ocr_languages=ocr_languages,
+            include_orig_elements=include_orig_elements,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            target_warnings=target_warnings,
+        )
 
     target_warnings.extend(
         _ensure_unstructured_teradata_table(
