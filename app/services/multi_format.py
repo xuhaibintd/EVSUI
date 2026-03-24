@@ -39,10 +39,41 @@ BOOKRAG_PDF_IMAGE_EXTENSIONS = {
     ".gif",
     ".webp",
 }
+UNSTRUCTURED_FAST_UNSAFE_IMAGE_EXTENSIONS = BOOKRAG_PDF_IMAGE_EXTENSIONS - {".pdf"}
+EXCEL_OPENXML_EXTENSIONS = {".xlsx", ".xlsm", ".xltx", ".xltm"}
+EXCEL_LEGACY_EXTENSIONS = {".xls"}
+EXCEL_EXTENSIONS = EXCEL_OPENXML_EXTENSIONS | EXCEL_LEGACY_EXTENSIONS
 
 
 ExecuteSqlFn = Callable[[str], Any]
 ResolvePathFn = Callable[[str], str]
+
+
+FILE_BASED_CREATE_KEYS_TO_REMOVE = {
+    "chunk_size",
+    "chunk_overlap",
+    "optimized_chunking",
+    "header_height",
+    "footer_height",
+    "document_files",
+    "ingestor",
+    "ingest_params",
+    "nv_ingestor",
+    "ingest_host",
+    "ingest_port",
+    "display_metadata",
+    "extract_text",
+    "extract_images",
+    "extract_tables",
+    "extract_infographics",
+    "extract_method",
+    "extract_metadata_json",
+    "extract_caption",
+    "tokenizer",
+    "vlm_model",
+    "vlm_base_url",
+    "hf_access_token",
+}
 
 
 UNSTRUCTURED_CHUNK_COLUMNS: list[tuple[str, str]] = [
@@ -381,6 +412,13 @@ def _wait_for_table_rows(
         time.sleep(max(1, poll_interval_seconds))
 
 
+def _strip_file_based_create_params(payload: dict[str, Any]) -> dict[str, Any]:
+    cleaned = dict(payload)
+    for key in FILE_BASED_CREATE_KEYS_TO_REMOVE:
+        cleaned.pop(key, None)
+    return cleaned
+
+
 def _env_flag(name: str, default: bool) -> bool:
     raw = os.getenv(name)
     if raw is None:
@@ -484,6 +522,78 @@ def _bookrag_partition_options_for_file(
     return default_strategy, default_languages or ["jpn"], include_orig_elements
 
 
+def _looks_like_scanned_pdf(src: Path) -> bool:
+    if src.suffix.lower() != ".pdf":
+        return False
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(str(src))
+        sampled_pages = reader.pages[: min(3, len(reader.pages))]
+        total_text_len = 0
+        image_only_pages = 0
+        for page in sampled_pages:
+            text = (page.extract_text() or "").strip()
+            total_text_len += len(text)
+            resources = page.get("/Resources")
+            xobjects = resources.get("/XObject") if resources else None
+            has_image = False
+            if xobjects:
+                for key in xobjects.keys():
+                    try:
+                        obj = xobjects[key].get_object()
+                    except Exception:
+                        continue
+                    if str(obj.get("/Subtype")) == "/Image":
+                        has_image = True
+                        break
+            if has_image and len(text) < 24:
+                image_only_pages += 1
+        if not sampled_pages:
+            return False
+        return image_only_pages == len(sampled_pages) or total_text_len < 24
+    except Exception:
+        return False
+
+
+def _multi_format_partition_options_for_file(
+    src: Path,
+    default_strategy: str,
+    default_languages: list[str],
+    include_orig_elements: bool,
+) -> tuple[str, list[str], bool, list[str], bool]:
+    warnings: list[str] = []
+    resolved_strategy = default_strategy
+    resolved_languages = list(default_languages)
+    suffix = src.suffix.lower()
+    scan_ocr_fallback_applied = False
+
+    is_scan_like = suffix in (BOOKRAG_PDF_IMAGE_EXTENSIONS - {".pdf"})
+    if suffix == ".pdf":
+        is_scan_like = _looks_like_scanned_pdf(src)
+
+    if is_scan_like:
+        if resolved_strategy != "hi_res":
+            resolved_strategy = "hi_res"
+            warnings.append(
+                f"multi format forced strategy 'hi_res' for scan-style document {src.name} to improve OCR extraction."
+            )
+            scan_ocr_fallback_applied = True
+        if not resolved_languages:
+            resolved_languages = ["jpn"]
+            warnings.append(
+                f"multi format defaulted OCR languages to 'jpn' for scan-style document {src.name}."
+            )
+            scan_ocr_fallback_applied = True
+    elif resolved_strategy == "fast" and suffix in UNSTRUCTURED_FAST_UNSAFE_IMAGE_EXTENSIONS:
+        resolved_strategy = "auto"
+        warnings.append(
+            f"multi format strategy 'fast' is not supported for image file {src.name}; fallback to 'auto'."
+        )
+
+    return resolved_strategy, resolved_languages, include_orig_elements, warnings, scan_ocr_fallback_applied
+
+
 def _as_text(value: Any, max_len: int | None = None) -> str | None:
     if value is None:
         return None
@@ -519,6 +629,210 @@ def _sql_literal(value: Any) -> str:
         return str(value)
     text = str(value).replace("'", "''")
     return f"'{text}'"
+
+
+def _is_excel_file(src: Path) -> bool:
+    return src.suffix.lower() in EXCEL_EXTENSIONS
+
+
+def _excel_column_name(index: int) -> str:
+    label = ""
+    value = max(1, int(index))
+    while value > 0:
+        value, rem = divmod(value - 1, 26)
+        label = chr(65 + rem) + label
+    return label or "A"
+
+
+def _normalize_excel_cell_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        if value.is_integer():
+            return str(int(value))
+        return format(value, "g")
+    if hasattr(value, "isoformat") and not isinstance(value, str):
+        try:
+            return str(value.isoformat(sep=" "))
+        except TypeError:
+            try:
+                return str(value.isoformat())
+            except Exception:
+                pass
+    return str(value).strip()
+
+
+def _trim_excel_cells(values: list[str]) -> list[str]:
+    trimmed = list(values)
+    while trimmed and not trimmed[-1]:
+        trimmed.pop()
+    return trimmed
+
+
+def _should_use_excel_headers(rows: list[tuple[int, list[str]]]) -> bool:
+    if len(rows) < 2:
+        return False
+    first_values = rows[0][1]
+    non_empty = [value for value in first_values if value]
+    if len(non_empty) < 2:
+        return False
+    mostly_label_like = sum(1 for value in non_empty if not any(ch.isdigit() for ch in value[:24]))
+    return mostly_label_like >= max(1, len(non_empty) // 2)
+
+
+def _build_excel_headers(values: list[str]) -> list[str]:
+    seen: dict[str, int] = {}
+    headers: list[str] = []
+    for idx, value in enumerate(values, start=1):
+        candidate = re.sub(r"\s+", " ", value).strip() or f"Column {_excel_column_name(idx)}"
+        count = seen.get(candidate, 0) + 1
+        seen[candidate] = count
+        if count > 1:
+            candidate = f"{candidate} ({count})"
+        headers.append(candidate)
+    return headers
+
+
+def _split_text_with_overlap(text: str, max_chars: int, overlap_chars: int) -> list[str]:
+    normalized = str(text or "").strip()
+    if not normalized:
+        return []
+    if max_chars <= 0 or len(normalized) <= max_chars:
+        return [normalized]
+
+    overlap_chars = max(0, min(overlap_chars, max_chars - 1))
+    parts: list[str] = []
+    start = 0
+    while start < len(normalized):
+        end = min(len(normalized), start + max_chars)
+        if end < len(normalized):
+            newline_break = normalized.rfind("\n", start, end)
+            space_break = normalized.rfind(" ", start, end)
+            break_at = max(newline_break, space_break)
+            if break_at > start + (max_chars // 2):
+                end = break_at
+        piece = normalized[start:end].strip()
+        if piece:
+            parts.append(piece)
+        if end >= len(normalized):
+            break
+        start = max(end - overlap_chars, start + 1)
+        while start < len(normalized) and normalized[start].isspace():
+            start += 1
+    return parts or [normalized[:max_chars].strip()]
+
+
+def _read_excel_sheet_rows(src: Path) -> list[tuple[str, list[tuple[int, list[str]]]]]:
+    import pandas as pd
+
+    workbook = pd.read_excel(src, sheet_name=None, header=None, dtype=object)
+    sheets: list[tuple[str, list[tuple[int, list[str]]]]] = []
+    for sheet_name, frame in workbook.items():
+        rows: list[tuple[int, list[str]]] = []
+        for row_number, row in enumerate(frame.itertuples(index=False, name=None), start=1):
+            values: list[str] = []
+            for cell in row:
+                if pd.isna(cell):
+                    values.append("")
+                else:
+                    values.append(_normalize_excel_cell_value(cell))
+            values = _trim_excel_cells(values)
+            if any(values):
+                rows.append((row_number, values))
+        if rows:
+            sheets.append((str(sheet_name), rows))
+    return sheets
+
+
+def _partition_excel_chunks(
+    src: Path,
+    *,
+    chunk_size: int,
+    chunk_overlap: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    content_type = mimetypes.guess_type(src.name)[0] or "application/octet-stream"
+    sheet_rows = _read_excel_sheet_rows(src)
+    raw_elements: list[dict[str, Any]] = []
+    table_rows: list[dict[str, Any]] = []
+    sheet_names: list[str] = []
+    logical_row_count = 0
+
+    for sheet_name, rows in sheet_rows:
+        sheet_names.append(sheet_name)
+        use_headers = _should_use_excel_headers(rows)
+        headers = _build_excel_headers(rows[0][1]) if use_headers else []
+        data_rows = rows[1:] if use_headers and len(rows) > 1 else rows
+        for row_number, values in data_rows:
+            logical_row_count += 1
+            parts: list[str] = []
+            for idx, value in enumerate(values, start=1):
+                if not value:
+                    continue
+                header = headers[idx - 1] if idx - 1 < len(headers) else f"Column {_excel_column_name(idx)}"
+                parts.append(f"{header}: {value}")
+            if not parts:
+                continue
+
+            full_text = f"Workbook: {src.name}\nSheet: {sheet_name}\nRow: {row_number}\n" + "\n".join(parts)
+            record_id = uuid.uuid4().hex
+            record_locator = f"{src.name}#sheet={sheet_name}#row={row_number}"
+            metadata = {
+                "record_id": record_id,
+                "filename": src.name,
+                "file_directory": str(src.parent),
+                "filetype": content_type,
+                "record_locator": record_locator,
+                "sheet_name": sheet_name,
+                "row_number": row_number,
+                "row_kind": "excel_structured",
+            }
+            raw_elements.append(
+                {
+                    "id": record_id,
+                    "element_id": record_id,
+                    "type": "TableRow",
+                    "text": full_text,
+                    "metadata": metadata,
+                }
+            )
+
+            segments = _split_text_with_overlap(full_text, chunk_size, chunk_overlap)
+            segment_total = len(segments)
+            for segment_index, segment in enumerate(segments, start=1):
+                element_id = uuid.uuid4().hex
+                element_metadata = dict(metadata)
+                if segment_total > 1:
+                    element_metadata["segment_index"] = segment_index
+                    element_metadata["segment_total"] = segment_total
+                row = _element_to_chunk_row(
+                    {
+                        "id": element_id,
+                        "element_id": element_id,
+                        "type": "TableRow",
+                        "text": segment,
+                        "metadata": element_metadata,
+                    },
+                    src=src,
+                    content_type=content_type,
+                )
+                if row:
+                    table_rows.append(row)
+
+    request_parameters = {
+        "mode": "excel-structured",
+        "file_name": src.name,
+        "content_type": content_type,
+        "sheet_names": sheet_names,
+        "sheet_count": len(sheet_names),
+        "logical_row_count": logical_row_count,
+        "chunk_size": chunk_size,
+        "chunk_overlap": chunk_overlap,
+    }
+    return table_rows, raw_elements, request_parameters
 
 
 def _element_to_chunk_row(element: dict[str, Any], src: Path, content_type: str) -> dict[str, Any] | None:
@@ -564,6 +878,7 @@ def _partition_document_chunks(
     partition_strategy: str,
     languages: list[str],
     include_orig_elements: bool,
+    overlap_all: bool,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     from unstructured_client.models import operations
 
@@ -579,7 +894,7 @@ def _partition_document_chunks(
         "max_characters": chunk_size,
         "new_after_n_chars": chunk_size,
         "overlap": chunk_overlap,
-        "overlap_all": False,
+        "overlap_all": overlap_all,
         "include_orig_elements": include_orig_elements,
     }
     if languages:
@@ -850,15 +1165,10 @@ def _apply_bookrag_tree_pipeline(
     else:
         persisted_node_count = node_count
 
-    patched_payload = dict(exec_payload)
+    patched_payload = _strip_file_based_create_params(exec_payload)
     patched_payload["object_names"] = qualified_tables["nodes"]
     patched_payload["data_columns"] = ["content"]
     patched_payload["key_columns"] = ["node_id"]
-    patched_payload.pop("chunk_size", None)
-    patched_payload.pop("optimized_chunking", None)
-    patched_payload.pop("header_height", None)
-    patched_payload.pop("footer_height", None)
-    patched_payload.pop("document_files", None)
 
     summary = {
         "table_name": qualified_tables["nodes"],
@@ -928,6 +1238,7 @@ def apply_multi_format_pipeline(
     partition_strategy = _resolve_partition_strategy(create_values.get("multi_format_strategy", "auto"))
     ocr_languages = _parse_langs(create_values.get("multi_format_ocr_languages", ""))
     include_orig_elements = False
+    overlap_all = True
 
     table_name, schema_name, qualified_name, target_warnings = _resolve_multi_format_table_target(
         exec_payload,
@@ -974,38 +1285,82 @@ def apply_multi_format_pipeline(
         )
     )
 
-    client = _new_unstructured_client()
-    debug_dir = _prepare_unstructured_debug_dir(vector_store_name) if pipeline_mode == "multi_format_bookrag" else None
+    client = None
+    debug_dir = _prepare_unstructured_debug_dir(vector_store_name)
     inserted_rows = 0
     partition_warnings: list[str] = []
     debug_files: list[str] = []
+    used_partition_strategies: set[str] = set()
+    used_ocr_languages: set[tuple[str, ...]] = set()
+    scan_ocr_fallback_files: list[str] = []
+    excel_structured_files: list[str] = []
+    processing_modes: set[str] = set()
     for path_hint in document_files:
         resolved = resolve_path_hint(path_hint)
         src = Path(resolved)
         if not src.exists() or not src.is_file():
             raise RuntimeError(f"multi format source file is missing: {path_hint}")
-        file_partition_strategy = partition_strategy
-        file_ocr_languages = ocr_languages
-        file_include_orig_elements = include_orig_elements
-        if pipeline_mode == "multi_format_bookrag":
-            (
-                file_partition_strategy,
-                file_ocr_languages,
-                file_include_orig_elements,
-            ) = _bookrag_partition_options_for_file(
-                src,
-                default_strategy=partition_strategy,
-                default_languages=ocr_languages,
-            )
-        rows, raw_elements, request_parameters = _partition_document_chunks(
-            client,
+        (
+            file_partition_strategy,
+            file_ocr_languages,
+            file_include_orig_elements,
+            file_partition_warnings,
+            scan_ocr_fallback_applied,
+        ) = _multi_format_partition_options_for_file(
             src,
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            partition_strategy=file_partition_strategy,
-            languages=file_ocr_languages,
-            include_orig_elements=file_include_orig_elements,
+            default_strategy=partition_strategy,
+            default_languages=ocr_languages,
+            include_orig_elements=include_orig_elements,
         )
+        partition_warnings.extend(file_partition_warnings)
+        if _is_excel_file(src):
+            try:
+                rows, raw_elements, request_parameters = _partition_excel_chunks(
+                    src,
+                    chunk_size=chunk_size,
+                    chunk_overlap=chunk_overlap,
+                )
+                excel_structured_files.append(src.name)
+                processing_modes.add("excel-structured")
+            except Exception as ex:
+                partition_warnings.append(
+                    f"excel structured extraction failed for {src.name}; fallback to partition API: {ex}"
+                )
+                if client is None:
+                    client = _new_unstructured_client()
+                used_partition_strategies.add(file_partition_strategy)
+                used_ocr_languages.add(tuple(file_ocr_languages))
+                if scan_ocr_fallback_applied:
+                    scan_ocr_fallback_files.append(src.name)
+                rows, raw_elements, request_parameters = _partition_document_chunks(
+                    client,
+                    src,
+                    chunk_size=chunk_size,
+                    chunk_overlap=chunk_overlap,
+                    partition_strategy=file_partition_strategy,
+                    languages=file_ocr_languages,
+                    include_orig_elements=file_include_orig_elements,
+                    overlap_all=overlap_all,
+                )
+                processing_modes.add("partition-api")
+        else:
+            if client is None:
+                client = _new_unstructured_client()
+            used_partition_strategies.add(file_partition_strategy)
+            used_ocr_languages.add(tuple(file_ocr_languages))
+            if scan_ocr_fallback_applied:
+                scan_ocr_fallback_files.append(src.name)
+            rows, raw_elements, request_parameters = _partition_document_chunks(
+                client,
+                src,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                partition_strategy=file_partition_strategy,
+                languages=file_ocr_languages,
+                include_orig_elements=file_include_orig_elements,
+                overlap_all=overlap_all,
+            )
+            processing_modes.add("partition-api")
         debug_file = _write_unstructured_debug_file(debug_dir, src, raw_elements, rows, request_parameters)
         if debug_file:
             debug_files.append(debug_file)
@@ -1044,18 +1399,29 @@ def apply_multi_format_pipeline(
             f"table={qualified_name}"
         )
 
-    patched_payload = dict(exec_payload)
+    patched_payload = _strip_file_based_create_params(exec_payload)
     patched_payload["object_names"] = qualified_name
     patched_payload["data_columns"] = ["text"]
     patched_payload.setdefault("key_columns", ["id"])
 
     # multi format already writes chunked content into Teradata.
     # For content-based vector store creation, chunking inputs must be omitted.
-    patched_payload.pop("chunk_size", None)
-    patched_payload.pop("optimized_chunking", None)
-    patched_payload.pop("header_height", None)
-    patched_payload.pop("footer_height", None)
-    patched_payload.pop("document_files", None)
+
+    strategy_label = (
+        next(iter(used_partition_strategies))
+        if len(used_partition_strategies) == 1
+        else ("mixed" if used_partition_strategies else "")
+    )
+    languages_label = ""
+    if len(used_ocr_languages) == 1:
+        languages_label = ",".join(next(iter(used_ocr_languages)))
+    elif used_ocr_languages:
+        languages_label = "mixed"
+    processing_mode_label = (
+        next(iter(processing_modes))
+        if len(processing_modes) == 1
+        else ("mixed" if processing_modes else "")
+    )
 
     summary = {
         "table_name": qualified_name,
@@ -1073,11 +1439,13 @@ def apply_multi_format_pipeline(
         "debug_files": debug_files,
         "effective_partition_strategy": partition_strategy,
         "effective_ocr_languages": ocr_languages,
+        "effective_partition_strategy_label": strategy_label,
+        "effective_ocr_languages_label": languages_label,
+        "processing_mode_label": processing_mode_label,
+        "excel_structured_files": excel_structured_files,
+        "scan_ocr_fallback_files": scan_ocr_fallback_files,
         "include_orig_elements": include_orig_elements,
-        "file_mode": (
-            "per-extension"
-            if pipeline_mode == "multi_format_bookrag"
-            else "shared"
-        ),
+        "overlap_all": overlap_all,
+        "file_mode": "per-file",
     }
     return patched_payload, summary

@@ -4,12 +4,17 @@
 {%- endif -%}
 {%- endmacro %}
 
-{% macro render_field(field, create_values, connected) -%}
-<label class="{{ field.get('wrapper_class', 'field') }}"{{ render_attrs(field.get('wrapper_attrs')) }}>
+{% macro render_field(field, create_values, connected, enabled=True, current_doc_mode='') -%}
+{% set wrapper_attrs = field.get('wrapper_attrs') or {} %}
+{% set target_doc_modes = wrapper_attrs.get('data-doc-mode-for', '') %}
+{% set normalized_mode = (current_doc_mode or '').strip().lower() %}
+{% set normalized_targets = target_doc_modes.strip().lower().split() if target_doc_modes else [] %}
+{% set doc_mode_hidden = normalized_targets and normalized_mode not in normalized_targets %}
+<label class="{{ field.get('wrapper_class', 'field') }}{% if doc_mode_hidden %} doc-mode-hidden{% endif %}"{% if doc_mode_hidden %} hidden{% endif %}{{ render_attrs(wrapper_attrs) }}>
   <span class="field-label">{{ field.get('label', field.get('name', '')) }}</span>
   {% set value = create_values.get(field.get('name', ''), field.get('default', '')) %}
   {% if field.get('kind') == 'select' %}
-  <select name="{{ field.get('name', '') }}"{% if field.get('required') %} required{% endif %}{% if not connected %} disabled{% endif %}{{ render_attrs(field.get('input_attrs')) }}>
+  <select name="{{ field.get('name', '') }}"{% if field.get('required') %} required{% endif %}{% if not connected or not enabled %} disabled{% endif %}{{ render_attrs(field.get('input_attrs')) }}>
     {% for option in field.get('options', []) %}
     <option value="{{ option.get('value', '') }}" {% if value == option.get('value', '') %}selected{% endif %}>{{ option.get('label', option.get('value', '')) }}</option>
     {% endfor %}
@@ -22,9 +27,9 @@
     {% endfor %}
   </select>
   {% elif field.get('kind') == 'textarea' %}
-  <textarea name="{{ field.get('name', '') }}"{% if field.get('required') %} required{% endif %}{% if not connected %} disabled{% endif %}{{ render_attrs(field.get('input_attrs')) }} placeholder="{{ field.get('placeholder', '') }}">{{ value }}</textarea>
+  <textarea name="{{ field.get('name', '') }}"{% if field.get('required') %} required{% endif %}{% if not connected or not enabled %} disabled{% endif %}{{ render_attrs(field.get('input_attrs')) }} placeholder="{{ field.get('placeholder', '') }}">{{ value }}</textarea>
   {% else %}
-  <input type="{{ field.get('kind', 'text') }}" name="{{ field.get('name', '') }}" value="{{ value }}" placeholder="{{ field.get('placeholder', '') }}"{% if field.get('required') %} required{% endif %}{% if not connected %} disabled{% endif %}{{ render_attrs(field.get('input_attrs')) }} />
+  <input type="{{ field.get('kind', 'text') }}" name="{{ field.get('name', '') }}" value="{{ value }}" placeholder="{{ field.get('placeholder', '') }}"{% if field.get('required') %} required{% endif %}{% if not connected or not enabled %} disabled{% endif %}{{ render_attrs(field.get('input_attrs')) }} />
   {% endif %}
 </label>
 {%- endmacro %}

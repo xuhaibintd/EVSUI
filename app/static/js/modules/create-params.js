@@ -77,6 +77,8 @@
             .filter(Boolean);
           const show = targetModes.includes(currentMode);
           group.classList.toggle("doc-mode-hidden", !show);
+          group.hidden = !show;
+          group.setAttribute("aria-hidden", show ? "false" : "true");
 
           const controls = group.querySelectorAll("input, select, textarea");
           const locked = form.classList.contains("disabled-block");
@@ -89,6 +91,7 @@
       if (modeSelect.dataset.docModeBound !== "1") {
         modeSelect.dataset.docModeBound = "1";
         modeSelect.addEventListener("change", syncByMode);
+        form.addEventListener("change", syncByMode, true);
       }
 
       syncByMode();

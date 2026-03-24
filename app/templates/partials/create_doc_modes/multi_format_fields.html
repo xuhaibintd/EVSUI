@@ -1,7 +1,7 @@
 {% import "partials/create_field_macros.html" as fields %}
 
 <div class="select-docs-options multi-format-params-grid">
-  {% for field in multi_format_ui_fields %}
-  {{ fields.render_field(field, create_values, evs.connected) }}
+  {% for field in doc_mode_ui_fields %}
+  {{ fields.render_field(field, create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
   {% endfor %}
 </div>

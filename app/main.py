@@ -30,7 +30,7 @@ from app.services.create_config import (
     build_text_core_ui_fields,
     default_create_values,
 )
-from app.services.doc_modes.common import build_multi_format_ui_fields
+from app.services.doc_modes.common import build_multi_format_bookrag_ui_fields, build_multi_format_ui_fields
 from app.services.doc_modes.registry import DOC_PIPELINE_OPTIONS
 from app.utils.table_state import (
     apply_chat_list_output_to_state,
@@ -427,6 +427,7 @@ def _build_home_context(request: Request) -> dict:
         "create_ui_sections": build_create_ui_sections(),
         "text_core_ui_fields": build_text_core_ui_fields(),
         "multi_format_ui_fields": build_multi_format_ui_fields(),
+        "multi_format_bookrag_ui_fields": build_multi_format_bookrag_ui_fields(),
         "create_values": app.state.create_form_values,
         "doc_pipeline_options": DOC_PIPELINE_OPTIONS,
         "create_result": app.state.last_create_operation,

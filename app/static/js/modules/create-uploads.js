@@ -120,6 +120,7 @@
     const objectNames = createForm.querySelector("[name='object_names']");
     const uploadInput = createForm.querySelector("input[type='file'][name='files']");
     const uploadedPreview = createForm.querySelector("[data-selected-doc-paths]");
+    const createResult = document.querySelector("#create-result");
 
     const getUploadedCount = () => {
       const node = createForm.querySelector("[data-uploaded-count]");
@@ -138,6 +139,25 @@
       }
     };
 
+    const renderValidationMessage = (message) => {
+      if (!(createResult instanceof HTMLElement) || !message) {
+        return;
+      }
+      createResult.dataset.clientValidationMessage = "1";
+      createResult.innerHTML = `<div class="result-box"><p class="status err">${app.escapeHtml(message)}</p></div>`;
+    };
+
+    const clearValidationMessage = () => {
+      if (!(createResult instanceof HTMLElement)) {
+        return;
+      }
+      if (createResult.dataset.clientValidationMessage !== "1") {
+        return;
+      }
+      createResult.innerHTML = "";
+      delete createResult.dataset.clientValidationMessage;
+    };
+
     const syncConditionalRules = () => {
       clearValidity(vectorStoreName);
       clearValidity(docPipelineMode);
@@ -154,12 +174,13 @@
       }
       if (uploadInput instanceof HTMLInputElement) {
         uploadInput.required = false;
-        if (uploadedCount === 0) {
-          uploadInput.setCustomValidity("Uploaded files is required.");
-        }
       }
+      createForm.dataset.uploadMissing = uploadedCount === 0 ? "1" : "0";
       if (objectNames instanceof HTMLInputElement) {
         objectNames.required = false;
+      }
+      if (createForm.dataset.uploadMissing !== "1" && createForm.checkValidity()) {
+        clearValidationMessage();
       }
     };
 
@@ -178,10 +199,25 @@
       "submit",
       (event) => {
         syncConditionalRules();
+        if (createForm.dataset.uploadMissing === "1") {
+          event.preventDefault();
+          renderValidationMessage("Uploaded files is required.");
+          return;
+        }
         if (!createForm.checkValidity()) {
           event.preventDefault();
+          const firstInvalid = createForm.querySelector(":invalid");
+          if (
+            firstInvalid instanceof HTMLInputElement ||
+            firstInvalid instanceof HTMLSelectElement ||
+            firstInvalid instanceof HTMLTextAreaElement
+          ) {
+            renderValidationMessage(firstInvalid.validationMessage || "Please complete the required fields.");
+          }
           createForm.reportValidity();
+          return;
         }
+        clearValidationMessage();
       },
       true
     );

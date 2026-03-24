@@ -161,12 +161,10 @@ _BASIC_SECONDARY_FIELDS = [
     "embeddings_model",
     "search_algorithm",
     "top_k",
-    "object_names",
-    "data_columns",
-    "vector_column",
     "metric",
     "key_columns",
 ]
+
 
 _ALGORITHM_SECTION_FIELDS = [
     ("search_threshold", "VECTORDISTANCE KMEANS"),
@@ -196,6 +194,9 @@ _TEXT_CORE_FIELDS = [
     "optimized_chunking",
     "header_height",
     "footer_height",
+    "object_names",
+    "data_columns",
+    "vector_column",
 ]
 
 _BOOL_FIELDS = {"optimized_chunking", "delay_jitter", "ignore_embedding_errors", "batch", "apply_heuristics"}

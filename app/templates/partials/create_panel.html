@@ -74,7 +74,7 @@
       {% for row in section.get('rows', []) %}
       <div class="{{ row.get('class', '') }}">
         {% for field in row.get('fields', []) %}
-        {{ fields.render_field(field, create_values, evs.connected) }}
+        {{ fields.render_field(field, create_values, evs.connected, True, _doc_pipeline_mode) }}
         {% endfor %}
       </div>
       {% endfor %}
@@ -82,7 +82,7 @@
     {% else %}
     <div class="{{ section.get('grid_class', 'param-grid') }}" {% if section.get('title') == 'Search Algorithm' %}data-algo-param-scope{% endif %}>
       {% for field in section.get('fields', []) %}
-      {{ fields.render_field(field, create_values, evs.connected) }}
+      {{ fields.render_field(field, create_values, evs.connected, True, _doc_pipeline_mode) }}
       {% endfor %}
     </div>
     {% endif %}
@@ -90,11 +90,19 @@
   {% endfor %}
 
   <div class="stack-inline">
-    <button type="submit" name="create_mode" value="core" class="progress-btn" data-progress-button {% if not evs.connected %}disabled{% endif %}>
+    <button
+      type="submit"
+      name="create_mode"
+      value="core"
+      class="progress-btn"
+      data-progress-button
+      data-progress-show-seconds
+      {% if not evs.connected %}disabled{% endif %}
+    >
       <span class="progress-btn-label">Create Vector Store</span>
       <span class="progress-btn-loading">
         <span class="progress-btn-spinner" aria-hidden="true"></span>
-        <span>Creating...</span>
+        <span data-progress-loading-text>Creating...</span>
       </span>
     </button>
   </div>

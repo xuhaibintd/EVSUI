@@ -2,6 +2,44 @@
   "use strict";
 
   const app = global.EVSUIApp;
+  const buttonTimers = new WeakMap();
+
+  function clearProgressTimer(button) {
+    const timerState = buttonTimers.get(button);
+    if (!timerState) {
+      return;
+    }
+
+    global.clearInterval(timerState.intervalId);
+    if (timerState.textNode) {
+      timerState.textNode.textContent = timerState.originalText;
+    }
+    buttonTimers.delete(button);
+  }
+
+  function startProgressTimer(button) {
+    if (!button || !button.hasAttribute("data-progress-show-seconds")) {
+      return;
+    }
+
+    const textNode = button.querySelector("[data-progress-loading-text]");
+    if (!textNode) {
+      return;
+    }
+
+    clearProgressTimer(button);
+
+    const originalText = textNode.textContent.trim() || "Processing...";
+    const startedAt = Date.now();
+    const render = () => {
+      const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
+      textNode.textContent = `${originalText} (${elapsedSeconds}s)`;
+    };
+
+    render();
+    const intervalId = global.setInterval(render, 1000);
+    buttonTimers.set(button, { intervalId, textNode, originalText });
+  }
 
   function setProgressState(button, loading) {
     if (!button) {
@@ -13,9 +51,11 @@
       button.disabled = true;
       button.classList.add("is-loading");
       button.setAttribute("aria-busy", "true");
+      startProgressTimer(button);
       return;
     }
 
+    clearProgressTimer(button);
     button.classList.remove("is-loading");
     if (button.dataset.wasDisabled !== "1") {
       button.disabled = false;
