@@ -1,11 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from app.services.doc_modes.common import append_multi_format_summary
 from app.services.multi_format import apply_multi_format_pipeline
 
 MODE = "multi_format_bookrag"
 LABEL = "Multi-Format BookRAG"
-SKIP_VECTORSTORE_CREATE = True
+SKIP_VECTORSTORE_CREATE = False
 
 
 def preprocess_create_payload(**kwargs) -> tuple[dict, dict | None]:
@@ -20,8 +20,7 @@ def preprocess_create_payload(**kwargs) -> tuple[dict, dict | None]:
     )
 
 
-def build_skip_create_message(summary: dict | None) -> str:
-    message = "Step 2 completed. Built BookIndex tree tables and skipped VectorStore.create() for Multi-Format BookRAG mode."
+def _append_bookrag_details(message: str, summary: dict | None) -> str:
     message = append_multi_format_summary(message, summary)
     if not summary:
         return message
@@ -33,10 +32,13 @@ def build_skip_create_message(summary: dict | None) -> str:
         message += " per-file partition options enabled."
     block_count = summary.get("block_count")
     node_count = summary.get("node_count")
+    leaf_node_count = summary.get("leaf_node_count")
     if block_count is not None:
         message += f" blocks={block_count}."
     if node_count is not None:
         message += f" nodes={node_count}."
+    if leaf_node_count is not None:
+        message += f" leaf_nodes={leaf_node_count}."
     profile = summary.get("bookrag_profile")
     if profile:
         message += f" profile={profile}."
@@ -53,9 +55,10 @@ def build_skip_create_message(summary: dict | None) -> str:
         nodes_table = bookrag_tables.get("nodes")
         entities_table = bookrag_tables.get("entities")
         entity_links_table = bookrag_tables.get("entity_links")
+        leaf_nodes_view = bookrag_tables.get("leaf_nodes")
         message += (
             f" tables=docs:{docs_table}, blocks:{blocks_table}, nodes:{nodes_table}, "
-            f"entities:{entities_table}, entity_links:{entity_links_table}."
+            f"entities:{entities_table}, entity_links:{entity_links_table}, leaf_nodes:{leaf_nodes_view}."
         )
     if effective_strategy:
         message += f" strategy={effective_strategy}."
@@ -78,3 +81,18 @@ def build_skip_create_message(summary: dict | None) -> str:
             f"single_row_statements:{insert_stats.get('single_row_statements', 0)}."
         )
     return message
+
+
+def build_skip_create_message(summary: dict | None) -> str:
+    message = "Step 2 completed. Built BookIndex tree tables for Multi-Format BookRAG mode."
+    return _append_bookrag_details(message, summary)
+
+
+def append_success_message(message: str, summary: dict | None) -> str:
+    bookrag_tables = summary.get("bookrag_tables") or {} if summary else {}
+    leaf_nodes_view = bookrag_tables.get("leaf_nodes") if bookrag_tables else None
+    if leaf_nodes_view:
+        message += f" BookRAG tree tables built and VectorStore indexed from leaf nodes view {leaf_nodes_view} using content/node_id."
+    else:
+        message += " BookRAG tree tables built and VectorStore indexed from BookRAG leaf nodes."
+    return _append_bookrag_details(message, summary)

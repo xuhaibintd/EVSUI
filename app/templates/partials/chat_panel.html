@@ -3,22 +3,43 @@
     {% include "partials/chat_messages.html" %}
   </div>
 
-  <form id="chat-form" class="stack chat-shell" hx-post="/ui/chat" hx-target="#chat-messages" hx-swap="innerHTML" hx-indicator="#chat-progress">
+  <form id="chat-form" class="stack chat-shell" data-retrieval-mode-form hx-post="/ui/chat" hx-target="#chat-messages" hx-swap="innerHTML" hx-indicator="#chat-progress">
     {% set is_oob = false %}
     {% include "partials/chat_vector_store_list.html" %}
-    <div class="chat-section chat-section-retrieval">
-      <label class="label" for="validation-target">Retrieval Method</label>
-      <select name="validation_target" id="validation-target" {% if not evs.connected %}disabled{% endif %}>
-        <option value="vectorstore.ask">VectorStore.ask</option>
-        <option value="vectorstore.similarity_search">VectorStore.similarity_search</option>
-      </select>
+    <div class="label" style="margin: 0.1rem 0 0;">Retrieval Method</div>
+    <div class="chat-retrieval-grid" role="radiogroup" aria-label="Retrieval method" style="display:flex; gap:0.5rem; align-items:stretch;">
+      <div class="chat-retrieval-card chat-retrieval-option is-selected" data-retrieval-option="native" style="flex:1 1 0; min-width:0;">
+        <div class="chat-retrieval-inline" style="display:grid; grid-template-columns:max-content minmax(0,1fr); gap:0.8rem; align-items:center;">
+          <label class="chat-retrieval-head" for="retrieval-mode-native">
+            <span class="chat-retrieval-choice">
+              <input type="radio" id="retrieval-mode-native" name="retrieval_mode" value="native" data-retrieval-mode-toggle checked {% if not evs.connected %}disabled{% endif %}>
+              <span class="chat-retrieval-title">Teradata Native</span>
+            </span>
+          </label>
+          <select name="validation_target" id="validation-target" class="chat-retrieval-control" data-native-only {% if not evs.connected %}disabled{% endif %}>
+            <option value="vectorstore.ask">VectorStore.ask</option>
+            <option value="vectorstore.similarity_search">VectorStore.similarity_search</option>
+          </select>
+        </div>
+      </div>
+      <div class="chat-retrieval-card chat-retrieval-option chat-api-card" data-retrieval-option="api" style="flex:1 1 0; min-width:0;">
+        <div class="chat-retrieval-inline" style="display:grid; grid-template-columns:max-content minmax(0,1fr); gap:0.8rem; align-items:center;">
+          <label class="chat-retrieval-head" for="retrieval-mode-api">
+            <span class="chat-retrieval-choice">
+              <input type="radio" id="retrieval-mode-api" name="retrieval_mode" value="api" data-retrieval-mode-toggle {% if not evs.connected %}disabled{% endif %}>
+              <span class="chat-retrieval-title">BookRAG API</span>
+            </span>
+          </label>
+          <input id="bookrag-api-url" class="chat-api-url chat-retrieval-control" type="text" readonly value="{{ request.url_for('api_bookrag_retrieve') }}" />
+        </div>
+      </div>
     </div>
     <div class="chat-section chat-section-question">
       <label class="label" for="chat-message">Question</label>
-      <textarea id="chat-message" name="message" rows="2" required {% if not evs.connected %}disabled{% endif %}></textarea>
+      <textarea id="chat-message" name="message" rows="2" required data-native-only {% if not evs.connected %}disabled{% endif %}></textarea>
     </div>
     <div class="stack-inline chat-actions">
-      <button type="submit" class="progress-btn" data-progress-button {% if not evs.connected %}disabled{% endif %}>
+      <button type="submit" class="progress-btn" data-progress-button data-native-only {% if not evs.connected %}disabled{% endif %}>
         <span class="progress-btn-label">Send</span>
         <span class="progress-btn-loading">
           <span class="progress-btn-spinner" aria-hidden="true"></span>

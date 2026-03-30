@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from app.services.bookrag_graph import build_bookrag_entities
-from app.services.bookrag_schema import build_bookrag_table_targets, prepare_bookrag_tables
+from app.services.bookrag_schema import build_bookrag_table_targets, prepare_bookrag_leaf_view, prepare_bookrag_tables
 from app.services.bookrag_storage import persist_bookrag_tree
 from app.services.bookrag_tree import (
     build_bookrag_document_row,
@@ -1052,6 +1052,7 @@ def _apply_bookrag_tree_pipeline(
     node_count = 0
     entity_count = 0
     entity_link_count = 0
+    leaf_node_count = 0
     document_count = 0
 
     qualified_tables = {
@@ -1136,6 +1137,13 @@ def _apply_bookrag_tree_pipeline(
         node_count += len(nodes)
         entity_count += len(entities)
         entity_link_count += len(entity_links)
+        leaf_node_count += sum(
+            1
+            for node in nodes
+            if int(node.get("is_leaf") or 0) == 1
+            and str(node.get("node_type") or "").strip().lower() in {"text", "table"}
+            and str(node.get("content") or "").strip()
+        )
 
     if validate_node_flush:
         flush_wait_seconds = _to_int(
@@ -1165,14 +1173,27 @@ def _apply_bookrag_tree_pipeline(
     else:
         persisted_node_count = node_count
 
+    prepare_bookrag_leaf_view(
+        schema_name=effective_schema_name,
+        table_targets=bookrag_tables,
+        execute_sql_fn=execute_sql_fn,
+    )
+    persisted_leaf_count = _count_teradata_rows(
+        schema_name=effective_schema_name,
+        table_name=bookrag_tables["leaf_nodes"],
+        execute_sql_fn=execute_sql_fn,
+    )
+    if persisted_leaf_count is None:
+        persisted_leaf_count = leaf_node_count
+
     patched_payload = _strip_file_based_create_params(exec_payload)
-    patched_payload["object_names"] = qualified_tables["nodes"]
+    patched_payload["object_names"] = qualified_tables["leaf_nodes"]
     patched_payload["data_columns"] = ["content"]
     patched_payload["key_columns"] = ["node_id"]
 
     summary = {
-        "table_name": qualified_tables["nodes"],
-        "chunk_count": persisted_node_count,
+        "table_name": qualified_tables["leaf_nodes"],
+        "chunk_count": persisted_leaf_count,
         "document_count": document_count,
         "job_id": "",
         "workflow_id": "",
@@ -1198,6 +1219,7 @@ def _apply_bookrag_tree_pipeline(
         "file_mode": "per-extension",
         "block_count": block_count,
         "node_count": persisted_node_count,
+        "leaf_node_count": persisted_leaf_count,
         "entity_count": entity_count,
         "entity_link_count": entity_link_count,
         "bookrag_tables": qualified_tables,

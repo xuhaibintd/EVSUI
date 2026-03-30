@@ -4,6 +4,8 @@ import hashlib
 import re
 from typing import Any, Callable
 
+BOOKRAG_EMBEDDING_NODE_TYPES = ("text", "table")
+
 TERADATA_IDENTIFIER_MAX_LEN = 30
 BOOKRAG_INSERT_BATCH_MAX_ROWS = 32
 BOOKRAG_INSERT_BATCH_MAX_SQL_CHARS = 180000
@@ -112,6 +114,7 @@ def build_bookrag_table_targets(vector_store_name: str) -> dict[str, str]:
         "nodes": _with_suffix(base_name, "bnode"),
         "entities": _with_suffix(base_name, "bent"),
         "entity_links": _with_suffix(base_name, "belnk"),
+        "leaf_nodes": _with_suffix(base_name, "bleaf"),
     }
 
 
@@ -196,3 +199,25 @@ def prepare_bookrag_tables(
     warnings.extend(_ensure_table(schema_name, table_targets["entities"], BOOKRAG_ENTITY_COLUMNS, execute_sql_fn))
     warnings.extend(_ensure_table(schema_name, table_targets["entity_links"], BOOKRAG_ENTITY_LINK_COLUMNS, execute_sql_fn))
     return warnings
+
+
+def prepare_bookrag_leaf_view(
+    schema_name: str | None,
+    table_targets: dict[str, str],
+    execute_sql_fn: ExecuteSqlFn | None,
+) -> None:
+    if execute_sql_fn is None:
+        raise RuntimeError("teradataml.execute_sql is unavailable.")
+    qualified_nodes = _qualified_table_sql(schema_name, table_targets["nodes"])
+    qualified_leaf_view = _qualified_table_sql(schema_name, table_targets["leaf_nodes"])
+    node_types_sql = ", ".join(_sql_literal(value) for value in BOOKRAG_EMBEDDING_NODE_TYPES)
+    execute_sql_fn(
+        f"""
+REPLACE VIEW {qualified_leaf_view} AS
+SELECT *
+FROM {qualified_nodes}
+WHERE "is_leaf" = 1
+  AND "content" IS NOT NULL
+  AND "node_type" IN ({node_types_sql})
+"""
+    )

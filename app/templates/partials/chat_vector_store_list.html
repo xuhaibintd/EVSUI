@@ -38,9 +38,4 @@
     <option value="{{ vs_name }}" {% if vs_name == _current_vs_name %}selected{% endif %}>{{ vs_name }}</option>
     {% endfor %}
   </select>
-  {% if evs.connected and evs.chat_list_preview and not _vs_options %}
-  <p class="muted chat-vs-hint">{{ evs.chat_list_preview }}</p>
-  {% elif evs.connected and not _vs_options %}
-  <p class="muted chat-vs-hint">Click Run List to load options.</p>
-  {% endif %}
 </div>

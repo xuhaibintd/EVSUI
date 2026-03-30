@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import logging
 import re
@@ -6,10 +6,11 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 
 from app.session_state import (
     activate_session_state,
@@ -32,6 +33,7 @@ from app.services.create_config import (
 )
 from app.services.doc_modes.common import build_multi_format_bookrag_ui_fields, build_multi_format_ui_fields
 from app.services.doc_modes.registry import DOC_PIPELINE_OPTIONS
+from app.services.bookrag_retrieval import retrieve_bookrag_evidence
 from app.utils.table_state import (
     apply_chat_list_output_to_state,
     apply_list_output_to_state,
@@ -118,6 +120,12 @@ logger.setLevel(logging.INFO)
 JP_KANA_RE = re.compile(r"[\u3040-\u30ff]")
 LATIN_RE = re.compile(r"[A-Za-z]")
 HAN_RE = re.compile(r"[\u4e00-\u9fff]")
+
+class BookRAGRetrieveRequest(BaseModel):
+    question: str
+    vector_store_name: str | None = None
+    schema_name: str | None = None
+
 def _now_ts() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -1091,6 +1099,55 @@ async def chat_reset(request: Request):
     response = await handle_chat_reset(request, app, templates)
     _persist_active_session_state(request)
     return response
+
+
+@app.post("/api/bookrag/retrieve")
+async def api_bookrag_retrieve(request: Request, payload: BookRAGRetrieveRequest):
+    if not _is_logged_in(request):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    _activate_session_state(request)
+
+    if VectorStore is None:
+        raise HTTPException(status_code=503, detail=f"VectorStore runtime is unavailable: {TERADATA_IMPORT_ERROR}")
+    if execute_sql is None:
+        raise HTTPException(status_code=503, detail="teradataml.execute_sql is unavailable.")
+
+    question = str(payload.question or "").strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="question is required.")
+
+    vector_store_name = str(payload.vector_store_name or _active_vector_store_name() or "").strip()
+    if not vector_store_name:
+        raise HTTPException(status_code=400, detail="vector_store_name is required.")
+
+    try:
+        vector_store = VectorStore(vector_store_name)
+    except Exception as ex:
+        raise HTTPException(status_code=400, detail=f"cannot open VectorStore('{vector_store_name}'): {ex}") from ex
+
+    try:
+        try:
+            similarity_result = vector_store.similarity_search(question=question)
+        except TypeError:
+            similarity_result = vector_store.similarity_search(question)
+    except Exception as ex:
+        raise HTTPException(status_code=500, detail=f"similarity_search failed on '{vector_store_name}': {ex}") from ex
+
+    try:
+        evidence = retrieve_bookrag_evidence(
+            vector_store_name=vector_store_name,
+            similarity_result=similarity_result,
+            execute_sql_fn=execute_sql,
+            schema_name=str(payload.schema_name).strip() or None,
+        )
+    except Exception as ex:
+        raise HTTPException(status_code=500, detail=f"BookRAG evidence retrieval failed for '{vector_store_name}': {ex}") from ex
+
+    return {
+        "question": question,
+        "vector_store_name": vector_store_name,
+        "evidence": evidence,
+    }
 
 
 @app.get("/healthz")
