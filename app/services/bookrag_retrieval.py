@@ -3,7 +3,7 @@
 from typing import Any
 
 from app.services.bookrag_schema import _qualified_table_sql, _sql_literal, build_bookrag_table_targets
-from app.utils.table_state import normalize_header_key, table_from_result
+from app.utils.table_state import format_preview, normalize_header_key, table_from_result
 
 NodeRow = dict[str, Any]
 EvidencePackage = dict[str, Any]
@@ -89,26 +89,54 @@ def _extract_similarity_matches(similarity_result: Any) -> tuple[list[dict[str, 
                 return idx
         return -1
 
-    node_id_idx = _find_index("nodeid")
     score_idx = _find_index("score", "similarityscore")
     schema_idx = _find_index("databasename", "database", "schemaname", "schema")
+    node_id_idx = _find_index("nodeid", "tdid", "kbid")
     if node_id_idx < 0:
+        for idx, header in enumerate(normalized_headers):
+            if header in {"id", "key", "keycolumn", "keycolumns"}:
+                node_id_idx = idx
+                break
+    if node_id_idx < 0:
+        excluded_headers = {
+            "#",
+            "score",
+            "databasename",
+            "database",
+            "schemaname",
+            "schema",
+            "tablename",
+            "table",
+            "indexlabel",
+        }
+        id_like_indices = [
+            idx
+            for idx, header in enumerate(normalized_headers)
+            if header not in excluded_headers and header.endswith("id")
+        ]
+        if len(id_like_indices) == 1:
+            node_id_idx = id_like_indices[0]
+
+    content_idx = _find_index("content", "chunks", "text")
+    if node_id_idx < 0 and content_idx < 0:
         return [], None
 
     matches: list[dict[str, Any]] = []
-    seen_node_ids: set[str] = set()
+    seen_keys: set[str] = set()
     inferred_schema_name: str | None = None
     for row in rows:
-        if node_id_idx >= len(row):
+        node_id = _as_text(row[node_id_idx]) if 0 <= node_id_idx < len(row) else None
+        content = _as_text(row[content_idx]) if 0 <= content_idx < len(row) else None
+        if not node_id and not content:
             continue
-        node_id = _as_text(row[node_id_idx])
-        if not node_id or node_id in seen_node_ids:
+        dedupe_key = f"id:{node_id}" if node_id else f"content:{content}"
+        if dedupe_key in seen_keys:
             continue
-        seen_node_ids.add(node_id)
+        seen_keys.add(dedupe_key)
         score = _as_float(row[score_idx]) if 0 <= score_idx < len(row) else None
         if inferred_schema_name is None and 0 <= schema_idx < len(row):
             inferred_schema_name = _as_text(row[schema_idx])
-        matches.append({"node_id": node_id, "score": score})
+        matches.append({"node_id": node_id, "content": content, "score": score})
     return matches, inferred_schema_name
 
 
@@ -137,6 +165,33 @@ def _fetch_rows_by_ids(
         id_sql = ", ".join(_sql_literal(value) for value in batch)
         cursor = execute_sql_fn(
             f'SELECT {quoted_columns} FROM {qualified_table} WHERE "{quoted_id}" IN ({id_sql})'
+        )
+        rows.extend(_cursor_to_rows(cursor))
+    return rows
+
+
+def _fetch_rows_by_values(
+    *,
+    schema_name: str | None,
+    table_name: str,
+    value_column: str,
+    values: list[str],
+    columns: list[str],
+    execute_sql_fn,
+) -> list[dict[str, Any]]:
+    if execute_sql_fn is None:
+        raise RuntimeError("teradataml.execute_sql is unavailable.")
+    cleaned_values = [value for value in values if _as_text(value)]
+    if not cleaned_values:
+        return []
+    qualified_table = _qualified_table_sql(schema_name, table_name)
+    quoted_columns = ", ".join(f'"{column}"' for column in columns)
+    quoted_value_column = value_column.replace('"', '""')
+    rows: list[dict[str, Any]] = []
+    for batch in _iter_batches(cleaned_values, size=16):
+        value_sql = ", ".join(_sql_literal(value) for value in batch)
+        cursor = execute_sql_fn(
+            f'SELECT {quoted_columns} FROM {qualified_table} WHERE "{quoted_value_column}" IN ({value_sql})'
         )
         rows.extend(_cursor_to_rows(cursor))
     return rows
@@ -178,6 +233,24 @@ def _section_chain(node: NodeRow, node_map: dict[str, NodeRow]) -> list[dict[str
     return chain
 
 
+def _resolve_match_node(
+    match: dict[str, Any],
+    node_map: dict[str, NodeRow],
+    content_node_map: dict[str, list[NodeRow]],
+) -> NodeRow | None:
+    node_id = _as_text(match.get("node_id"))
+    if node_id:
+        node = node_map.get(node_id)
+        if node is not None:
+            return node
+    content = _as_text(match.get("content"))
+    if content:
+        candidates = content_node_map.get(content) or []
+        if candidates:
+            return candidates[0]
+    return None
+
+
 def build_bookrag_evidence_packages(
     *,
     vector_store_name: str,
@@ -191,7 +264,8 @@ def build_bookrag_evidence_packages(
 
     effective_schema_name = schema_name or inferred_schema_name
     table_targets = build_bookrag_table_targets(vector_store_name)
-    node_ids = [match["node_id"] for match in matches]
+    node_ids = [node_id for match in matches if (node_id := _as_text(match.get("node_id")))]
+    content_values = [content for match in matches if (content := _as_text(match.get("content")))]
     node_columns = [
         "node_id",
         "doc_id",
@@ -207,17 +281,38 @@ def build_bookrag_evidence_packages(
         "path",
         "is_leaf",
     ]
-    node_rows = _fetch_rows_by_ids(
-        schema_name=effective_schema_name,
-        table_name=table_targets["nodes"],
-        id_column="node_id",
-        ids=node_ids,
-        columns=node_columns,
-        execute_sql_fn=execute_sql_fn,
-    )
+    node_rows: list[dict[str, Any]] = []
+    if node_ids:
+        node_rows.extend(
+            _fetch_rows_by_ids(
+                schema_name=effective_schema_name,
+                table_name=table_targets["nodes"],
+                id_column="node_id",
+                ids=node_ids,
+                columns=node_columns,
+                execute_sql_fn=execute_sql_fn,
+            )
+        )
+    if content_values:
+        node_rows.extend(
+            _fetch_rows_by_values(
+                schema_name=effective_schema_name,
+                table_name=table_targets["nodes"],
+                value_column="content",
+                values=content_values,
+                columns=node_columns,
+                execute_sql_fn=execute_sql_fn,
+            )
+        )
     node_map: dict[str, NodeRow] = {
         str(row.get("node_id")): row for row in node_rows if _as_text(row.get("node_id"))
     }
+    content_node_map: dict[str, list[NodeRow]] = {}
+    for row in node_rows:
+        content = _as_text(row.get("content"))
+        if not content:
+            continue
+        content_node_map.setdefault(content, []).append(row)
 
     pending_parent_ids = {
         _as_text(row.get("parent_node_id"))
@@ -243,10 +338,16 @@ def build_bookrag_evidence_packages(
             if parent_id and parent_id not in node_map:
                 pending_parent_ids.add(parent_id)
 
+    resolved_nodes: list[NodeRow] = []
+    for match in matches:
+        node = _resolve_match_node(match, node_map, content_node_map)
+        if node is not None:
+            resolved_nodes.append(node)
+
     source_block_ids = [
-        _as_text(node_map[node_id].get("source_block_id"))
-        for node_id in node_ids
-        if node_id in node_map and _as_text(node_map[node_id].get("source_block_id"))
+        _as_text(node.get("source_block_id"))
+        for node in resolved_nodes
+        if _as_text(node.get("source_block_id"))
     ]
     block_columns = [
         "block_id",
@@ -271,7 +372,7 @@ def build_bookrag_evidence_packages(
 
     packages: list[EvidencePackage] = []
     for rank, match in enumerate(matches, start=1):
-        node = node_map.get(match["node_id"])
+        node = _resolve_match_node(match, node_map, content_node_map)
         if node is None:
             continue
         source_block_id = _as_text(node.get("source_block_id"))
@@ -363,6 +464,7 @@ def retrieve_bookrag_evidence(
     execute_sql_fn,
     schema_name: str | None = None,
 ) -> BookRAGEvidenceResult:
+    similarity_headers, similarity_rows = table_from_result(similarity_result)
     packages = build_bookrag_evidence_packages(
         vector_store_name=vector_store_name,
         similarity_result=similarity_result,
@@ -373,5 +475,9 @@ def retrieve_bookrag_evidence(
         "vector_store_name": vector_store_name,
         "schema_name": schema_name,
         "packages": packages,
+        "package_count": len(packages),
+        "similarity_row_count": len(similarity_rows),
+        "similarity_headers": similarity_headers[1:] if similarity_headers[:1] == ["#"] else similarity_headers,
+        "similarity_preview": format_preview(similarity_result, max_chars=500),
         "evidence_text": render_bookrag_evidence_packages(packages),
     }

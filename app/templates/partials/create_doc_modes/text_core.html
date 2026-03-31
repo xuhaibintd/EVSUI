@@ -1,7 +1,7 @@
 {% import "partials/create_field_macros.html" as fields %}
 
 <section class="doc-pipeline-group {% if _doc_pipeline_mode != 'text_core' %}doc-mode-hidden{% endif %}" data-doc-mode-for="text_core" {% if _doc_pipeline_mode != 'text_core' %}hidden{% endif %}>
-  <div class="select-docs-options">
+  <div class="select-docs-options text-core-params-grid">
     {% for field in text_core_ui_fields %}
     {{ fields.render_field(field, create_values, evs.connected, _doc_pipeline_mode == 'text_core', _doc_pipeline_mode) }}
     {% endfor %}

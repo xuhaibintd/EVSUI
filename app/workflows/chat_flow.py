@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime
 
@@ -39,7 +39,7 @@ async def handle_chat_send(request, app, templates, *, message: str, validation_
         app.state.chat_history.append(
             {
                 "role": "assistant",
-                "content": build_evs_reply(clean, selected_target),
+                "content": build_evs_reply(clean, selected_target, posted_vs_name),
                 "time": datetime.now().strftime("%H:%M"),
             }
         )
@@ -59,3 +59,5 @@ async def handle_chat_reset(request, app, templates):
         "partials/chat_messages.html",
         {"messages": app.state.chat_history, "evs": app.state.evs_state},
     )
+
+

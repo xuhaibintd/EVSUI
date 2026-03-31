@@ -161,19 +161,6 @@
   margin-top: 0.12rem;
 }
 
-.chat-progress {
-  display: none;
-  align-items: center;
-  gap: 0.5rem;
-  margin-top: 0.15rem;
-  font-size: 0.8rem;
-  color: #bcd6ff;
-}
-
-.chat-shell.htmx-request .chat-progress {
-  display: flex;
-}
-
 
 #section-chat .chat-retrieval-grid {
   display: grid;

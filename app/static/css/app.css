@@ -4,7 +4,7 @@
 @import url("modules/base.css");
 @import url("modules/layout.css");
 @import url("modules/forms-uploads.css");
-@import url("modules/create.css");
+@import url("modules/create.css?v=20260331-1");
 @import url("modules/connect.css");
 @import url("modules/chat.css?v=20260329-3");
 @import url("modules/responsive.css");

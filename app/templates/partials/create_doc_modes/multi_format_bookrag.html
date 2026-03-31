@@ -1,6 +1,6 @@
-<section class="doc-pipeline-group {% if _doc_pipeline_mode != 'multi_format_bookrag' %}doc-mode-hidden{% endif %}" data-doc-mode-for="multi_format_bookrag" {% if _doc_pipeline_mode != 'multi_format_bookrag' %}hidden{% endif %}>
-  <p class="muted">BookRAG keeps Unstructured elements and builds its own block and node tree. chunk_size and chunk_overlap are hidden here because they do not affect this mode.</p>
+﻿<section class="doc-pipeline-group {% if _doc_pipeline_mode != 'multi_format_bookrag' %}doc-mode-hidden{% endif %}" data-doc-mode-for="multi_format_bookrag" {% if _doc_pipeline_mode != 'multi_format_bookrag' %}hidden{% endif %}>
   {% set doc_mode_ui_fields = multi_format_bookrag_ui_fields %}
   {% set doc_mode_enabled = _doc_pipeline_mode == 'multi_format_bookrag' %}
   {% include "partials/create_doc_modes/multi_format_fields.html" %}
 </section>
+

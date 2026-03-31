@@ -374,7 +374,7 @@ def _ask_prompt_for_language(lang: str) -> str:
     )
 
 
-def _build_evs_reply(message: str, validation_target: str) -> str:
+def _build_evs_reply(message: str, validation_target: str, vector_store_name: str = "") -> str:
     if VectorStore is None:
         return "Validation failed: VectorStore runtime is unavailable."
 
@@ -385,7 +385,9 @@ def _build_evs_reply(message: str, validation_target: str) -> str:
         lang = "en"
     ask_prompt = _ask_prompt_for_language(lang)
     target = validation_target.strip().lower()
-    vs_name = _active_vector_store_name()
+    vs_name = str(vector_store_name or "").strip()
+    if not vs_name:
+        return "Validation failed: no vector store selected. Click 'Run List' and choose one."
 
     try:
         vector_store = VectorStore(vs_name)
@@ -414,6 +416,45 @@ def _build_evs_reply(message: str, validation_target: str) -> str:
     except Exception as ex:
         method_name = "similarity_search" if target == "vectorstore.similarity_search" else "ask"
         return f"{method_name} failed on '{vs_name}': {ex}"
+
+
+def _build_bookrag_chat_reply(evidence: dict | None, vector_store_name: str) -> str:
+    vs_name = str(vector_store_name or "").strip()
+    evidence_text = str((evidence or {}).get("evidence_text") or "").strip()
+    if evidence_text:
+        return f"BookRAG evidence for '{vs_name}':\n\n{evidence_text}"
+
+    similarity_row_count = 0
+    package_count = 0
+    try:
+        similarity_row_count = int((evidence or {}).get("similarity_row_count") or 0)
+    except Exception:
+        similarity_row_count = 0
+    try:
+        package_count = int((evidence or {}).get("package_count") or 0)
+    except Exception:
+        package_count = 0
+    headers = (evidence or {}).get("similarity_headers") or []
+    header_preview = ", ".join(str(item).strip() for item in headers[:6] if str(item).strip())
+    similarity_preview = str((evidence or {}).get("similarity_preview") or "").strip()
+
+    if vs_name:
+        message = f"No BookRAG evidence found for '{vs_name}'."
+    else:
+        message = "No BookRAG evidence found."
+
+    diagnostics: list[str] = []
+    if similarity_row_count:
+        diagnostics.append(f"similarity_rows={similarity_row_count}")
+    if package_count:
+        diagnostics.append(f"packages={package_count}")
+    if header_preview:
+        diagnostics.append(f"headers=[{header_preview}]")
+    if similarity_preview:
+        diagnostics.append(f"preview={similarity_preview}")
+    if diagnostics:
+        message += " " + " ".join(diagnostics) + "."
+    return message
 
 
 def _current_user(request: Request) -> str:
@@ -1116,7 +1157,7 @@ async def api_bookrag_retrieve(request: Request, payload: BookRAGRetrieveRequest
     if not question:
         raise HTTPException(status_code=400, detail="question is required.")
 
-    vector_store_name = str(payload.vector_store_name or _active_vector_store_name() or "").strip()
+    vector_store_name = str(payload.vector_store_name or "").strip()
     if not vector_store_name:
         raise HTTPException(status_code=400, detail="vector_store_name is required.")
 
@@ -1143,13 +1184,32 @@ async def api_bookrag_retrieve(request: Request, payload: BookRAGRetrieveRequest
     except Exception as ex:
         raise HTTPException(status_code=500, detail=f"BookRAG evidence retrieval failed for '{vector_store_name}': {ex}") from ex
 
+    assistant_message = _build_bookrag_chat_reply(evidence, vector_store_name)
+    user_time = datetime.now().strftime("%H:%M")
+    assistant_time = datetime.now().strftime("%H:%M")
+    app.state.chat_history.append({
+        "role": "user",
+        "content": question,
+        "time": user_time,
+    })
+    app.state.chat_history.append({
+        "role": "assistant",
+        "content": assistant_message,
+        "time": assistant_time,
+    })
+    app.state.chat_history = app.state.chat_history[-80:]
+
     return {
         "question": question,
         "vector_store_name": vector_store_name,
         "evidence": evidence,
+        "assistant_message": assistant_message,
+        "user_time": user_time,
+        "assistant_time": assistant_time,
     }
 
 
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
     return {"status": "ok"}
+

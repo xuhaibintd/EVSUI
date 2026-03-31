@@ -1,4 +1,4 @@
-.select-docs-layout {
+﻿.select-docs-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 0.85rem;
@@ -28,7 +28,22 @@
 }
 
 .multi-format-params-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.multi-format-params-grid .field-label {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  min-height: calc(1.15em * 2);
+  line-height: 1.15;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.text-core-params-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .doc-pipeline-panel {
@@ -230,6 +245,10 @@
   .multi-format-params-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .text-core-params-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 1100px) {
@@ -238,6 +257,10 @@
   }
 
   .select-docs-options {
+    grid-template-columns: 1fr;
+  }
+
+  .text-core-params-grid {
     grid-template-columns: 1fr;
   }
 
@@ -286,3 +309,5 @@
   font-size: 0.72rem;
   line-height: 1.3;
 }
+
+

@@ -3,7 +3,7 @@
     {% include "partials/chat_messages.html" %}
   </div>
 
-  <form id="chat-form" class="stack chat-shell" data-retrieval-mode-form hx-post="/ui/chat" hx-target="#chat-messages" hx-swap="innerHTML" hx-indicator="#chat-progress">
+  <form id="chat-form" class="stack chat-shell" data-retrieval-mode-form data-bookrag-api-form hx-post="/ui/chat" hx-target="#chat-messages" hx-swap="innerHTML">
     {% set is_oob = false %}
     {% include "partials/chat_vector_store_list.html" %}
     <div class="label" style="margin: 0.1rem 0 0;">Retrieval Method</div>
@@ -13,7 +13,7 @@
           <label class="chat-retrieval-head" for="retrieval-mode-native">
             <span class="chat-retrieval-choice">
               <input type="radio" id="retrieval-mode-native" name="retrieval_mode" value="native" data-retrieval-mode-toggle checked {% if not evs.connected %}disabled{% endif %}>
-              <span class="chat-retrieval-title">Teradata Native</span>
+              <span class="chat-retrieval-title">Retrieval-only</span>
             </span>
           </label>
           <select name="validation_target" id="validation-target" class="chat-retrieval-control" data-native-only {% if not evs.connected %}disabled{% endif %}>
@@ -36,10 +36,10 @@
     </div>
     <div class="chat-section chat-section-question">
       <label class="label" for="chat-message">Question</label>
-      <textarea id="chat-message" name="message" rows="2" required data-native-only {% if not evs.connected %}disabled{% endif %}></textarea>
+      <textarea id="chat-message" name="message" rows="2" required {% if not evs.connected %}disabled{% endif %}></textarea>
     </div>
     <div class="stack-inline chat-actions">
-      <button type="submit" class="progress-btn" data-progress-button data-native-only {% if not evs.connected %}disabled{% endif %}>
+      <button type="submit" class="progress-btn" data-progress-button {% if not evs.connected %}disabled{% endif %}>
         <span class="progress-btn-label">Send</span>
         <span class="progress-btn-loading">
           <span class="progress-btn-spinner" aria-hidden="true"></span>
@@ -47,10 +47,6 @@
         </span>
       </button>
       <button type="button" class="ghost" hx-post="/ui/chat/reset" hx-target="#chat-messages" hx-swap="innerHTML" {% if not evs.connected %}disabled{% endif %}>Clear</button>
-    </div>
-    <div id="chat-progress" class="chat-progress" role="status" aria-live="polite">
-      <span class="connect-progress-spinner" aria-hidden="true"></span>
-      <span>Processing request, please wait...</span>
     </div>
   </form>
 </div>

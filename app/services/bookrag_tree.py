@@ -149,10 +149,92 @@ def _classify_block_type(
     return "text"
 
 
+_BOOKRAG_EMBEDDING_TOKEN_LIMIT = 90
+_BOOKRAG_EMBEDDING_OVERLAP_TOKENS = 12
+_BOOKRAG_TOKEN_UNIT_RE = re.compile(r"\s+|[A-Za-z0-9_]+|[^\s]", re.UNICODE)
+
+
 def _build_leaf_content(text: str | None, text_as_html: str | None) -> str | None:
     if text and text_as_html:
         return _as_text(f"{text}\n\n{text_as_html}", max_len=32000)
     return _as_text(text or text_as_html, max_len=32000)
+
+def _estimate_token_units(unit: str) -> int:
+    if not unit or unit.isspace():
+        return 0
+    if re.fullmatch(r"[A-Za-z0-9_]+", unit):
+        return max(1, (len(unit) + 3) // 4)
+    return 1
+
+
+def _split_long_token_unit(unit: str, *, max_tokens: int) -> list[str]:
+    if not unit:
+        return []
+    if max_tokens <= 0:
+        return [unit]
+    chunk_chars = max(1, max_tokens * 4)
+    return [unit[idx:idx + chunk_chars] for idx in range(0, len(unit), chunk_chars)]
+
+
+def _split_leaf_content_for_embedding(
+    content: str | None,
+    *,
+    max_tokens: int = _BOOKRAG_EMBEDDING_TOKEN_LIMIT,
+    overlap_tokens: int = _BOOKRAG_EMBEDDING_OVERLAP_TOKENS,
+) -> list[str]:
+    normalized = _as_text(content, max_len=32000)
+    if not normalized:
+        return []
+
+    units = _BOOKRAG_TOKEN_UNIT_RE.findall(normalized)
+    if not units:
+        return [normalized]
+
+    segments: list[str] = []
+    current_units: list[str] = []
+    current_tokens = 0
+
+    def flush() -> None:
+        nonlocal current_units, current_tokens
+        piece = ''.join(current_units).strip()
+        if piece:
+            segments.append(piece)
+        if overlap_tokens > 0 and current_units:
+            carry: list[str] = []
+            carry_tokens = 0
+            for prior in reversed(current_units):
+                prior_tokens = _estimate_token_units(prior)
+                if carry and carry_tokens + prior_tokens > overlap_tokens:
+                    break
+                carry.append(prior)
+                carry_tokens += prior_tokens
+            current_units = list(reversed(carry))
+            current_tokens = sum(_estimate_token_units(item) for item in current_units)
+        else:
+            current_units = []
+            current_tokens = 0
+
+    for unit in units:
+        unit_tokens = _estimate_token_units(unit)
+        if unit_tokens > max_tokens and not unit.isspace():
+            if current_units:
+                flush()
+            for partial in _split_long_token_unit(unit, max_tokens=max_tokens):
+                partial_text = partial.strip()
+                if partial_text:
+                    segments.append(partial_text)
+            current_units = []
+            current_tokens = 0
+            continue
+        if current_units and current_tokens + unit_tokens > max_tokens:
+            flush()
+        current_units.append(unit)
+        current_tokens += unit_tokens
+
+    piece = ''.join(current_units).strip()
+    if piece:
+        segments.append(piece)
+    return segments or [normalized]
 
 
 def build_bookrag_document_row(
@@ -286,22 +368,29 @@ def build_bookrag_nodes(document_row: dict[str, Any], blocks: list[dict[str, Any
 
         parent_node = section_stack[-1] if section_stack else root_node
         title = _as_text(block.get("section_title"), max_len=1000) if block.get("block_type") in {"table", "image"} else None
-        nodes.append(
-            {
-                "node_id": uuid.uuid4().hex,
-                "doc_id": document_row["doc_id"],
-                "source_block_id": block.get("block_id"),
-                "parent_node_id": parent_node.get("node_id"),
-                "node_type": _as_text(block.get("block_type"), max_len=50) or "text",
-                "level": int(parent_node.get("level") or 0) + 1,
-                "ordinal": block.get("ordinal"),
-                "title": title,
-                "content": _build_leaf_content(block.get("text"), block.get("text_as_html")),
-                "page_start": page_number,
-                "page_end": page_number,
-                "path": _as_text(parent_node.get("path"), max_len=2000),
-                "is_leaf": 1,
-            }
-        )
+        leaf_segments = _split_leaf_content_for_embedding(_build_leaf_content(block.get("text"), block.get("text_as_html")))
+        base_ordinal = _as_int(block.get("ordinal")) or 0
+        segment_total = max(1, len(leaf_segments))
+        for segment_index, leaf_content in enumerate(leaf_segments, start=1):
+            leaf_title = title
+            if leaf_title and segment_total > 1:
+                leaf_title = _as_text(f"{leaf_title} [{segment_index}/{segment_total}]", max_len=1000)
+            nodes.append(
+                {
+                    "node_id": uuid.uuid4().hex,
+                    "doc_id": document_row["doc_id"],
+                    "source_block_id": block.get("block_id"),
+                    "parent_node_id": parent_node.get("node_id"),
+                    "node_type": _as_text(block.get("block_type"), max_len=50) or "text",
+                    "level": int(parent_node.get("level") or 0) + 1,
+                    "ordinal": base_ordinal if segment_total == 1 else (base_ordinal * 10000) + segment_index,
+                    "title": leaf_title,
+                    "content": leaf_content,
+                    "page_start": page_number,
+                    "page_end": page_number,
+                    "path": _as_text(parent_node.get("path"), max_len=2000),
+                    "is_leaf": 1,
+                }
+            )
 
     return nodes

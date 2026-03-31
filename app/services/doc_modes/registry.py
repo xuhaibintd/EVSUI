@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from app.services.doc_modes import multi_format, multi_format_bookrag, text_core
-from app.services.doc_modes.common import DOC_PIPELINE_OPTIONS, normalize_doc_pipeline_mode
+from . import multi_format, multi_format_bookrag, text_core
+from .common import DOC_PIPELINE_OPTIONS, normalize_doc_pipeline_mode
 
 DOC_PIPELINE_HANDLERS = {
     text_core.MODE: text_core,

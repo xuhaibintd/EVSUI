@@ -1,6 +1,6 @@
-<section class="doc-pipeline-group {% if _doc_pipeline_mode != 'multi_format' %}doc-mode-hidden{% endif %}" data-doc-mode-for="multi_format" {% if _doc_pipeline_mode != 'multi_format' %}hidden{% endif %}>
-  <p class="muted">Multi-Format sends chunked text rows to Teradata. Tune chunk controls here for retrieval comparisons.</p>
+﻿<section class="doc-pipeline-group {% if _doc_pipeline_mode != 'multi_format' %}doc-mode-hidden{% endif %}" data-doc-mode-for="multi_format" {% if _doc_pipeline_mode != 'multi_format' %}hidden{% endif %}>
   {% set doc_mode_ui_fields = multi_format_ui_fields %}
   {% set doc_mode_enabled = _doc_pipeline_mode == 'multi_format' %}
   {% include "partials/create_doc_modes/multi_format_fields.html" %}
 </section>
+
