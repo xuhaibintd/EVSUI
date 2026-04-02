@@ -34,6 +34,11 @@ from app.services.create_config import (
 from app.services.doc_modes.common import build_multi_format_bookrag_ui_fields, build_multi_format_ui_fields
 from app.services.doc_modes.registry import DOC_PIPELINE_OPTIONS
 from app.services.bookrag_retrieval import retrieve_bookrag_evidence
+from app.services.precision_eval import (
+    build_precision_eval_report,
+    list_precision_eval_files,
+    resolve_precision_eval_path,
+)
 from app.utils.table_state import (
     apply_chat_list_output_to_state,
     apply_list_output_to_state,
@@ -105,6 +110,8 @@ UPLOAD_DIR = PROJECT_DIR / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 DOCUMENT_UPLOAD_DIR = UPLOAD_DIR / "documents"
 DOCUMENT_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+DEBUG_UPLOAD_DIR = UPLOAD_DIR / "unstructured_debug"
+DEBUG_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 PEM_UPLOAD_DIR = UPLOAD_DIR / "pem"
 PEM_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 VS_BASICS_DIR = PROJECT_DIR.parent / "VS_Basics_Full_Kit"
@@ -465,6 +472,19 @@ def _user_initials(username: str) -> str:
     return user_initials(username)
 
 
+def _build_precision_eval_panel_context(selected_pdf_path: str = "", selected_json_path: str = "") -> dict[str, object]:
+    file_options = list_precision_eval_files(
+        document_root=DOCUMENT_UPLOAD_DIR,
+        debug_root=DEBUG_UPLOAD_DIR,
+    )
+    return {
+        "pdf_options": file_options.get("pdf_options", []),
+        "json_options": file_options.get("json_options", []),
+        "selected_pdf_path": str(selected_pdf_path or "").strip(),
+        "selected_json_path": str(selected_json_path or "").strip(),
+    }
+
+
 def _build_home_context(request: Request) -> dict:
     _activate_session_state(request)
     state = app.state.evs_state
@@ -483,6 +503,8 @@ def _build_home_context(request: Request) -> dict:
         "document_uploads": app.state.document_uploads,
         "document_upload_error": "",
         "document_upload_notices": app.state.document_upload_notices,
+        "eval_panel": _build_precision_eval_panel_context(),
+        "precision_eval_result": None,
         "logged_in": _is_logged_in(request),
         "username": username,
         "user_initials": _user_initials(username),
@@ -1140,6 +1162,64 @@ async def chat_reset(request: Request):
     response = await handle_chat_reset(request, app, templates)
     _persist_active_session_state(request)
     return response
+
+
+@app.get("/ui/eval/panel", response_class=HTMLResponse)
+async def precision_eval_panel(
+    request: Request,
+    pdf_path: str = "",
+    json_path: str = "",
+):
+    if not _is_logged_in(request):
+        return HTMLResponse("Unauthorized", status_code=401)
+    _activate_session_state(request)
+    return templates.TemplateResponse(
+        request,
+        "partials/precision_eval_panel.html",
+        {
+            "eval_panel": _build_precision_eval_panel_context(pdf_path, json_path),
+            "precision_eval_result": None,
+        },
+    )
+
+
+@app.post("/ui/eval/run", response_class=HTMLResponse)
+async def run_precision_eval(
+    request: Request,
+    pdf_path: str = Form(default=""),
+    json_path: str = Form(default=""),
+):
+    if not _is_logged_in(request):
+        return HTMLResponse("Unauthorized", status_code=401)
+    _activate_session_state(request)
+
+    try:
+        resolved_pdf_path = resolve_precision_eval_path(
+            pdf_path,
+            allowed_root=DOCUMENT_UPLOAD_DIR,
+            expected_suffixes={".pdf"},
+        )
+        resolved_json_path = resolve_precision_eval_path(
+            json_path,
+            allowed_root=DEBUG_UPLOAD_DIR,
+            expected_suffixes={".json"},
+        )
+        precision_eval_result = build_precision_eval_report(
+            pdf_path=resolved_pdf_path,
+            json_path=resolved_json_path,
+        )
+    except Exception as ex:
+        precision_eval_result = {
+            "error": str(ex),
+            "pdf_path": str(pdf_path or "").strip(),
+            "json_path": str(json_path or "").strip(),
+        }
+
+    return templates.TemplateResponse(
+        request,
+        "partials/precision_eval_result.html",
+        {"precision_eval_result": precision_eval_result},
+    )
 
 
 @app.post("/api/bookrag/retrieve")

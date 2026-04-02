@@ -10,14 +10,10 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
-from app.services.bookrag_graph import build_bookrag_entities
-from app.services.bookrag_schema import build_bookrag_table_targets, prepare_bookrag_leaf_view, prepare_bookrag_tables
-from app.services.bookrag_storage import persist_bookrag_tree
-from app.services.bookrag_tree import (
-    build_bookrag_document_row,
-    build_bookrag_nodes,
-    elements_to_bookrag_blocks,
-)
+from app.services.bookrag_reconcile import reconcile_unstructured_elements
+from app.services.bookrag_schema import build_bookrag_table_targets, prepare_bookrag_block_table
+from app.services.bookrag_storage import persist_bookrag_blocks
+from app.services.bookrag_tree import elements_to_bookrag_blocks
 
 TERADATA_IDENTIFIER_MAX_LEN = 30
 UNSTRUCTURED_CONFIG_FILE_DEFAULT = Path(__file__).resolve().parents[1] / "config" / "unstructured.json"
@@ -154,6 +150,76 @@ def _to_int(raw: str, default: int, minimum: int = 0, maximum: int | None = None
     if maximum is not None and value > maximum:
         return maximum
     return value
+
+
+def _to_bool(raw: Any, default: bool = False) -> bool:
+    if raw is None:
+        return default
+    value = str(raw).strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off", ""}:
+        return False
+    return default
+
+
+def _parse_csv_values(raw: Any) -> list[str]:
+    return [chunk.strip() for chunk in str(raw or "").split(",") if chunk.strip()]
+
+
+def _resolve_bookrag_image_partition_options(create_values: dict[str, str]) -> tuple[dict[str, Any], list[str], dict[str, Any]]:
+    runtime = _load_unstructured_runtime_settings()
+    warnings: list[str] = []
+
+    raw_extract_types = str(
+        create_values.get("multi_format_bookrag_extract_image_block_types", "")
+        or runtime.get("bookrag_extract_image_block_types")
+        or runtime.get("extract_image_block_types")
+        or os.getenv("BOOKRAG_EXTRACT_IMAGE_BLOCK_TYPES", "")
+    ).strip()
+    extract_mode = raw_extract_types.lower()
+    if extract_mode == "auto":
+        extract_image_block_types = ["Image", "Table"]
+    else:
+        extract_image_block_types = _parse_csv_values(raw_extract_types)
+
+    coordinates = _to_bool(
+        create_values.get("multi_format_bookrag_coordinates", "true")
+        or runtime.get("bookrag_coordinates")
+        or os.getenv("BOOKRAG_COORDINATES", "true"),
+        default=True,
+    )
+    unique_element_ids = _to_bool(
+        runtime.get("bookrag_unique_element_ids")
+        or runtime.get("unique_element_ids")
+        or os.getenv("BOOKRAG_UNIQUE_ELEMENT_IDS", "true"),
+        default=True,
+    )
+    hi_res_model_name = str(
+        runtime.get("bookrag_hi_res_model_name")
+        or runtime.get("hi_res_model_name")
+        or os.getenv("BOOKRAG_HI_RES_MODEL_NAME", "")
+    ).strip()
+
+    extra: dict[str, Any] = {
+        "coordinates": coordinates,
+        "unique_element_ids": unique_element_ids,
+    }
+    if extract_image_block_types:
+        extra["extract_image_block_types"] = extract_image_block_types
+    else:
+        warnings.append("bookrag extract_image_block_types is off; image payload metadata will not be returned by Unstructured.")
+    if hi_res_model_name:
+        extra["hi_res_model_name"] = hi_res_model_name
+
+    summary = {
+        "coordinates": coordinates,
+        "extract_image_block_mode": raw_extract_types or None,
+        "extract_image_block_types": extract_image_block_types,
+        "unique_element_ids": unique_element_ids,
+        "hi_res_model_name": hi_res_model_name or None,
+    }
+    return extra, warnings, summary
 
 
 def _sanitize_teradata_identifier(raw: str, fallback: str, allow_empty: bool = False) -> str:
@@ -925,6 +991,7 @@ def _partition_document_elements(
     partition_strategy: str,
     languages: list[str],
     include_orig_elements: bool,
+    extra_partition_parameters: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     from unstructured_client.models import operations
 
@@ -940,6 +1007,8 @@ def _partition_document_elements(
     }
     if languages:
         partition_parameters["languages"] = languages
+    if extra_partition_parameters:
+        partition_parameters.update({key: value for key, value in extra_partition_parameters.items() if value is not None})
 
     resp = client.general.partition(
         request=operations.PartitionRequest(
@@ -973,7 +1042,7 @@ def _insert_chunk_rows(
     return inserted
 
 
-def _load_unstructured_runtime_config() -> tuple[str, str]:
+def _load_unstructured_runtime_settings() -> dict[str, Any]:
     config_path = UNSTRUCTURED_CONFIG_FILE_DEFAULT
     config: dict[str, Any] = {}
     if config_path.exists():
@@ -983,6 +1052,11 @@ def _load_unstructured_runtime_config() -> tuple[str, str]:
                 raise RuntimeError("must be a JSON object")
         except Exception as ex:
             raise RuntimeError(f"Invalid Unstructured config at {config_path}: {ex}") from ex
+    return config
+
+
+def _load_unstructured_runtime_config() -> tuple[str, str]:
+    config = _load_unstructured_runtime_settings()
 
     api_key = str(
         config.get("api_key")
@@ -1000,7 +1074,7 @@ def _load_unstructured_runtime_config() -> tuple[str, str]:
 
     if not api_key:
         raise RuntimeError(
-            f"Unstructured API key missing. Set key_id/api_key in {config_path}."
+            f"Unstructured API key missing. Set key_id/api_key in {UNSTRUCTURED_CONFIG_FILE_DEFAULT}."
         )
     if not api_url:
         api_url = UNSTRUCTURED_WORKFLOW_API_URL_DEFAULT
@@ -1032,28 +1106,27 @@ def _apply_bookrag_tree_pipeline(
 ) -> tuple[dict, dict]:
     bookrag_tables = build_bookrag_table_targets(vector_store_name)
     target_warnings.extend(
-        prepare_bookrag_tables(
+        prepare_bookrag_block_table(
             schema_name=effective_schema_name,
             table_targets=bookrag_tables,
             execute_sql_fn=execute_sql_fn,
         )
     )
 
+    image_partition_parameters, image_partition_warnings, image_partition_summary = _resolve_bookrag_image_partition_options(create_values)
+    target_warnings.extend(image_partition_warnings)
+
     client = _new_unstructured_client()
     debug_dir = _prepare_unstructured_debug_dir(vector_store_name)
     csv_stage_dir = _prepare_bookrag_csv_stage_dir(vector_store_name)
     persist_block_metadata = _env_flag("BOOKRAG_PERSIST_BLOCK_METADATA", False)
-    validate_node_flush = _env_flag("BOOKRAG_VALIDATE_NODE_FLUSH", False)
     partition_warnings: list[str] = []
     debug_files: list[str] = []
-    inserted_rows = 0
     insert_stats: dict[str, int] = {}
+    inserted_rows = 0
     block_count = 0
-    node_count = 0
-    entity_count = 0
-    entity_link_count = 0
-    leaf_node_count = 0
     document_count = 0
+    all_blocks: list[dict[str, Any]] = []
 
     qualified_tables = {
         name: (f"{effective_schema_name}.{table_name}" if effective_schema_name else table_name)
@@ -1081,125 +1154,70 @@ def _apply_bookrag_tree_pipeline(
             partition_strategy=file_partition_strategy,
             languages=file_ocr_languages,
             include_orig_elements=file_include_orig_elements,
+            extra_partition_parameters=image_partition_parameters,
         )
+        reconciled_elements = reconcile_unstructured_elements(raw_elements, src=src)
         content_type = mimetypes.guess_type(src.name)[0] or "application/octet-stream"
         doc_id = uuid.uuid4().hex
         blocks = elements_to_bookrag_blocks(
             doc_id=doc_id,
             src=src,
             content_type=content_type,
-            raw_elements=raw_elements,
+            raw_elements=reconciled_elements,
             profile="jp",
             persist_metadata=persist_block_metadata,
         )
-        if not blocks:
-            partition_warnings.append(f"No BookIndex blocks extracted from file: {src.name}")
-            continue
-        document_row = build_bookrag_document_row(
-            doc_id=doc_id,
-            vector_store_name=vector_store_name,
-            src=src,
-            filetype=content_type,
-            blocks=blocks,
-            languages=file_ocr_languages,
-            created_at=_now_ts(),
-        )
-        nodes = build_bookrag_nodes(document_row, blocks)
-        entities, entity_links = build_bookrag_entities(document_row, nodes)
         debug_file = _write_unstructured_debug_file(
             debug_dir,
             src,
             raw_elements,
             blocks,
             request_parameters,
-            extra_payload={
-                "book_nodes": nodes,
-                "book_entities": entities,
-                "book_entity_links": entity_links,
-            },
+            extra_payload={"bookrag_image_partition_parameters": image_partition_summary},
         )
         if debug_file:
             debug_files.append(debug_file)
-        inserted_rows += persist_bookrag_tree(
-            schema_name=effective_schema_name,
-            table_targets=bookrag_tables,
-            document_row=document_row,
-            blocks=blocks,
-            nodes=nodes,
-            entities=entities,
-            entity_links=entity_links,
-            execute_sql_fn=execute_sql_fn,
-            csv_stage_dir=csv_stage_dir,
-            stats=insert_stats,
-        )
+        if not blocks:
+            partition_warnings.append(f"No BookRAG blocks extracted from file: {src.name}")
+            continue
+        all_blocks.extend(blocks)
         document_count += 1
         block_count += len(blocks)
-        node_count += len(nodes)
-        entity_count += len(entities)
-        entity_link_count += len(entity_links)
-        leaf_node_count += sum(
-            1
-            for node in nodes
-            if int(node.get("is_leaf") or 0) == 1
-            and str(node.get("node_type") or "").strip().lower() in {"text", "table"}
-            and str(node.get("content") or "").strip()
-        )
 
-    if validate_node_flush:
-        flush_wait_seconds = _to_int(
-            os.getenv("UNSTRUCTURED_TERADATA_FLUSH_WAIT_SECONDS", str(UNSTRUCTURED_TERADATA_FLUSH_WAIT_SECONDS_DEFAULT)),
-            default=UNSTRUCTURED_TERADATA_FLUSH_WAIT_SECONDS_DEFAULT,
-            minimum=1,
-            maximum=300,
-        )
-        flush_wait_interval_seconds = _to_int(
-            os.getenv("UNSTRUCTURED_TERADATA_FLUSH_WAIT_INTERVAL", str(UNSTRUCTURED_TERADATA_FLUSH_WAIT_INTERVAL_DEFAULT)),
-            default=UNSTRUCTURED_TERADATA_FLUSH_WAIT_INTERVAL_DEFAULT,
-            minimum=1,
-            maximum=30,
-        )
-        persisted_node_count = _wait_for_table_rows(
-            schema_name=effective_schema_name,
-            table_name=bookrag_tables["nodes"],
-            execute_sql_fn=execute_sql_fn,
-            timeout_seconds=flush_wait_seconds,
-            poll_interval_seconds=flush_wait_interval_seconds,
-        )
-        if persisted_node_count <= 0:
-            raise RuntimeError(
-                "bookrag tree construction completed but destination node table has 0 rows. "
-                f"table={qualified_tables['nodes']}"
-            )
-    else:
-        persisted_node_count = node_count
-
-    prepare_bookrag_leaf_view(
+    inserted_rows += persist_bookrag_blocks(
         schema_name=effective_schema_name,
         table_targets=bookrag_tables,
+        blocks=all_blocks,
         execute_sql_fn=execute_sql_fn,
+        csv_stage_dir=csv_stage_dir,
+        stats=insert_stats,
     )
-    persisted_leaf_count = _count_teradata_rows(
+
+    persisted_block_count = _count_teradata_rows(
         schema_name=effective_schema_name,
-        table_name=bookrag_tables["leaf_nodes"],
+        table_name=bookrag_tables["blocks"],
         execute_sql_fn=execute_sql_fn,
     )
-    if persisted_leaf_count is None:
-        persisted_leaf_count = leaf_node_count
+    if persisted_block_count is None:
+        persisted_block_count = block_count
+    if persisted_block_count <= 0:
+        raise RuntimeError(
+            "bookrag block extraction completed but destination block table has 0 rows. "
+            f"table={qualified_tables['blocks']}"
+        )
 
     patched_payload = _strip_file_based_create_params(exec_payload)
-    patched_payload["object_names"] = qualified_tables["leaf_nodes"]
-    patched_payload["data_columns"] = ["content"]
-    patched_payload["key_columns"] = ["node_id"]
+    patched_payload["object_names"] = qualified_tables["blocks"]
 
     summary = {
-        "table_name": qualified_tables["leaf_nodes"],
-        "chunk_count": persisted_leaf_count,
+        "table_name": qualified_tables["blocks"],
+        "chunk_count": persisted_block_count,
         "document_count": document_count,
         "job_id": "",
         "workflow_id": "",
         "destination_id": "",
         "warnings": target_warnings + partition_warnings,
-        "workflow_mode": "bookindex tree direct insert",
+        "workflow_mode": "bookrag block direct insert",
         "inserted_rows": inserted_rows,
         "chunk_size": chunk_size,
         "chunk_overlap": chunk_overlap,
@@ -1207,26 +1225,18 @@ def _apply_bookrag_tree_pipeline(
         "debug_files": debug_files,
         "bookrag_csv_stage_dir": str(csv_stage_dir),
         "bookrag_csv_stage_files": [
-            str(csv_stage_dir / f"{bookrag_tables['documents']}.csv"),
-            str(csv_stage_dir / f"{bookrag_tables['nodes']}.csv"),
-            str(csv_stage_dir / f"{bookrag_tables['entities']}.csv"),
-            str(csv_stage_dir / f"{bookrag_tables['entity_links']}.csv"),
             str(csv_stage_dir / f"{bookrag_tables['blocks']}.csv"),
         ],
         "effective_partition_strategy": partition_strategy,
         "effective_ocr_languages": ocr_languages,
         "include_orig_elements": include_orig_elements,
         "file_mode": "per-extension",
-        "block_count": block_count,
-        "node_count": persisted_node_count,
-        "leaf_node_count": persisted_leaf_count,
-        "entity_count": entity_count,
-        "entity_link_count": entity_link_count,
-        "bookrag_tables": qualified_tables,
+        "block_count": persisted_block_count,
+        "bookrag_tables": {"blocks": qualified_tables["blocks"]},
         "bookrag_profile": "jp",
         "bookrag_persist_block_metadata": persist_block_metadata,
-        "bookrag_validate_node_flush": validate_node_flush,
         "bookrag_insert_stats": insert_stats,
+        "bookrag_image_partition_parameters": image_partition_summary,
     }
     return patched_payload, summary
 

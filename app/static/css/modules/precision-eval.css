@@ -1,0 +1,37 @@
+.precision-eval-panel .basic-layout {
+  align-items: start;
+}
+
+.precision-path-list {
+  border: 1px solid rgba(135, 173, 255, 0.18);
+  border-radius: 1rem;
+  padding: 0.9rem 1rem;
+  background: rgba(10, 24, 58, 0.32);
+  min-height: 12rem;
+}
+
+.precision-path-code {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.76rem;
+  line-height: 1.45;
+  color: #b9d2ff;
+  background: rgba(6, 16, 41, 0.58);
+  border: 1px solid rgba(135, 173, 255, 0.16);
+  border-radius: 0.8rem;
+  padding: 0.65rem 0.75rem;
+}
+
+.precision-source-file {
+  margin: 0.4rem 0 0;
+  overflow-wrap: anywhere;
+}
+
+.precision-result-box .param-group {
+  margin-bottom: 1rem;
+}
+
+.precision-metric-grid {
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+}

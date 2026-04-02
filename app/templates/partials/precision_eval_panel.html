@@ -1,0 +1,103 @@
+<div id="precision-eval-panel" class="stack precision-eval-panel">
+  <p class="muted">Independent evaluation module. It reads uploaded PDFs and Unstructured debug JSON files without changing Steps 1-3 state.</p>
+
+  <form
+    id="precision-eval-form"
+    class="stack"
+    hx-post="/ui/eval/run"
+    hx-target="#precision-eval-result"
+    hx-swap="innerHTML"
+  >
+    <section class="param-group">
+      <div class="stack-inline" style="justify-content:space-between; align-items:center; gap:0.75rem;">
+        <h3 style="margin:0;">Precision Evaluation Inputs</h3>
+        <button
+          type="button"
+          class="ghost"
+          hx-get="/ui/eval/panel"
+          hx-include="#precision-eval-form"
+          hx-target="#precision-eval-panel"
+          hx-swap="outerHTML"
+        >Refresh File List</button>
+      </div>
+      <div class="basic-layout">
+        <div class="stack">
+          <label class="field">
+            <span class="field-label">Uploaded PDF</span>
+            <select name="pdf_path" required>
+              <option value="">(select uploaded PDF)</option>
+              {% for item in eval_panel.pdf_options %}
+              <option value="{{ item.path }}" {% if eval_panel.selected_pdf_path == item.path %}selected{% endif %}>{{ item.name }} | {{ item.relative_path }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <div class="precision-path-list">
+            <p class="uploaded-files-title">Available PDFs ({{ eval_panel.pdf_options|length }})</p>
+            {% if eval_panel.pdf_options %}
+            <ul class="file-list small">
+              {% for item in eval_panel.pdf_options %}
+              <li>
+                <div class="file-main">
+                  <strong>{{ item.name }}</strong>
+                  <span>{{ item.modified_at }}</span>
+                </div>
+                <code class="precision-path-code">{{ item.path }}</code>
+              </li>
+              {% endfor %}
+            </ul>
+            {% else %}
+            <p class="muted">No uploaded PDFs found under uploads/documents.</p>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="stack">
+          <label class="field">
+            <span class="field-label">Intermediate JSON</span>
+            <select name="json_path" required>
+              <option value="">(select debug JSON)</option>
+              {% for item in eval_panel.json_options %}
+              <option value="{{ item.path }}" {% if eval_panel.selected_json_path == item.path %}selected{% endif %}>{{ item.name }} | {{ item.relative_path }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <div class="precision-path-list">
+            <p class="uploaded-files-title">Available JSONs ({{ eval_panel.json_options|length }})</p>
+            {% if eval_panel.json_options %}
+            <ul class="file-list small">
+              {% for item in eval_panel.json_options %}
+              <li>
+                <div class="file-main">
+                  <strong>{{ item.name }}</strong>
+                  <span>{{ item.modified_at }}</span>
+                </div>
+                <code class="precision-path-code">{{ item.path }}</code>
+                {% if item.source_file %}
+                <p class="muted precision-source-file">JSON source_file: {{ item.source_file }}{% if not item.source_exists %} (missing on disk){% endif %}</p>
+                {% endif %}
+              </li>
+              {% endfor %}
+            </ul>
+            {% else %}
+            <p class="muted">No debug JSON files found under uploads/unstructured_debug.</p>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="stack-inline">
+      <button type="submit" class="progress-btn" data-progress-button>
+        <span class="progress-btn-label">Run Evaluation</span>
+        <span class="progress-btn-loading">
+          <span class="progress-btn-spinner" aria-hidden="true"></span>
+          <span>Evaluating...</span>
+        </span>
+      </button>
+    </div>
+  </form>
+
+  <div id="precision-eval-result">
+    {% include "partials/precision_eval_result.html" %}
+  </div>
+</div>

@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from app.services.doc_modes.common import append_multi_format_summary
 from app.services.multi_format import apply_multi_format_pipeline
 
 MODE = "multi_format_bookrag"
 LABEL = "Multi-Format BookRAG"
-SKIP_VECTORSTORE_CREATE = False
+SKIP_VECTORSTORE_CREATE = True
 
 
 def preprocess_create_payload(**kwargs) -> tuple[dict, dict | None]:
@@ -20,35 +19,29 @@ def preprocess_create_payload(**kwargs) -> tuple[dict, dict | None]:
     )
 
 
-def append_success_message(message: str, summary: dict | None) -> str:
-    message = append_multi_format_summary(message, summary)
+def build_skip_create_message(summary: dict | None) -> str:
     if not summary:
-        return message
+        return "Step 2 completed. BookRAG block-table preprocessing finished and VectorStore.create() was skipped."
 
     table_name = str(summary.get("table_name") or "").strip()
-    if table_name:
-        message += f" VectorStore indexed from leaf nodes view {table_name} using content/node_id."
-
     block_count = summary.get("block_count")
-    node_count = summary.get("node_count")
-    leaf_node_count = summary.get("leaf_node_count")
-    entity_count = summary.get("entity_count")
-    entity_link_count = summary.get("entity_link_count")
+    document_count = summary.get("document_count")
+    inserted_rows = summary.get("inserted_rows")
     stats = summary.get("bookrag_insert_stats") or {}
+    image_params = summary.get("bookrag_image_partition_parameters") or {}
 
-    details = []
+    parts = ["Step 2 completed. BookRAG block-table test mode finished."]
+    if table_name:
+        parts.append(f"blocks saved to {table_name}.")
+    details: list[str] = []
     if block_count is not None:
         details.append(f"blocks={block_count}")
-    if node_count is not None:
-        details.append(f"nodes={node_count}")
-    if leaf_node_count is not None:
-        details.append(f"leaf_nodes={leaf_node_count}")
-    if entity_count is not None:
-        details.append(f"entities={entity_count}")
-    if entity_link_count is not None:
-        details.append(f"entity_links={entity_link_count}")
+    if document_count is not None:
+        details.append(f"files={document_count}")
+    if inserted_rows is not None:
+        details.append(f"inserted_rows={inserted_rows}")
     if details:
-        message += " " + " ".join(details) + "."
+        parts.append(" ".join(details) + ".")
 
     stat_parts = []
     for key in (
@@ -57,13 +50,25 @@ def append_success_message(message: str, summary: dict | None) -> str:
         "read_csv_fallbacks",
         "copy_to_sql_calls",
         "copy_to_sql_rows",
-        "batch_insert_statements",
+        "batch_statements",
         "single_row_statements",
     ):
         value = stats.get(key)
         if value:
             stat_parts.append(f"{key}={value}")
     if stat_parts:
-        message += " insert_stats=" + ", ".join(stat_parts) + "."
-
-    return message
+        parts.append("insert_stats=" + ", ".join(stat_parts) + ".")
+    image_parts = []
+    if image_params.get("coordinates") is not None:
+        image_parts.append(f"coordinates={image_params.get('coordinates')}")
+    extract_types = image_params.get("extract_image_block_types") or []
+    if extract_types:
+        image_parts.append("extract_image_block_types=" + ",".join(str(item) for item in extract_types))
+    if image_params.get("unique_element_ids") is not None:
+        image_parts.append(f"unique_element_ids={image_params.get('unique_element_ids')}")
+    if image_params.get("hi_res_model_name"):
+        image_parts.append(f"hi_res_model_name={image_params.get('hi_res_model_name')}")
+    if image_parts:
+        parts.append("image_partition=" + ", ".join(image_parts) + ".")
+    parts.append("Later BookRAG pipeline stages are disabled in this mode.")
+    return " ".join(parts)

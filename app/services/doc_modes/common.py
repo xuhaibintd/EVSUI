@@ -7,6 +7,8 @@ DOC_PIPELINE_UI_DEFAULTS = {
     "multi_format_ocr_languages": "",
     "multi_format_keep_tables": "",
     "multi_format_extract_images": "",
+    "multi_format_bookrag_coordinates": "true",
+    "multi_format_bookrag_extract_image_block_types": "auto",
 }
 
 DOC_PIPELINE_OPTIONS = [
@@ -64,6 +66,28 @@ def _build_multi_format_field_map() -> dict[str, dict[str, object]]:
                 {"value": "kor,eng", "label": "Korean + English"},
             ],
         },
+        "multi_format_bookrag_coordinates": {
+            "name": "multi_format_bookrag_coordinates",
+            "label": "bookrag_coordinates",
+            "kind": "select",
+            "default": str(defaults.get("multi_format_bookrag_coordinates", "true")),
+            "options": [
+                {"value": "true", "label": "true"},
+                {"value": "false", "label": "false"},
+            ],
+        },
+        "multi_format_bookrag_extract_image_block_types": {
+            "name": "multi_format_bookrag_extract_image_block_types",
+            "label": "bookrag_extract_image_block_types",
+            "kind": "select",
+            "default": str(defaults.get("multi_format_bookrag_extract_image_block_types", "")),
+            "options": [
+                {"value": "", "label": "(off)"},
+                {"value": "auto", "label": "auto (Image,Table)"},
+                {"value": "Image", "label": "Image"},
+                {"value": "Image,Table", "label": "Image,Table"},
+            ],
+        },
     }
 
 
@@ -85,6 +109,8 @@ def build_multi_format_bookrag_ui_fields() -> list[dict[str, object]]:
     return _build_multi_format_fields(
         "multi_format_strategy",
         "multi_format_ocr_languages",
+        "multi_format_bookrag_coordinates",
+        "multi_format_bookrag_extract_image_block_types",
     )
 
 

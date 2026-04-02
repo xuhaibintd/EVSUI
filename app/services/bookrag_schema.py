@@ -4,7 +4,7 @@ import hashlib
 import re
 from typing import Any, Callable
 
-BOOKRAG_EMBEDDING_NODE_TYPES = ("text", "table")
+BOOKRAG_EMBEDDING_NODE_TYPES = ("text", "table", "image")
 
 TERADATA_IDENTIFIER_MAX_LEN = 30
 BOOKRAG_INSERT_BATCH_MAX_ROWS = 32
@@ -28,16 +28,18 @@ BOOKRAG_BLOCK_COLUMNS: list[tuple[str, str]] = [
     ("block_id", 'VARCHAR(64) NOT NULL'),
     ("doc_id", "VARCHAR(64)"),
     ("element_id", "VARCHAR(64)"),
-    ("parent_block_id", "VARCHAR(64)"),
+    ("parent_element_id", "VARCHAR(64)"),
+    ("source_type", "VARCHAR(50)"),
     ("block_type", "VARCHAR(50)"),
     ("page_number", "INTEGER"),
     ("ordinal", "INTEGER"),
     ("level_hint", "INTEGER"),
     ("is_section", "BYTEINT"),
     ("section_title", "VARCHAR(1000) CHARACTER SET UNICODE"),
-    ("text", "VARCHAR(32000) CHARACTER SET UNICODE"),
-    ("text_as_html", "VARCHAR(32000) CHARACTER SET UNICODE"),
-    ("orig_elements", "VARCHAR(32000) CHARACTER SET UNICODE"),
+    ("content_text", "VARCHAR(32000) CHARACTER SET UNICODE"),
+    ("table_html", "VARCHAR(32000) CHARACTER SET UNICODE"),
+    ("image_caption", "VARCHAR(4000) CHARACTER SET UNICODE"),
+    ("image_context", "VARCHAR(32000) CHARACTER SET UNICODE"),
     ("metadata_json", "VARCHAR(32000) CHARACTER SET UNICODE"),
 ]
 
@@ -198,6 +200,16 @@ def prepare_bookrag_tables(
     warnings.extend(_ensure_table(schema_name, table_targets["nodes"], BOOKRAG_NODE_COLUMNS, execute_sql_fn))
     warnings.extend(_ensure_table(schema_name, table_targets["entities"], BOOKRAG_ENTITY_COLUMNS, execute_sql_fn))
     warnings.extend(_ensure_table(schema_name, table_targets["entity_links"], BOOKRAG_ENTITY_LINK_COLUMNS, execute_sql_fn))
+    return warnings
+
+
+def prepare_bookrag_block_table(
+    schema_name: str | None,
+    table_targets: dict[str, str],
+    execute_sql_fn: ExecuteSqlFn | None,
+) -> list[str]:
+    warnings: list[str] = []
+    warnings.extend(_ensure_table(schema_name, table_targets["blocks"], BOOKRAG_BLOCK_COLUMNS, execute_sql_fn))
     return warnings
 
 

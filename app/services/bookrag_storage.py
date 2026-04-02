@@ -230,10 +230,57 @@ def persist_bookrag_tree(
     csv_stage_dir: Path | None = None,
     stats: dict[str, int] | None = None,
 ) -> int:
+    return persist_bookrag_dataset(
+        schema_name=schema_name,
+        table_targets=table_targets,
+        document_rows=[document_row],
+        blocks=blocks,
+        nodes=nodes,
+        entities=entities,
+        entity_links=entity_links,
+        execute_sql_fn=execute_sql_fn,
+        csv_stage_dir=csv_stage_dir,
+        stats=stats,
+    )
+
+
+def persist_bookrag_dataset(
+    *,
+    schema_name: str | None,
+    table_targets: dict[str, str],
+    document_rows: list[dict[str, Any]],
+    blocks: list[dict[str, Any]],
+    nodes: list[dict[str, Any]],
+    entities: list[dict[str, Any]],
+    entity_links: list[dict[str, Any]],
+    execute_sql_fn: ExecuteSqlFn | None,
+    csv_stage_dir: Path | None = None,
+    stats: dict[str, int] | None = None,
+) -> int:
     inserted = 0
-    inserted += _insert_rows(schema_name, table_targets["documents"], [document_row], BOOKRAG_DOCUMENT_COLUMNS, execute_sql_fn, csv_stage_dir=csv_stage_dir, stats=stats)
+    inserted += _insert_rows(schema_name, table_targets["documents"], document_rows, BOOKRAG_DOCUMENT_COLUMNS, execute_sql_fn, csv_stage_dir=csv_stage_dir, stats=stats)
     inserted += _insert_rows(schema_name, table_targets["nodes"], nodes, BOOKRAG_NODE_COLUMNS, execute_sql_fn, csv_stage_dir=csv_stage_dir, stats=stats)
     inserted += _insert_rows(schema_name, table_targets["entities"], entities, BOOKRAG_ENTITY_COLUMNS, execute_sql_fn, csv_stage_dir=csv_stage_dir, stats=stats)
     inserted += _insert_rows(schema_name, table_targets["entity_links"], entity_links, BOOKRAG_ENTITY_LINK_COLUMNS, execute_sql_fn, csv_stage_dir=csv_stage_dir, stats=stats)
     inserted += _insert_rows(schema_name, table_targets["blocks"], blocks, BOOKRAG_BLOCK_COLUMNS, execute_sql_fn, csv_stage_dir=csv_stage_dir, stats=stats)
     return inserted
+
+
+def persist_bookrag_blocks(
+    *,
+    schema_name: str | None,
+    table_targets: dict[str, str],
+    blocks: list[dict[str, Any]],
+    execute_sql_fn: ExecuteSqlFn | None,
+    csv_stage_dir: Path | None = None,
+    stats: dict[str, int] | None = None,
+) -> int:
+    return _insert_rows(
+        schema_name,
+        table_targets["blocks"],
+        blocks,
+        BOOKRAG_BLOCK_COLUMNS,
+        execute_sql_fn,
+        csv_stage_dir=csv_stage_dir,
+        stats=stats,
+    )

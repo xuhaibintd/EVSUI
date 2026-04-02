@@ -7,6 +7,7 @@
     <button class="menu-item active" style="font-size:clamp(0.62rem,1.3vw,0.78rem);font-family:var(--font-ui);letter-spacing:0;line-height:1.15;padding:0.4rem 0.52rem;" type="button" data-section="section-connect">1. Connect &amp; Manage</button>
     <button class="menu-item {% if not evs.connected %}locked{% endif %}" style="font-size:clamp(0.62rem,1.3vw,0.78rem);font-family:var(--font-ui);letter-spacing:0;line-height:1.15;padding:0.4rem 0.52rem;" type="button" data-section="section-create" aria-disabled="{% if not evs.connected %}true{% else %}false{% endif %}">2. Vector Store Creation</button>
     <button class="menu-item {% if not evs.connected %}locked{% endif %}" style="font-size:clamp(0.62rem,1.3vw,0.78rem);font-family:var(--font-ui);letter-spacing:0;line-height:1.15;padding:0.4rem 0.52rem;" type="button" data-section="section-chat" aria-disabled="{% if not evs.connected %}true{% else %}false{% endif %}">3. Vector Store Retrieval</button>
+    <button class="menu-item" style="font-size:clamp(0.62rem,1.3vw,0.78rem);font-family:var(--font-ui);letter-spacing:0;line-height:1.15;padding:0.4rem 0.52rem;" type="button" data-section="section-eval">4. Precision Evaluation</button>
     <p id="menu-hint" class="menu-hint muted">{% if not evs.connected %}Complete Step 1 to unlock Steps 2 and 3.{% endif %}</p>
   </aside>
 
@@ -48,6 +49,7 @@
       <div class="wizard-nav">
         <div class="wizard-actions">
           <button type="button" class="ghost wizard-btn" data-target="section-create">Back</button>
+          <button type="button" class="wizard-btn" data-target="section-eval">Next: Precision Evaluation</button>
           <button type="button" class="ghost wizard-btn" data-target="section-connect">Go to Step 1</button>
         </div>
       </div>
@@ -55,6 +57,18 @@
         <div>
           <strong>Locked</strong>
           <p>Complete Step 1 to unlock Step 3.</p>
+        </div>
+      </div>
+    </article>
+
+    <article class="panel menu-section" id="section-eval" data-step="4">
+      <div class="panel-content">
+        {% include "partials/precision_eval_panel.html" %}
+      </div>
+      <div class="wizard-nav">
+        <div class="wizard-actions">
+          <button type="button" class="ghost wizard-btn" data-target="section-chat">Back</button>
+          <button type="button" class="ghost wizard-btn" data-target="section-connect">Go to Step 1</button>
         </div>
       </div>
     </article>
