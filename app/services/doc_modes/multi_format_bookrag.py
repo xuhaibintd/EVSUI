@@ -21,35 +21,45 @@ def preprocess_create_payload(**kwargs) -> tuple[dict, dict | None]:
 
 def build_skip_create_message(summary: dict | None) -> str:
     if not summary:
-        return "Step 2 completed. BookRAG block-table preprocessing finished and VectorStore.create() was skipped."
+        return "Step 2 completed. BookRAG raw extraction finished and VectorStore.create() was skipped."
 
-    table_name = str(summary.get("table_name") or "").strip()
-    block_count = summary.get("block_count")
+    raw_table_name = str(summary.get("raw_table_name") or "").strip()
+    documents_table_name = str(summary.get("documents_table_name") or "").strip()
+    raw_element_count = summary.get("raw_element_count")
     document_count = summary.get("document_count")
     inserted_rows = summary.get("inserted_rows")
-    stats = summary.get("bookrag_insert_stats") or {}
+    raw_stage_dir = str(summary.get("bookrag_raw_stage_dir") or "").strip()
+    raw_stage_files = summary.get("bookrag_raw_stage_files") or []
+    stats = summary.get("bookrag_raw_insert_stats") or summary.get("bookrag_insert_stats") or {}
     image_params = summary.get("bookrag_image_partition_parameters") or {}
 
-    parts = ["Step 2 completed. BookRAG block-table test mode finished."]
-    if table_name:
-        parts.append(f"blocks saved to {table_name}.")
+    parts = ["Step 2 completed. BookRAG raw extraction mode finished."]
+    if documents_table_name:
+        parts.append(f"documents saved to {documents_table_name}.")
+    if raw_table_name:
+        parts.append(f"raw elements saved to {raw_table_name}.")
     details: list[str] = []
-    if block_count is not None:
-        details.append(f"blocks={block_count}")
+    if raw_element_count is not None:
+        details.append(f"raw_elements={raw_element_count}")
     if document_count is not None:
         details.append(f"files={document_count}")
     if inserted_rows is not None:
         details.append(f"inserted_rows={inserted_rows}")
     if details:
         parts.append(" ".join(details) + ".")
+    if raw_stage_dir:
+        parts.append(f"raw_stage_dir={raw_stage_dir}.")
+    if raw_stage_files:
+        parts.append(f"raw_stage_files={len(raw_stage_files)}.")
 
     stat_parts = []
     for key in (
-        "read_csv_calls",
-        "read_csv_rows",
-        "read_csv_fallbacks",
+        "fastload_calls",
+        "fastload_rows",
+        "fastload_fallbacks",
         "copy_to_sql_calls",
         "copy_to_sql_rows",
+        "copy_to_sql_fallbacks",
         "batch_statements",
         "single_row_statements",
     ):
@@ -70,5 +80,6 @@ def build_skip_create_message(summary: dict | None) -> str:
         image_parts.append(f"hi_res_model_name={image_params.get('hi_res_model_name')}")
     if image_parts:
         parts.append("image_partition=" + ", ".join(image_parts) + ".")
+    parts.append("Chunk table generation is disabled in this mode.")
     parts.append("Later BookRAG pipeline stages are disabled in this mode.")
     return " ".join(parts)

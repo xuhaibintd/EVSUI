@@ -350,27 +350,25 @@ def build_bookrag_evidence_packages(
         if _as_text(node.get("source_block_id"))
     ]
     block_columns = [
-        "block_id",
-        "source_type",
-        "block_type",
+        "element_id",
+        "type",
         "page_number",
         "ordinal",
-        "section_title",
-        "content_text",
-        "table_html",
+        "text",
+        "text_as_html",
         "image_caption",
         "image_context",
     ]
     block_rows = _fetch_rows_by_ids(
         schema_name=effective_schema_name,
         table_name=table_targets["blocks"],
-        id_column="block_id",
+        id_column="element_id",
         ids=source_block_ids,
         columns=block_columns,
         execute_sql_fn=execute_sql_fn,
     )
     block_map = {
-        str(row.get("block_id")): row for row in block_rows if _as_text(row.get("block_id"))
+        str(row.get("element_id")): row for row in block_rows if _as_text(row.get("element_id"))
     }
 
     packages: list[EvidencePackage] = []
@@ -412,12 +410,10 @@ def build_bookrag_evidence_packages(
                 else None,
                 "section_chain": _section_chain(node, node_map),
                 "block": {
-                    "block_id": _as_text(block.get("block_id")),
-                    "source_type": _as_text(block.get("source_type")),
-                    "block_type": _as_text(block.get("block_type")),
-                    "section_title": _as_text(block.get("section_title")),
-                    "content_text": _as_text(block.get("content_text")),
-                    "table_html": _as_text(block.get("table_html")),
+                    "element_id": _as_text(block.get("element_id")),
+                    "type": _as_text(block.get("type")),
+                    "text": _as_text(block.get("text")),
+                    "text_as_html": _as_text(block.get("text_as_html")),
                     "image_caption": _as_text(block.get("image_caption")),
                     "image_context": _as_text(block.get("image_context")),
                     "page_number": _as_int(block.get("page_number")),
@@ -455,14 +451,14 @@ def render_bookrag_evidence_packages(packages: list[EvidencePackage]) -> str:
             lines.append(f"Section Content: {section.get('content')}")
         if match.get("content"):
             lines.append(f"Content: {match.get('content')}")
-        if block.get("table_html"):
-            lines.append(f"Table HTML: {block.get('table_html')}")
+        if block.get("text_as_html"):
+            lines.append(f"Table HTML: {block.get('text_as_html')}")
         elif block.get("image_caption"):
             lines.append(f"Image Caption: {block.get('image_caption')}")
             if block.get("image_context"):
                 lines.append(f"Image Context: {block.get('image_context')}")
-        elif block.get("content_text") and block.get("content_text") != match.get("content"):
-            lines.append(f"Block Text: {block.get('content_text')}")
+        elif block.get("text") and block.get("text") != match.get("content"):
+            lines.append(f"Block Text: {block.get('text')}")
         parts.append("\n".join(lines))
     return "\n\n".join(parts)
 

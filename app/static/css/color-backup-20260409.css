@@ -1,0 +1,45 @@
+/* Backup of the pre-refresh EVSUI color palette on 2026-04-09 */
+:root {
+  --bg-root: #040b1b;
+  --bg-grad-a: #0a1733;
+  --bg-grad-b: #111f45;
+  --ink: #edf4ff;
+  --muted: #9bb0d5;
+  --panel: rgba(9, 23, 51, 0.72);
+  --panel-strong: rgba(7, 18, 42, 0.9);
+  --line: #263d70;
+  --line-soft: #1d315b;
+  --accent: #ff8a38;
+  --teradata-orange: #f47b2a;
+  --primary: #3399ff;
+  --success: #55d77e;
+}
+body {
+  background:
+    radial-gradient(1000px 400px at 15% -20%, #27447e 0%, transparent 70%),
+    radial-gradient(600px 300px at 90% -10%, #1e3f83 0%, transparent 75%),
+    linear-gradient(180deg, var(--bg-grad-b) 0%, var(--bg-grad-a) 35%, var(--bg-root) 100%);
+}
+.topbar {
+  border-bottom: 1px solid #1f3460;
+  background: linear-gradient(90deg, #07152f 0%, rgba(11, 27, 58, 0.96) 55%, rgba(11, 27, 58, 0.86) 100%);
+}
+.brand-block { border-right: 1px solid #203564; }
+.brand-sub { color: #7fa3df; }
+.top-op-line { background: rgba(7, 20, 48, 0.95); color: #c8daf7; }
+.menu-item {
+  border: 1px solid #2b4a7e;
+  background: rgba(8, 24, 54, 0.92);
+  color: #dfeeff;
+}
+.menu-item.active,
+.menu-item:hover {
+  border-color: #52a7ff;
+  background: rgba(22, 50, 93, 0.94);
+}
+.wizard-nav { border-top: 1px solid #1f3562; }
+.lock-overlay { background: rgba(3, 10, 24, 0.72); color: #dbe8ff; }
+.panel {
+  background: linear-gradient(180deg, var(--panel) 0%, rgba(8, 20, 45, 0.72) 100%);
+  box-shadow: inset 0 0 0 1px rgba(74, 104, 165, 0.14), 0 10px 25px rgba(0, 0, 0, 0.22);
+}

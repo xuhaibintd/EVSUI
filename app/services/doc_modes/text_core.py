@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 MODE = "text_core"
-LABEL = "Text"
+LABEL = "Text PDF Only"
 SKIP_VECTORSTORE_CREATE = False
 
 

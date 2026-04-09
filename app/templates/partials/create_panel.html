@@ -12,29 +12,6 @@
   <section class="param-group">
     <h3>Select Documents</h3>
     <div class="select-docs-layout">
-      <div class="select-docs-left">
-        <label class="field field-file-auto">
-          <span>Upload PDF / Documents</span>
-          <div class="file-input-shell" data-file-shell>
-            <input
-              type="file"
-              name="files"
-              multiple
-              class="file-input-native"
-              data-file-input
-              data-file-default="No files selected"
-              data-file-multi-label="files selected"
-              {% if not evs.connected %}disabled{% endif %}
-            />
-            <button type="button" class="ghost file-input-btn" data-file-trigger {% if not evs.connected %}disabled{% endif %}>Choose Files</button>
-            <span class="file-input-name" data-file-name>No files selected</span>
-          </div>
-        </label>
-        <div class="selected-files-panel" data-selected-doc-paths>
-          {% include "partials/selected_documents.html" %}
-        </div>
-      </div>
-
       <div class="select-docs-right">
         {% set _doc_pipeline_mode = create_values.get('doc_pipeline_mode', '') %}
         <section class="doc-pipeline-panel" aria-label="Content processing mode">
@@ -59,17 +36,71 @@
           </div>
         </section>
       </div>
+
+      <div class="select-docs-left">
+        <label class="field field-file-auto">
+          <span>Upload PDF / Documents</span>
+          <div class="file-input-shell" data-file-shell>
+            <input
+              type="file"
+              name="files"
+              multiple
+              class="file-input-native"
+              data-file-input
+              data-file-default="No files selected"
+              data-file-multi-label="files selected"
+              {% if not evs.connected %}disabled{% endif %}
+            />
+            <button type="button" class="ghost file-input-btn" data-file-trigger {% if not evs.connected %}disabled{% endif %}>Choose Files</button>
+            <span class="file-input-name" data-file-name>No files selected</span>
+          </div>
+        </label>
+        <div class="selected-files-panel" data-selected-doc-paths>
+          {% include "partials/selected_documents.html" %}
+        </div>
+      </div>
     </div>
   </section>
 
   <input type="hidden" name="create_preset" value="auto" />
   {% for section in create_ui_sections %}
   <section class="param-group" {% if section.get('title') == 'Search Algorithm' %}data-algorithm-panel{% endif %}>
-    <h3>{{ section.get('title') }}</h3>
-    {% if section.get('hint') %}
-    <p class="muted algorithm-hint" data-algo-hint></p>
-    {% endif %}
-    {% if section.get('rows') %}
+    <h3 class="section-title-inline">
+      <span>{{ section.get('title') }}</span>
+      {% if section.get('hint') %}
+      <span class="algorithm-hint-inline" data-algo-hint></span>
+      {% endif %}
+    </h3>
+    {% if section.get('rows') and section.get('title') == 'Basic' %}
+    <div class="basic-inline-grid" style="display:grid;grid-template-columns:minmax(18ch,1.15fr) repeat(5,minmax(0,1fr));gap:0.55rem;align-items:end;">
+      {% for row in section.get('rows', []) %}
+      {% for field in row.get('fields', []) %}
+      <label class="{{ field.get('wrapper_class', 'field') }}" style="min-width:0;">
+        <span class="field-label">{{ field.get('label', field.get('name', '')) }}</span>
+        {% set value = create_values.get(field.get('name', ''), field.get('default', '')) %}
+        {% if field.get('kind') == 'select' %}
+        <select name="{{ field.get('name', '') }}"{% if field.get('required') %} required{% endif %}{% if not evs.connected %} disabled{% endif %}{{ fields.render_attrs(field.get('input_attrs')) }}>
+          {% for option in field.get('options', []) %}
+          <option value="{{ option.get('value', '') }}" {% if value == option.get('value', '') %}selected{% endif %}>{{ option.get('label', option.get('value', '')) }}</option>
+          {% endfor %}
+          {% for group in field.get('option_groups', []) %}
+          <optgroup label="{{ group.get('label', '') }}">
+            {% for option in group.get('options', []) %}
+            <option value="{{ option.get('value', '') }}" {% if value == option.get('value', '') %}selected{% endif %}>{{ option.get('label', option.get('value', '')) }}</option>
+            {% endfor %}
+          </optgroup>
+          {% endfor %}
+        </select>
+        {% elif field.get('kind') == 'textarea' %}
+        <textarea name="{{ field.get('name', '') }}"{% if field.get('required') %} required{% endif %}{% if not evs.connected %} disabled{% endif %}{{ fields.render_attrs(field.get('input_attrs')) }} placeholder="{{ field.get('placeholder', '') }}">{{ value }}</textarea>
+        {% else %}
+        <input type="{{ field.get('kind', 'text') }}" name="{{ field.get('name', '') }}" value="{{ value }}" placeholder="{{ field.get('placeholder', '') }}"{% if field.get('required') %} required{% endif %}{% if not evs.connected %} disabled{% endif %}{{ fields.render_attrs(field.get('input_attrs')) }} />
+        {% endif %}
+      </label>
+      {% endfor %}
+      {% endfor %}
+    </div>
+    {% elif section.get('rows') %}
     <div class="basic-layout">
       {% for row in section.get('rows', []) %}
       <div class="{{ row.get('class', '') }}">

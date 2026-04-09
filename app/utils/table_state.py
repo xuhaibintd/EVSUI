@@ -32,9 +32,11 @@ def find_vs_row_by_name(headers: list[str], rows: list[list[str]], vs_name: str)
     idx = vs_name_column_index(headers)
     if idx < 0:
         return None
-    target = str(vs_name).strip()
+    target = normalize_header_key(vs_name)
+    if not target:
+        return None
     for row in rows:
-        if idx < len(row) and str(row[idx]).strip() == target:
+        if idx < len(row) and normalize_header_key(row[idx]) == target:
             return row
     return None
 

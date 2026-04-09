@@ -110,7 +110,7 @@ UPLOAD_DIR = PROJECT_DIR / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 DOCUMENT_UPLOAD_DIR = UPLOAD_DIR / "documents"
 DOCUMENT_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-DEBUG_UPLOAD_DIR = UPLOAD_DIR / "unstructured_debug"
+DEBUG_UPLOAD_DIR = UPLOAD_DIR / "multi_format_stage"
 DEBUG_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 PEM_UPLOAD_DIR = UPLOAD_DIR / "pem"
 PEM_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -149,38 +149,163 @@ def _is_vectorstore_already_exists_error(raw_error: str) -> bool:
     return any(marker in text for marker in vectorstore_markers)
 
 
-def _verify_vectorstore_exists(vector_store_name: str) -> tuple[bool, str, str]:
+def _normalized_vs_name(value: str) -> str:
+    return normalize_header_key(str(value or "").strip())
+
+
+def _looks_like_vs_name_key(key: str) -> bool:
+    normalized = normalize_header_key(key)
+    return normalized in {"vsname", "vectorstorename", "vector_store_name", "name"} or (
+        ("vs" in normalized or ("vector" in normalized and "store" in normalized)) and "name" in normalized
+    )
+
+
+def _looks_like_vs_record(value) -> bool:
+    if not isinstance(value, dict) or not value:
+        return False
+    normalized_keys = [normalize_header_key(key) for key in value.keys()]
+    if any(_looks_like_vs_name_key(key) for key in value.keys()):
+        return True
+    return "name" in normalized_keys and any(
+        marker in key
+        for key in normalized_keys
+        for marker in ("status", "database", "schema", "permission", "owner", "creator", "username", "type")
+    )
+
+
+def _find_vs_record_in_payload(payload, vector_store_name: str, path: str = "root", depth: int = 0):
+    if depth > 8:
+        return None
+    target = _normalized_vs_name(vector_store_name)
+    if not target:
+        return None
+
+    if isinstance(payload, dict):
+        if _looks_like_vs_record(payload):
+            for key, value in payload.items():
+                if _looks_like_vs_name_key(key) and _normalized_vs_name(value) == target:
+                    return path, payload
+            if "name" in payload and _normalized_vs_name(payload.get("name")) == target:
+                return path, payload
+        for key, value in payload.items():
+            match = _find_vs_record_in_payload(value, vector_store_name, f"{path}.{key}", depth + 1)
+            if match:
+                return match
+        return None
+
+    if isinstance(payload, (list, tuple)):
+        for idx, item in enumerate(payload):
+            match = _find_vs_record_in_payload(item, vector_store_name, f"{path}[{idx}]", depth + 1)
+            if match:
+                return match
+    return None
+
+
+def _format_vs_match_detail(headers: list[str], matched_row: list[str]) -> str:
+    owner = _row_value_by_header(headers, matched_row, ("username", "user", "owner", "creator", "createdby"))
+    database = _row_value_by_header(headers, matched_row, ("database", "schema", "targetdatabase"))
+    permission = _row_value_by_header(headers, matched_row, ("permission", "role", "access"))
+    detail_parts = []
+    if owner:
+        detail_parts.append(f"owner='{owner}'")
+    if database:
+        detail_parts.append(f"database='{database}'")
+    if permission:
+        detail_parts.append(f"permission='{permission}'")
+    if detail_parts:
+        return ", ".join(detail_parts)
+    row_payload = dict(zip(headers[1:], matched_row[1:])) if headers and matched_row else {"row": matched_row}
+    return f"row={_format_preview(row_payload, max_chars=300)}"
+
+
+def _vectorstore_status_missing_error(raw_error: str) -> bool:
+    text = str(raw_error or "").lower()
+    return any(
+        marker in text
+        for marker in (
+            "not found",
+            "does not exist",
+            "doesn't exist",
+            "unknown vector store",
+            "no such vector store",
+            "response code: 404",
+            "responsecode:404",
+            "404",
+            "3807",
+        )
+    )
+
+
+def _verify_vectorstore_exists(vector_store_name: str, *, allow_status_fallback: bool = False) -> tuple[bool, str, str]:
     target = str(vector_store_name or "").strip()
     if not target:
         return False, "", "empty vector store name"
-    if VSManager is None:
-        return False, "", "VSManager runtime is unavailable"
 
-    list_fn = getattr(VSManager, "list", None)
-    if not callable(list_fn):
-        return False, "", "VSManager.list() is not callable"
+    list_errors: list[str] = []
+    if VSManager is not None:
+        list_fn = getattr(VSManager, "list", None)
+        if callable(list_fn):
+            list_attempts = (
+                ("VSManager.list(return_type='json')", lambda: list_fn(return_type="json")),
+                ("VSManager.list()", lambda: list_fn()),
+            )
+            for label, invoke in list_attempts:
+                try:
+                    list_output = invoke()
+                except Exception as ex:
+                    list_errors.append(f"{label}: {ex}")
+                    continue
 
-    try:
-        list_output = list_fn(return_type="json")
-    except Exception as ex:
-        return False, "", str(ex)
+                headers, rows = _table_from_result(list_output)
+                matched_row = _find_vs_row_by_name(headers, rows, target)
+                if matched_row:
+                    detail = _format_vs_match_detail(headers, matched_row)
+                    return True, f"{label} confirmed '{target}' exists ({detail}).", ""
 
-    headers, rows = _table_from_result(list_output)
-    matched_row = _find_vs_row_by_name(headers, rows, target)
-    if matched_row:
-        owner = _row_value_by_header(headers, matched_row, ("username", "user", "owner", "creator", "createdby"))
-        database = _row_value_by_header(headers, matched_row, ("database", "schema", "targetdatabase"))
-        permission = _row_value_by_header(headers, matched_row, ("permission", "role", "access"))
-        detail_parts = []
-        if owner:
-            detail_parts.append(f"owner='{owner}'")
-        if database:
-            detail_parts.append(f"database='{database}'")
-        if permission:
-            detail_parts.append(f"permission='{permission}'")
-        detail = ", ".join(detail_parts) if detail_parts else f"row={_format_preview(dict(zip(headers[1:], matched_row[1:])), max_chars=300)}"
-        return True, f"VSManager.list() confirmed '{target}' exists ({detail}).", ""
-    return False, f"VSManager.list() did not contain '{target}'.", ""
+                nested_match = _find_vs_record_in_payload(list_output, target)
+                if nested_match:
+                    match_path, match_payload = nested_match
+                    detail = _format_preview(match_payload, max_chars=300)
+                    return True, f"{label} confirmed '{target}' exists via nested payload at {match_path} ({detail}).", ""
+
+                list_errors.append(f"{label}: no exact match for '{target}'")
+        else:
+            list_errors.append("VSManager.list() is not callable")
+    else:
+        list_errors.append("VSManager runtime is unavailable")
+
+    detail = "; ".join(error for error in list_errors if error)
+    if not allow_status_fallback:
+        return False, f"No list probe found '{target}'.", detail
+
+    if VectorStore is not None:
+        try:
+            vector_store = VectorStore(target)
+            status_fn = getattr(vector_store, "status", None)
+            if callable(status_fn):
+                status_output = status_fn()
+                preview = _format_preview(status_output, max_chars=300).strip()
+                headers, rows = _table_from_result(status_output)
+                preview_low = preview.lower()
+                if status_output is None or ((not rows) and preview_low in {"", "none", "null", "unknown"}):
+                    list_errors.append("VectorStore.status(): empty or unknown response")
+                elif _vectorstore_status_missing_error(preview):
+                    detail = "; ".join(list_errors) if list_errors else "not found"
+                    return False, f"No existence probe found '{target}'.", detail
+                else:
+                    return True, f"VectorStore.status() responded for '{target}' ({preview}).", ""
+            else:
+                list_errors.append("VectorStore.status() is not callable")
+        except Exception as ex:
+            if _vectorstore_status_missing_error(ex):
+                detail = "; ".join(list_errors) if list_errors else "not found"
+                return False, f"No existence probe found '{target}'.", detail
+            list_errors.append(f"VectorStore.status(): {ex}")
+    else:
+        list_errors.append("VectorStore runtime is unavailable")
+
+    detail = "; ".join(error for error in list_errors if error)
+    return False, f"No existence probe found '{target}'.", detail
 
 
 _normalize_header_key = normalize_header_key

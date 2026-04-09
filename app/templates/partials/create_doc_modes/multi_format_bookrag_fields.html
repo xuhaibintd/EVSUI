@@ -1,0 +1,35 @@
+{% import "partials/create_field_macros.html" as fields %}
+
+{% set mf = namespace(map={}) %}
+{% for field in doc_mode_ui_fields %}
+  {% set _ = mf.map.update({field.get('name'): field}) %}
+{% endfor %}
+
+<div class="multi-format-layout stack">
+  <div class="multi-format-section stack">
+    <div class="multi-format-section-head">
+      <h4>1. Partition Route</h4>
+      <p class="muted">BookRAG uses its own workflow route and parameters. It is independent from the standard Multi-Format chain.</p>
+    </div>
+    <div class="param-grid compact compact-tight multi-format-route-grid">
+      {{ fields.render_field(mf.map['multi_format_bookrag_strategy'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+      {{ fields.render_field(mf.map['multi_format_bookrag_ocr_languages'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+      {{ fields.render_field(mf.map['multi_format_bookrag_extract_image_block_types'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+    </div>
+  </div>
+
+  <div class="multi-format-section stack">
+    <div class="multi-format-section-head">
+      <h4>2. Chunking</h4>
+      <p class="muted">These settings control BookRAG chunk assembly after parsing.</p>
+    </div>
+    <div class="param-grid compact compact-tight multi-format-route-grid">
+      {{ fields.render_field(mf.map['multi_format_bookrag_chunk_size'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+      {{ fields.render_field(mf.map['multi_format_bookrag_chunk_overlap'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+      {{ fields.render_field(mf.map['multi_format_bookrag_new_after_n_chars'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+      {{ fields.render_field(mf.map['multi_format_bookrag_combine_under_n_chars'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+      {{ fields.render_field(mf.map['multi_format_bookrag_multipage_sections'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+      {{ fields.render_field(mf.map['multi_format_bookrag_coordinates'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+    </div>
+  </div>
+</div>

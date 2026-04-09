@@ -1,6 +1,6 @@
 ﻿<section class="doc-pipeline-group {% if _doc_pipeline_mode != 'multi_format_bookrag' %}doc-mode-hidden{% endif %}" data-doc-mode-for="multi_format_bookrag" {% if _doc_pipeline_mode != 'multi_format_bookrag' %}hidden{% endif %}>
   {% set doc_mode_ui_fields = multi_format_bookrag_ui_fields %}
   {% set doc_mode_enabled = _doc_pipeline_mode == 'multi_format_bookrag' %}
-  {% include "partials/create_doc_modes/multi_format_fields.html" %}
+  {% include "partials/create_doc_modes/multi_format_bookrag_fields.html" %}
 </section>
 

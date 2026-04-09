@@ -19,7 +19,7 @@
       </div>
       <div class="wizard-nav">
         <div class="wizard-actions">
-          <button type="button" class="wizard-btn" data-target="section-create" data-requires-connected="true">Next: Vector Store Creation</button>
+          <button type="button" class="wizard-btn" data-target="section-create" onclick="window.EVSUIApp&&window.EVSUIApp.stepGate&&window.EVSUIApp.stepGate.activateSection('section-create', true);return false;">Next: Vector Store Creation</button>
         </div>
       </div>
     </article>
@@ -30,8 +30,8 @@
       </div>
       <div class="wizard-nav">
         <div class="wizard-actions">
-          <button type="button" class="ghost wizard-btn" data-target="section-connect">Back</button>
-          <button type="button" class="wizard-btn" data-target="section-chat" data-requires-connected="true">Next: Vector Store Retrieval</button>
+          <button type="button" class="ghost wizard-btn" data-target="section-connect" onclick="window.EVSUIApp&&window.EVSUIApp.stepGate&&window.EVSUIApp.stepGate.activateSection('section-connect', true);return false;">Back</button>
+          <button type="button" class="wizard-btn" data-target="section-chat" onclick="window.EVSUIApp&&window.EVSUIApp.stepGate&&window.EVSUIApp.stepGate.activateSection('section-chat', true);return false;">Next: Vector Store Retrieval</button>
         </div>
       </div>
       <div class="lock-overlay" {% if evs.connected %}hidden{% endif %}>
@@ -48,9 +48,9 @@
       </div>
       <div class="wizard-nav">
         <div class="wizard-actions">
-          <button type="button" class="ghost wizard-btn" data-target="section-create">Back</button>
-          <button type="button" class="wizard-btn" data-target="section-eval">Next: Precision Evaluation</button>
-          <button type="button" class="ghost wizard-btn" data-target="section-connect">Go to Step 1</button>
+          <button type="button" class="ghost wizard-btn" data-target="section-create" onclick="window.EVSUIApp&&window.EVSUIApp.stepGate&&window.EVSUIApp.stepGate.activateSection('section-create', true);return false;">Back</button>
+          <button type="button" class="wizard-btn" data-target="section-eval" onclick="window.EVSUIApp&&window.EVSUIApp.stepGate&&window.EVSUIApp.stepGate.activateSection('section-eval', true);return false;">Next: Precision Evaluation</button>
+          <button type="button" class="ghost wizard-btn" data-target="section-connect" onclick="window.EVSUIApp&&window.EVSUIApp.stepGate&&window.EVSUIApp.stepGate.activateSection('section-connect', true);return false;">Go to Step 1</button>
         </div>
       </div>
       <div class="lock-overlay" {% if evs.connected %}hidden{% endif %}>

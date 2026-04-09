@@ -1,5 +1,5 @@
 <div id="precision-eval-panel" class="stack precision-eval-panel">
-  <p class="muted">Independent evaluation module. It reads uploaded PDFs and Unstructured debug JSON files without changing Steps 1-3 state.</p>
+  <p class="muted">Independent evaluation module. It reads uploaded PDFs and Multi-Format stage JSON files without changing Steps 1-3 state.</p>
 
   <form
     id="precision-eval-form"
@@ -55,7 +55,7 @@
           <label class="field">
             <span class="field-label">Intermediate JSON</span>
             <select name="json_path" required>
-              <option value="">(select debug JSON)</option>
+              <option value="">(select Multi-Format stage JSON)</option>
               {% for item in eval_panel.json_options %}
               <option value="{{ item.path }}" {% if eval_panel.selected_json_path == item.path %}selected{% endif %}>{{ item.name }} | {{ item.relative_path }}</option>
               {% endfor %}
@@ -79,7 +79,7 @@
               {% endfor %}
             </ul>
             {% else %}
-            <p class="muted">No debug JSON files found under uploads/unstructured_debug.</p>
+            <p class="muted">No Multi-Format stage JSON files found under uploads/multi_format_stage.</p>
             {% endif %}
           </div>
         </div>

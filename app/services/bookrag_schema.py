@@ -15,6 +15,10 @@ ExecuteSqlFn = Callable[[str], Any]
 BOOKRAG_DOCUMENT_COLUMNS: list[tuple[str, str]] = [
     ("doc_id", 'VARCHAR(64) NOT NULL'),
     ("vector_store_name", "VARCHAR(255)"),
+    ("workflow_id", "VARCHAR(64)"),
+    ("workflow_name", "VARCHAR(255) CHARACTER SET UNICODE"),
+    ("job_id", "VARCHAR(64)"),
+    ("processing_profile", "VARCHAR(100) CHARACTER SET UNICODE"),
     ("source_file", "VARCHAR(2000) CHARACTER SET UNICODE"),
     ("filename", "VARCHAR(255) CHARACTER SET UNICODE"),
     ("filetype", "VARCHAR(100)"),
@@ -25,22 +29,48 @@ BOOKRAG_DOCUMENT_COLUMNS: list[tuple[str, str]] = [
 ]
 
 BOOKRAG_BLOCK_COLUMNS: list[tuple[str, str]] = [
-    ("block_id", 'VARCHAR(64) NOT NULL'),
     ("doc_id", "VARCHAR(64)"),
     ("element_id", "VARCHAR(64)"),
-    ("parent_element_id", "VARCHAR(64)"),
-    ("source_type", "VARCHAR(50)"),
-    ("block_type", "VARCHAR(50)"),
+    ("parent_id", "VARCHAR(64)"),
     ("page_number", "INTEGER"),
     ("ordinal", "INTEGER"),
-    ("level_hint", "INTEGER"),
-    ("is_section", "BYTEINT"),
-    ("section_title", "VARCHAR(1000) CHARACTER SET UNICODE"),
-    ("content_text", "VARCHAR(32000) CHARACTER SET UNICODE"),
+    ("type", "VARCHAR(50)"),
+    ("text", "VARCHAR(32000) CHARACTER SET UNICODE"),
+    ("text_as_html", "VARCHAR(32000) CHARACTER SET UNICODE"),
+    ("image_caption", "VARCHAR(4000) CHARACTER SET UNICODE"),
+    ("image_context", "VARCHAR(32000) CHARACTER SET UNICODE"),
+]
+
+BOOKRAG_RAW_COLUMNS: list[tuple[str, str]] = [
+    ("id", 'VARCHAR(96) CHARACTER SET UNICODE NOT NULL'),
+    ("element_id", "VARCHAR(128) CHARACTER SET UNICODE"),
+    ("ordinal_raw", "INTEGER"),
+    ("parent_id", "VARCHAR(128) CHARACTER SET UNICODE"),
+    ("type", "VARCHAR(64) CHARACTER SET UNICODE"),
+    ("page_number", "INTEGER"),
+    ("category_depth", "INTEGER"),
+    ("text", "VARCHAR(32000) CHARACTER SET UNICODE"),
+    ("text_as_html", "VARCHAR(32000) CHARACTER SET UNICODE"),
+    ("doc_id", "VARCHAR(64)"),
+]
+
+BOOKRAG_CHUNK_COLUMNS: list[tuple[str, str]] = [
+    ("chunk_id", 'VARCHAR(64) NOT NULL'),
+    ("doc_id", "VARCHAR(64)"),
+    ("filename", "VARCHAR(255) CHARACTER SET UNICODE"),
+    ("ordinal", "INTEGER"),
+    ("chunk_type", "VARCHAR(32) CHARACTER SET UNICODE"),
+    ("page_start", "INTEGER"),
+    ("page_end", "INTEGER"),
+    ("section_title", "VARCHAR(2000) CHARACTER SET UNICODE"),
+    ("title_path", "VARCHAR(4000) CHARACTER SET UNICODE"),
+    ("source_element_ids", "VARCHAR(32000) CHARACTER SET UNICODE"),
+    ("text", "VARCHAR(32000) CHARACTER SET UNICODE"),
+    ("text_for_embedding", "VARCHAR(32000) CHARACTER SET UNICODE"),
+    ("text_as_html", "VARCHAR(32000) CHARACTER SET UNICODE"),
     ("table_html", "VARCHAR(32000) CHARACTER SET UNICODE"),
     ("image_caption", "VARCHAR(4000) CHARACTER SET UNICODE"),
     ("image_context", "VARCHAR(32000) CHARACTER SET UNICODE"),
-    ("metadata_json", "VARCHAR(32000) CHARACTER SET UNICODE"),
 ]
 
 BOOKRAG_NODE_COLUMNS: list[tuple[str, str]] = [
@@ -113,6 +143,8 @@ def build_bookrag_table_targets(vector_store_name: str) -> dict[str, str]:
     return {
         "documents": _with_suffix(base_name, "bdoc"),
         "blocks": _with_suffix(base_name, "bblk"),
+        "raw": _with_suffix(base_name, "braw"),
+        "chunks": _with_suffix(base_name, "bchk"),
         "nodes": _with_suffix(base_name, "bnode"),
         "entities": _with_suffix(base_name, "bent"),
         "entity_links": _with_suffix(base_name, "belnk"),
@@ -147,7 +179,9 @@ def _sql_typed_literal(value: Any, column_type: str) -> str:
 
 def _build_table_ddl(qualified_table: str, columns: list[tuple[str, str]]) -> str:
     first_name, first_type = columns[0]
-    column_lines: list[str] = [f'  "{first_name}" {first_type}', f'  PRIMARY KEY ("{first_name}")']
+    column_lines: list[str] = [f'  "{first_name}" {first_type}']
+    if re.search(r"\bNOT\s+NULL\b", first_type, flags=re.IGNORECASE):
+        column_lines.append(f'  PRIMARY KEY ("{first_name}")')
     for name, col_type in columns[1:]:
         column_lines.append(f'  "{name}" {col_type}')
     ddl_body = ",\n".join(column_lines)
@@ -210,6 +244,36 @@ def prepare_bookrag_block_table(
 ) -> list[str]:
     warnings: list[str] = []
     warnings.extend(_ensure_table(schema_name, table_targets["blocks"], BOOKRAG_BLOCK_COLUMNS, execute_sql_fn))
+    return warnings
+
+
+def prepare_bookrag_document_table(
+    schema_name: str | None,
+    table_targets: dict[str, str],
+    execute_sql_fn: ExecuteSqlFn | None,
+) -> list[str]:
+    warnings: list[str] = []
+    warnings.extend(_ensure_table(schema_name, table_targets["documents"], BOOKRAG_DOCUMENT_COLUMNS, execute_sql_fn))
+    return warnings
+
+
+def prepare_bookrag_raw_table(
+    schema_name: str | None,
+    table_targets: dict[str, str],
+    execute_sql_fn: ExecuteSqlFn | None,
+) -> list[str]:
+    warnings: list[str] = []
+    warnings.extend(_ensure_table(schema_name, table_targets["raw"], BOOKRAG_RAW_COLUMNS, execute_sql_fn))
+    return warnings
+
+
+def prepare_bookrag_chunk_table(
+    schema_name: str | None,
+    table_targets: dict[str, str],
+    execute_sql_fn: ExecuteSqlFn | None,
+) -> list[str]:
+    warnings: list[str] = []
+    warnings.extend(_ensure_table(schema_name, table_targets["chunks"], BOOKRAG_CHUNK_COLUMNS, execute_sql_fn))
     return warnings
 
 

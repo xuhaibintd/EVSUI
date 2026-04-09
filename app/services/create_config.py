@@ -295,7 +295,8 @@ def _clone_ui_field(name: str, **overrides: Any) -> dict[str, Any]:
 
 
 def build_create_ui_sections() -> list[dict[str, Any]]:
-    basic_secondary_fields = [_clone_ui_field(name) for name in _BASIC_SECONDARY_FIELDS]
+    basic_fields = [_clone_ui_field("vector_store_name")]
+    basic_fields.extend(_clone_ui_field(name) for name in _BASIC_SECONDARY_FIELDS)
     algorithm_fields = [
         _clone_ui_field(name, wrapper_attrs={"data-algo-for": targets})
         for name, targets in _ALGORITHM_SECTION_FIELDS
@@ -305,8 +306,7 @@ def build_create_ui_sections() -> list[dict[str, Any]]:
         {
             "title": "Basic",
             "rows": [
-                {"class": "basic-row basic-row-first", "fields": [_clone_ui_field("vector_store_name")]},
-                {"class": "basic-row basic-row-second", "fields": basic_secondary_fields},
+                {"class": "basic-row basic-row-single", "fields": basic_fields},
             ],
         },
         {

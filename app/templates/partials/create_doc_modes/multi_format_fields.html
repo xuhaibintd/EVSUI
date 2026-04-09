@@ -1,7 +1,54 @@
 {% import "partials/create_field_macros.html" as fields %}
 
-<div class="select-docs-options multi-format-params-grid">
-  {% for field in doc_mode_ui_fields %}
-  {{ fields.render_field(field, create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
-  {% endfor %}
+{% set mf = namespace(map={}) %}
+{% for field in doc_mode_ui_fields %}
+  {% set _ = mf.map.update({field.get('name'): field}) %}
+{% endfor %}
+
+<div class="multi-format-layout stack">
+  <div class="multi-format-section stack">
+    <div class="multi-format-section-head">
+      <h4>1. Route</h4>
+    </div>
+    <div class="param-grid compact compact-tight multi-format-route-select-grid">
+      {{ fields.render_field(mf.map['multi_format_strategy'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+    </div>
+  </div>
+
+  <div class="multi-format-section stack">
+    <div class="multi-format-section-head">
+      <h4>2. Route Parameters</h4>
+    </div>
+    <div class="param-grid compact compact-tight multi-format-route-grid">
+      {{ fields.render_field(mf.map['multi_format_ocr_languages'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+      {{ fields.render_field(mf.map['multi_format_infer_table_structure'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+      {{ fields.render_field(mf.map['multi_format_extract_image_block_types'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+      {{ fields.render_field(mf.map['multi_format_hi_res_model_name'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+      {{ fields.render_field(mf.map['multi_format_vlm_provider'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+      {{ fields.render_field(mf.map['multi_format_vlm_model'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+      {{ fields.render_field(mf.map['multi_format_vlm_provider_api_key'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+    </div>
+  </div>
+
+  <div class="multi-format-section stack">
+    <div class="multi-format-section-head">
+      <h4>3. Enrichments</h4>
+    </div>
+    <div class="param-grid compact compact-tight multi-format-route-grid">
+      {{ fields.render_field(mf.map['multi_format_enable_table_to_html'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+      {{ fields.render_field(mf.map['multi_format_enable_generative_ocr'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+      {{ fields.render_field(mf.map['multi_format_enable_table_description'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+      {{ fields.render_field(mf.map['multi_format_enable_image_description'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+    </div>
+  </div>
+
+  <div class="multi-format-section stack">
+    <div class="multi-format-section-head">
+      <h4>4. Chunking</h4>
+    </div>
+    <div class="param-grid compact compact-tight multi-format-route-grid">
+      {{ fields.render_field(mf.map['multi_format_chunk_size'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+      {{ fields.render_field(mf.map['multi_format_chunk_overlap'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+    </div>
+  </div>
 </div>

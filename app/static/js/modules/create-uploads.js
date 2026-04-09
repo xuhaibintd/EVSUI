@@ -9,6 +9,12 @@
       return;
     }
 
+    const form = fileInput.closest("form");
+    if (form instanceof HTMLFormElement) {
+      form.dataset.uploadInProgress = "1";
+      form.dispatchEvent(new CustomEvent("evsui:upload-state-changed"));
+    }
+
     previewPanel.innerHTML = `<p class="muted">Uploading ${files.length} file(s)...</p>`;
 
     const formData = new FormData();
@@ -31,7 +37,6 @@
         if (nameNode instanceof HTMLElement) {
           nameNode.textContent = defaultText;
         }
-        const form = fileInput.closest("form");
         if (form instanceof HTMLFormElement) {
           form.dispatchEvent(new CustomEvent("evsui:uploaded-files-updated"));
         }
@@ -39,6 +44,11 @@
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       previewPanel.innerHTML = `<p class="status err">Upload failed: ${app.escapeHtml(message)}</p>`;
+    } finally {
+      if (form instanceof HTMLFormElement) {
+        delete form.dataset.uploadInProgress;
+        form.dispatchEvent(new CustomEvent("evsui:upload-state-changed"));
+      }
     }
   }
 
@@ -139,6 +149,8 @@
       }
     };
 
+    const isUploadInProgress = () => createForm.dataset.uploadInProgress === "1";
+
     const renderValidationMessage = (message) => {
       if (!(createResult instanceof HTMLElement) || !message) {
         return;
@@ -179,7 +191,7 @@
       if (objectNames instanceof HTMLInputElement) {
         objectNames.required = false;
       }
-      if (createForm.dataset.uploadMissing !== "1" && createForm.checkValidity()) {
+      if (!isUploadInProgress() && createForm.dataset.uploadMissing !== "1" && createForm.checkValidity()) {
         clearValidationMessage();
       }
     };
@@ -195,34 +207,54 @@
       }
     });
 
+    const validateBeforeSubmit = () => {
+      syncConditionalRules();
+      if (isUploadInProgress()) {
+        renderValidationMessage("Documents are still uploading. Please wait.");
+        return false;
+      }
+      if (createForm.dataset.uploadMissing === "1") {
+        renderValidationMessage("Uploaded files is required.");
+        return false;
+      }
+      if (!createForm.checkValidity()) {
+        const firstInvalid = createForm.querySelector(":invalid");
+        if (
+          firstInvalid instanceof HTMLInputElement ||
+          firstInvalid instanceof HTMLSelectElement ||
+          firstInvalid instanceof HTMLTextAreaElement
+        ) {
+          renderValidationMessage(firstInvalid.validationMessage || "Please complete the required fields.");
+        }
+        createForm.reportValidity();
+        return false;
+      }
+      clearValidationMessage();
+      return true;
+    };
+
     createForm.addEventListener(
       "submit",
       (event) => {
-        syncConditionalRules();
-        if (createForm.dataset.uploadMissing === "1") {
+        if (!validateBeforeSubmit()) {
           event.preventDefault();
-          renderValidationMessage("Uploaded files is required.");
-          return;
         }
-        if (!createForm.checkValidity()) {
-          event.preventDefault();
-          const firstInvalid = createForm.querySelector(":invalid");
-          if (
-            firstInvalid instanceof HTMLInputElement ||
-            firstInvalid instanceof HTMLSelectElement ||
-            firstInvalid instanceof HTMLTextAreaElement
-          ) {
-            renderValidationMessage(firstInvalid.validationMessage || "Please complete the required fields.");
-          }
-          createForm.reportValidity();
-          return;
-        }
-        clearValidationMessage();
       },
       true
     );
 
+    createForm.addEventListener("htmx:beforeRequest", (event) => {
+      const source = event.detail && event.detail.elt;
+      if (source !== createForm) {
+        return;
+      }
+      if (!validateBeforeSubmit()) {
+        event.preventDefault();
+      }
+    });
+
     createForm.addEventListener("evsui:uploaded-files-updated", syncConditionalRules);
+    createForm.addEventListener("evsui:upload-state-changed", syncConditionalRules);
     if (uploadedPreview instanceof HTMLElement && uploadedPreview.dataset.validationObserverBound !== "1") {
       uploadedPreview.dataset.validationObserverBound = "1";
       const observer = new MutationObserver(() => syncConditionalRules());

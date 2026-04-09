@@ -271,6 +271,120 @@ async def handle_upload_and_prepare_create(
     )
     warnings.extend(path_warnings)
 
+    precheck_status_preview = ""
+    if callable(verify_vectorstore_exists_fn):
+        verified_existing_store = False
+        existence_check_detail = ""
+        existence_check_error = ""
+        try:
+            verified_existing_store, existence_check_detail, existence_check_error = verify_vectorstore_exists_fn(
+                vector_store_name,
+                allow_status_fallback=False,
+            )
+        except Exception as ex:
+            existence_check_error = str(ex)
+
+        if verified_existing_store:
+            if vector_store_cls is None:
+                result_status = "error"
+                result_message = (
+                    f"Step 2 blocked before preprocessing: VectorStore '{vector_store_name}' already exists, "
+                    "but VectorStore runtime is unavailable to verify its status."
+                )
+                if existence_check_detail:
+                    result_message = f"{result_message} {existence_check_detail}"
+                result = {
+                    "status": result_status,
+                    "time": now_ts(),
+                    "message": result_message,
+                    "vector_store_name": vector_store_name,
+                    "create_preset": create_preset,
+                    "create_mode": create_mode,
+                    "uploaded_files": saved if saved else app.state.document_uploads,
+                    "warnings": warnings,
+                    "create_payload_json": json.dumps(create_payload, indent=2, ensure_ascii=False),
+                    "create_execute_payload_json": json.dumps(exec_payload, indent=2, ensure_ascii=False),
+                    "create_call_preview": build_create_call_preview(vector_store_name, create_payload),
+                    "execution_output_preview": "",
+                    "status_output_preview": existence_check_detail,
+                    "multi_format_summary": None,
+                }
+                app.state.last_create_operation = result
+                app.state.evs_state["last_success"] = ""
+                app.state.evs_state["last_error"] = result_message
+                return templates.TemplateResponse(
+                    request,
+                    "partials/create_result.html",
+                    {
+                        "create_result": result,
+                        "evs": app.state.evs_state,
+                        "is_htmx": is_htmx,
+                    },
+                )
+
+            existing_vector_store = vector_store_cls(vector_store_name)
+            current_state, current_status_text, current_status_preview, current_status_error = _read_vectorstore_status(
+                existing_vector_store
+            )
+            precheck_status_preview = existence_check_detail or current_status_preview
+            if current_state == "ready":
+                warnings.append(
+                    f"VectorStore '{vector_store_name}' already exists. Skipped preprocessing and create()."
+                )
+                result_status = "ok_with_warnings"
+                result_message = f"Step 2 skipped preprocessing and VectorStore.create(): '{vector_store_name}' already exists."
+                if existence_check_detail:
+                    result_message = f"{result_message} {existence_check_detail}"
+            else:
+                result_status = "error"
+                current_detail = current_status_error or current_status_text or current_status_preview or "unknown"
+                result_message = (
+                    f"Step 2 blocked before preprocessing: VectorStore '{vector_store_name}' already exists, "
+                    f"but current status is not Ready ({current_detail})."
+                )
+                if existence_check_detail:
+                    result_message = f"{result_message} {existence_check_detail}"
+
+            result = {
+                "status": result_status,
+                "time": now_ts(),
+                "message": result_message,
+                "vector_store_name": vector_store_name,
+                "create_preset": create_preset,
+                "create_mode": create_mode,
+                "uploaded_files": saved if saved else app.state.document_uploads,
+                "warnings": warnings,
+                "create_payload_json": json.dumps(create_payload, indent=2, ensure_ascii=False),
+                "create_execute_payload_json": json.dumps(exec_payload, indent=2, ensure_ascii=False),
+                "create_call_preview": build_create_call_preview(vector_store_name, create_payload),
+                "execution_output_preview": "",
+                "status_output_preview": precheck_status_preview,
+                "multi_format_summary": None,
+            }
+            app.state.last_create_operation = result
+            if result_status == "error":
+                app.state.evs_state["last_success"] = ""
+                app.state.evs_state["last_error"] = result_message
+            else:
+                app.state.evs_state["last_error"] = ""
+                app.state.evs_state["last_success"] = result_message
+                app.state.evs_state["last_created_vs_name"] = vector_store_name
+                append_connect_step(
+                    app.state.evs_state,
+                    "VSManager.list()",
+                    "info",
+                    "Skipped after pre-check. Click 'Run List' manually.",
+                )
+            return templates.TemplateResponse(
+                request,
+                "partials/create_result.html",
+                {
+                    "create_result": result,
+                    "evs": app.state.evs_state,
+                    "is_htmx": is_htmx,
+                },
+            )
+
     mode_summary: dict | None = None
     mode_error = ""
     try:
@@ -330,7 +444,8 @@ async def handle_upload_and_prepare_create(
             if already_exists and callable(verify_vectorstore_exists_fn):
                 try:
                     verified_existing_store, existence_check_detail, existence_check_error = verify_vectorstore_exists_fn(
-                        vector_store_name
+                        vector_store_name,
+                        allow_status_fallback=True,
                     )
                 except Exception as verify_ex:
                     existence_check_error = str(verify_ex)

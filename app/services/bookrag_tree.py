@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import hashlib
 import uuid
 from pathlib import Path
 from typing import Any
@@ -176,14 +177,50 @@ def _looks_like_image_caption(text: str | None) -> bool:
     return not _has_sentence_punctuation(line) or len(line) <= 40
 
 
+def _block_element_id(block: dict[str, Any]) -> str | None:
+    return _as_text(block.get("element_id"), max_len=64)
+
+
+def _block_section_title(block: dict[str, Any]) -> str | None:
+    return _first_nonempty_line(_as_text(block.get("text"), max_len=1000))
+
+
+def _block_kind(block: dict[str, Any]) -> str:
+    return _classify_block_type(
+        _as_text(block.get("type"), max_len=50) or "Text",
+        _as_text(block.get("text"), max_len=32000),
+        _as_text(block.get("text_as_html"), max_len=32000),
+    )
+
+
+def _block_section_level(block: dict[str, Any]) -> int | None:
+    if _block_kind(block) != "section":
+        return None
+    return _infer_section_level(
+        _as_text(block.get("text"), max_len=1000),
+        _as_text(block.get("type"), max_len=50) or "Text",
+    )
+
+
+def _stable_fallback_block_id(doc_id: str | None, ordinal: int | None, text: str | None) -> str:
+    base = "|".join(
+        [
+            str(doc_id or ""),
+            str(ordinal or 0),
+            str(text or ""),
+        ]
+    )
+    return hashlib.sha1(base.encode("utf-8")).hexdigest()[:32]
+
+
 def _build_image_context(
     drafts: list[dict[str, Any]],
     index: int,
 ) -> tuple[str | None, str | None]:
     current = drafts[index]
     page_number = _as_int(current.get("page_number"))
-    parent_element_id = _as_text(current.get("parent_element_id"), max_len=64)
-    caption: str | None = _as_text(current.get("content_text"), max_len=_IMAGE_CAPTION_MAX_LEN)
+    parent_id = _as_text(current.get("parent_id"), max_len=64)
+    caption: str | None = _as_text(current.get("text"), max_len=_IMAGE_CAPTION_MAX_LEN)
     context_parts: list[str] = []
 
     def maybe_add_context(text: str | None) -> None:
@@ -192,13 +229,13 @@ def _build_image_context(
             context_parts.append(normalized)
 
     def can_link(candidate: dict[str, Any]) -> bool:
-        if candidate.get("block_type") in {"image", "table"}:
+        if _block_kind(candidate) in {"image", "table"}:
             return False
         candidate_page = _as_int(candidate.get("page_number"))
         if page_number is not None and candidate_page is not None and candidate_page != page_number:
             return False
-        candidate_parent = _as_text(candidate.get("parent_element_id"), max_len=64)
-        if parent_element_id and candidate_parent and candidate_parent != parent_element_id:
+        candidate_parent = _as_text(candidate.get("parent_id"), max_len=64)
+        if parent_id and candidate_parent and candidate_parent != parent_id:
             return False
         return True
 
@@ -209,7 +246,7 @@ def _build_image_context(
             neighbor = drafts[neighbor_index]
             if not can_link(neighbor):
                 continue
-            neighbor_text = _as_text(neighbor.get("content_text"), max_len=1000)
+            neighbor_text = _as_text(neighbor.get("text"), max_len=1000)
             if not neighbor_text:
                 continue
             if caption is None and _looks_like_image_caption(neighbor_text):
@@ -217,8 +254,9 @@ def _build_image_context(
                 continue
             maybe_add_context(neighbor_text)
 
-    if current.get("section_title"):
-        maybe_add_context(_as_text(current.get("section_title"), max_len=1000))
+    section_title = _block_section_title(current)
+    if section_title:
+        maybe_add_context(section_title)
     if page_number is not None:
         maybe_add_context(f"Image on page {page_number}")
 
@@ -229,11 +267,11 @@ def _build_image_context(
 
 
 def _finalize_block_leaf_content(block: dict[str, Any]) -> str | None:
-    block_type = str(block.get("block_type") or "").strip().lower()
-    content_text = _as_text(block.get("content_text"), max_len=32000)
-    table_html = _as_text(block.get("table_html"), max_len=32000)
+    block_type = _block_kind(block)
+    text = _as_text(block.get("text"), max_len=32000)
+    text_as_html = _as_text(block.get("text_as_html"), max_len=32000)
     if block_type == "table":
-        return _build_leaf_content(content_text, table_html)
+        return _build_leaf_content(text, text_as_html)
     if block_type == "image":
         caption = _as_text(block.get("image_caption"), max_len=_IMAGE_CAPTION_MAX_LEN)
         context = _as_text(block.get("image_context"), max_len=32000)
@@ -242,10 +280,10 @@ def _finalize_block_leaf_content(block: dict[str, Any]) -> str | None:
             parts.append(f"Image caption: {caption}")
         if context:
             parts.append(f"Context: {context}")
-        if content_text and content_text not in {caption, context}:
-            parts.append(content_text)
+        if text and text not in {caption, context}:
+            parts.append(text)
         return _as_text("\n".join(parts), max_len=32000)
-    return content_text
+    return text
 
 
 def _estimate_token_units(unit: str) -> int:
@@ -363,6 +401,7 @@ def elements_to_bookrag_blocks(
     profile: str = BOOKRAG_SECTION_PROFILE_DEFAULT,
     persist_metadata: bool = False,
 ) -> list[dict[str, Any]]:
+    _ = persist_metadata
     drafts: list[dict[str, Any]] = []
     for index, element in enumerate(raw_elements, start=1):
         if not isinstance(element, dict):
@@ -379,39 +418,31 @@ def elements_to_bookrag_blocks(
         text = image_caption if block_type == "image" and image_caption else raw_text
         if not text and not text_as_html and block_type != "image":
             continue
-        section_title = _first_nonempty_line(text)
-        level_hint = _infer_section_level(section_title, element_type, profile=profile) if block_type == "section" else None
         drafts.append(
             {
-                "block_id": uuid.uuid4().hex,
                 "doc_id": doc_id,
                 "element_id": _as_text(element.get("element_id") or element.get("id"), max_len=64),
-                "parent_element_id": _as_text(metadata.get("parent_id"), max_len=64),
-                "source_type": element_type,
-                "block_type": block_type,
+                "parent_id": _as_text(metadata.get("parent_id"), max_len=64),
                 "page_number": _as_int(metadata.get("page_number")),
                 "ordinal": index,
-                "level_hint": level_hint,
-                "is_section": 1 if block_type == "section" else 0,
-                "section_title": _as_text(section_title, max_len=1000),
-                "content_text": text,
-                "table_html": text_as_html if block_type == "table" else None,
+                "text": text,
+                "type": element_type,
+                "text_as_html": text_as_html if block_type == "table" else None,
                 "image_caption": image_caption if block_type == "image" else None,
                 "image_context": image_context if block_type == "image" else None,
-                "metadata_json": _as_text(metadata, max_len=32000) if persist_metadata else None,
             }
         )
 
     for idx, block in enumerate(drafts):
-        if block.get("block_type") != "image":
+        if _block_kind(block) != "image":
             continue
         caption, context = _build_image_context(drafts, idx)
         if caption:
             block["image_caption"] = caption
         if context:
             block["image_context"] = context
-        if not block.get("content_text"):
-            block["content_text"] = _as_text(caption or context, max_len=32000)
+        if not block.get("text"):
+            block["text"] = _as_text(caption or context, max_len=32000)
     return drafts
 
 
@@ -444,24 +475,24 @@ def build_bookrag_nodes(document_row: dict[str, Any], blocks: list[dict[str, Any
         for open_section in section_stack:
             open_section["page_end"] = max(_as_int(open_section.get("page_end")) or page_number, page_number)
 
-        if int(block.get("is_section") or 0):
-            level = _as_int(block.get("level_hint")) or (int(section_stack[-1].get("level") or 0) + 1 if section_stack else 1)
+        if _block_kind(block) == "section":
+            level = _block_section_level(block) or (int(section_stack[-1].get("level") or 0) + 1 if section_stack else 1)
             while section_stack and int(section_stack[-1].get("level") or 0) >= level:
                 section_stack.pop()
             parent_node = section_stack[-1] if section_stack else root_node
-            title = _as_text(block.get("section_title"), max_len=1000) or f"Section {block.get('ordinal')}"
+            title = _block_section_title(block) or f"Section {block.get('ordinal')}"
             parent_path = _as_text(parent_node.get("path"), max_len=2000) or ""
             path_text = title if not parent_path else f"{parent_path} > {title}"
             section_node = {
-                "node_id": uuid.uuid4().hex,
+                "node_id": _block_element_id(block) or _stable_fallback_block_id(document_row.get("doc_id"), _as_int(block.get("ordinal")), block.get("text")),
                 "doc_id": document_row["doc_id"],
-                "source_block_id": block.get("block_id"),
+                "source_block_id": _block_element_id(block),
                 "parent_node_id": parent_node.get("node_id"),
                 "node_type": "section",
                 "level": level,
                 "ordinal": block.get("ordinal"),
                 "title": title,
-                "content": _as_text(block.get("content_text"), max_len=32000),
+                "content": _as_text(block.get("text"), max_len=32000),
                 "page_start": page_number,
                 "page_end": page_number,
                 "path": _as_text(path_text, max_len=2000),
@@ -473,12 +504,13 @@ def build_bookrag_nodes(document_row: dict[str, Any], blocks: list[dict[str, Any
 
         parent_node = section_stack[-1] if section_stack else root_node
         title = None
-        if block.get("block_type") == "table":
-            title = _as_text(block.get("section_title"), max_len=1000)
-        elif block.get("block_type") == "image":
+        block_kind = _block_kind(block)
+        if block_kind == "table":
+            title = _block_section_title(block)
+        elif block_kind == "image":
             title = (
                 _as_text(block.get("image_caption"), max_len=1000)
-                or _as_text(block.get("section_title"), max_len=1000)
+                or _block_section_title(block)
                 or "Image"
             )
         leaf_segments = _split_leaf_content_for_embedding(_finalize_block_leaf_content(block))
@@ -490,11 +522,11 @@ def build_bookrag_nodes(document_row: dict[str, Any], blocks: list[dict[str, Any
                 leaf_title = _as_text(f"{leaf_title} [{segment_index}/{segment_total}]", max_len=1000)
             nodes.append(
                 {
-                    "node_id": uuid.uuid4().hex,
+                    "node_id": (_block_element_id(block) or _stable_fallback_block_id(document_row.get("doc_id"), base_ordinal, leaf_content)) if segment_total == 1 else f"{_block_element_id(block) or _stable_fallback_block_id(document_row.get('doc_id'), base_ordinal, leaf_content)}_{segment_index}",
                     "doc_id": document_row["doc_id"],
-                    "source_block_id": block.get("block_id"),
+                    "source_block_id": _block_element_id(block),
                     "parent_node_id": parent_node.get("node_id"),
-                    "node_type": _as_text(block.get("block_type"), max_len=50) or "text",
+                    "node_type": block_kind or "text",
                     "level": int(parent_node.get("level") or 0) + 1,
                     "ordinal": base_ordinal if segment_total == 1 else (base_ordinal * 10000) + segment_index,
                     "title": leaf_title,

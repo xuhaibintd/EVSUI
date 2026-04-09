@@ -208,37 +208,49 @@ def _raw_elements_per_page(raw_elements: list[Any]) -> tuple[dict[int, list[str]
     return per_page, type_counts
 
 
+def _row_block_type(row: dict[str, Any]) -> str:
+    type_name = str(row.get("type") or "").strip().lower()
+    text = str(row.get("text") or "")
+    text_as_html = str(row.get("text_as_html") or "")
+    if text_as_html or "table" in type_name:
+        return "table"
+    if any(token in type_name for token in ("image", "figure", "picture")):
+        return "image"
+    if type_name in {"title", "section-header", "sectionheader", "header", "headline"} and text:
+        return "section"
+    return "text"
+
+
 def _row_primary_text(row: dict[str, Any]) -> str:
-    block_type = str(row.get("block_type") or "").strip().lower()
-    content_text = str(row.get("content_text") or "")
-    table_html = str(row.get("table_html") or "")
+    block_type = _row_block_type(row)
+    text = str(row.get("text") or "")
+    text_as_html = str(row.get("text_as_html") or "")
     image_caption = str(row.get("image_caption") or "")
     image_context = str(row.get("image_context") or "")
-    section_title = str(row.get("section_title") or "")
 
     if block_type == "table":
-        return table_html or content_text or section_title
+        return text_as_html or text
     if block_type == "image":
-        return image_caption or image_context or content_text or section_title
-    return content_text or section_title or table_html
+        return image_caption or image_context or text
+    return text or text_as_html
 
 
 def _table_rows_per_page(rows: list[Any]) -> tuple[dict[int, list[str]], Counter[str], Counter[str]]:
     per_page: dict[int, list[str]] = defaultdict(list)
     block_types: Counter[str] = Counter()
-    source_types: Counter[str] = Counter()
+    types: Counter[str] = Counter()
     for item in rows:
         if not isinstance(item, dict):
             continue
-        block_type = str(item.get("block_type") or "").strip() or "Unknown"
-        source_type = str(item.get("source_type") or "").strip() or "Unknown"
+        block_type = _row_block_type(item)
+        type = str(item.get("type") or "").strip() or "Unknown"
         block_types[block_type] += 1
-        source_types[source_type] += 1
+        types[type] += 1
         page_number = int(item.get("page_number") or 0)
         text = _row_primary_text(item)
         if text:
             per_page[page_number].append(text)
-    return per_page, block_types, source_types
+    return per_page, block_types, types
 
 
 def _line_recall(pdf_lines: dict[int, list[str]], per_page: dict[int, list[str]]) -> tuple[int, int]:
@@ -323,7 +335,7 @@ def build_precision_eval_report(*, pdf_path: Path, json_path: Path) -> dict[str,
     raw_elements = payload.get("raw_elements") if isinstance(payload.get("raw_elements"), list) else []
     table_rows = payload.get("table_rows") if isinstance(payload.get("table_rows"), list) else []
     raw_per_page, raw_type_counts = _raw_elements_per_page(raw_elements)
-    row_per_page, block_type_counts, source_type_counts = _table_rows_per_page(table_rows)
+    row_per_page, block_type_counts, type_counts = _table_rows_per_page(table_rows)
 
     json_source_file = str(payload.get("source_file") or "").strip()
     json_source_path = Path(json_source_file).resolve() if json_source_file else None
@@ -340,7 +352,8 @@ def build_precision_eval_report(*, pdf_path: Path, json_path: Path) -> dict[str,
         "table_row_count": len(table_rows),
         "raw_type_counts": raw_type_counts.most_common(),
         "block_type_counts": block_type_counts.most_common(),
-        "source_type_counts": source_type_counts.most_common(10),
+        "type_counts": type_counts.most_common(10),
+        "source_type_counts": type_counts.most_common(10),
         "raw_elements_metrics": _compare_payload(
             "raw_elements",
             pdf_pages=pdf_pages,

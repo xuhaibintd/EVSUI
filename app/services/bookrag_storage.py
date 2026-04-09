@@ -1,17 +1,21 @@
 from __future__ import annotations
 
-import csv
+import json
+import re
+import uuid
 from pathlib import Path
 from typing import Any
 
 from app.services.bookrag_schema import (
     BOOKRAG_BLOCK_COLUMNS,
+    BOOKRAG_CHUNK_COLUMNS,
     BOOKRAG_DOCUMENT_COLUMNS,
     BOOKRAG_ENTITY_COLUMNS,
     BOOKRAG_ENTITY_LINK_COLUMNS,
     BOOKRAG_INSERT_BATCH_MAX_ROWS,
     BOOKRAG_INSERT_BATCH_MAX_SQL_CHARS,
     BOOKRAG_NODE_COLUMNS,
+    BOOKRAG_RAW_COLUMNS,
     ExecuteSqlFn,
     _qualified_table_sql,
     _sql_literal,
@@ -19,37 +23,24 @@ from app.services.bookrag_schema import (
 )
 
 
-def _csv_stage_path(csv_stage_dir: Path, table_name: str) -> Path:
-    return csv_stage_dir / f"{table_name}.csv"
 
-
-def _write_rows_to_csv(
-    csv_stage_dir: Path,
+def _fastload_rows(
+    schema_name: str | None,
     table_name: str,
     rows: list[dict[str, Any]],
     columns: list[tuple[str, str]],
-) -> Path:
-    csv_stage_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = _csv_stage_path(csv_stage_dir, table_name)
-    column_names = [name for name, _ in columns]
-    with csv_path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=column_names, quoting=csv.QUOTE_MINIMAL)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({name: "" if row.get(name) is None else row.get(name) for name in column_names})
-    return csv_path
+) -> int:
+    from teradataml import fastload
 
-
-def _load_rows_from_csv(csv_path: Path, schema_name: str | None, table_name: str) -> None:
-    from teradataml import read_csv
-
-    read_csv(
-        filepath=str(csv_path),
+    frame = _rows_to_pandas_frame(rows, columns)
+    fastload(
+        frame,
         table_name=table_name,
         schema_name=schema_name,
         if_exists="append",
-        use_fastload=True,
+        index=False,
     )
+    return len(rows)
 
 
 def _rows_to_pandas_frame(rows: list[dict[str, Any]], columns: list[tuple[str, str]]):
@@ -138,6 +129,360 @@ def _iter_insert_batches(
     return batches
 
 
+def _metadata_dict(element: dict[str, Any]) -> dict[str, Any]:
+    metadata = element.get("metadata")
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _as_text(value: Any, max_len: int | None = None) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if max_len is not None and len(text) > max_len:
+        return text[:max_len]
+    return text
+
+
+def _as_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
+def _type_name_from_dict(element: dict[str, Any]) -> str | None:
+    return _as_text(element.get("type"), max_len=64)
+
+
+def _element_id_from_dict(element: dict[str, Any]) -> str | None:
+    return _as_text(element.get("element_id"), max_len=128)
+
+
+def _stage_safe_stem(filename: str) -> str:
+    stem = Path(str(filename or "document")).stem
+    cleaned = re.sub(r"[^0-9A-Za-z._-]", "_", stem).strip("._")
+    return cleaned or "document"
+
+
+def write_bookrag_raw_stage_file(
+    stage_dir: Path,
+    filename: str,
+    doc_id: str,
+    payload: Any,
+) -> Path:
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    stage_path = stage_dir / f"{_stage_safe_stem(filename)}_{doc_id}.json"
+    with stage_path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+    return stage_path
+
+
+def load_bookrag_raw_stage_file(stage_path: Path) -> list[dict[str, Any]]:
+    raw_text = stage_path.read_text(encoding="utf-8")
+    try:
+        payload = json.loads(raw_text)
+    except Exception:
+        elements: list[dict[str, Any]] = []
+        for line_number, raw_line in enumerate(raw_text.splitlines(), start=1):
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                item = json.loads(line)
+            except Exception as ex:
+                raise RuntimeError(f"Invalid BookRAG raw stage JSON at {stage_path}:{line_number}: {ex}") from ex
+            if isinstance(item, dict):
+                elements.append(item)
+        return elements
+
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if isinstance(payload, dict):
+        for key in ("elements", "output", "data"):
+            candidate = payload.get(key)
+            if isinstance(candidate, list):
+                return [item for item in candidate if isinstance(item, dict)]
+        list_values = [value for value in payload.values() if isinstance(value, list)]
+        if len(list_values) == 1:
+            return [item for item in list_values[0] if isinstance(item, dict)]
+    raise RuntimeError(f"Unsupported BookRAG raw stage JSON format: {stage_path}")
+
+
+def build_bookrag_document_row(
+    *,
+    doc_id: str,
+    vector_store_name: str,
+    workflow_id: str | None,
+    workflow_name: str | None,
+    job_id: str | None,
+    processing_profile: str | None,
+    filename: str,
+    source_file: str,
+    filetype: str | None,
+    filesize_bytes: int | None,
+) -> dict[str, Any]:
+    return {
+        "doc_id": doc_id,
+        "vector_store_name": _as_text(vector_store_name, max_len=255),
+        "workflow_id": _as_text(workflow_id, max_len=64),
+        "workflow_name": _as_text(workflow_name, max_len=255),
+        "job_id": _as_text(job_id, max_len=64),
+        "processing_profile": _as_text(processing_profile, max_len=100),
+        "source_file": _as_text(source_file, max_len=2000),
+        "filename": _as_text(filename, max_len=255),
+        "filetype": _as_text(filetype, max_len=100),
+        "filesize_bytes": filesize_bytes,
+        "page_count": None,
+        "language_hint": None,
+        "created_at": None,
+    }
+
+
+
+def build_bookrag_raw_rows(
+    *,
+    doc_id: str,
+    elements: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for ordinal_raw, element in enumerate(elements, start=1):
+        if not isinstance(element, dict):
+            continue
+        metadata = _metadata_dict(element)
+        rows.append(
+            {
+                "id": f"{doc_id}_{ordinal_raw}",
+                "element_id": _element_id_from_dict(element),
+                "ordinal_raw": ordinal_raw,
+                "parent_id": _as_text(metadata.get("parent_id"), max_len=128),
+                "type": _type_name_from_dict(element),
+                "page_number": _as_int(metadata.get("page_number")),
+                "category_depth": _as_int(metadata.get("category_depth")),
+                "text": _as_text(element.get("text"), max_len=32000),
+                "text_as_html": _as_text(metadata.get("text_as_html"), max_len=32000),
+                "doc_id": doc_id,
+            }
+        )
+    return rows
+
+
+def _raw_row_to_element_dict(raw_row: dict[str, Any]) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    parent_id = _as_text(raw_row.get("parent_id"), max_len=128)
+    if parent_id:
+        metadata["parent_id"] = parent_id
+    page_number = _as_int(raw_row.get("page_number"))
+    if page_number is not None:
+        metadata["page_number"] = page_number
+    category_depth = _as_int(raw_row.get("category_depth"))
+    if category_depth is not None:
+        metadata["category_depth"] = category_depth
+    text_as_html = _as_text(raw_row.get("text_as_html"), max_len=32000)
+    if text_as_html:
+        metadata["text_as_html"] = text_as_html
+
+    element: dict[str, Any] = {}
+    type_name = _as_text(raw_row.get("type"), max_len=64)
+    if type_name:
+        element["type"] = type_name
+    element_id = _as_text(raw_row.get("element_id"), max_len=128)
+    if element_id:
+        element["element_id"] = element_id
+    text_value = _as_text(raw_row.get("text"), max_len=32000)
+    element["text"] = text_value or ""
+    if metadata:
+        element["metadata"] = metadata
+    return element
+
+
+def build_bookrag_chunk_rows_from_raw_rows(
+    *,
+    doc_id: str,
+    filename: str,
+    raw_rows: list[dict[str, Any]],
+    max_characters: int,
+    overlap: int,
+    new_after_n_chars: int,
+    combine_text_under_n_chars: int,
+    multipage_sections: bool,
+) -> list[dict[str, Any]]:
+    sorted_rows = sorted(raw_rows, key=lambda row: (_as_int(row.get("ordinal_raw")) or 0,))
+    raw_elements = [_raw_row_to_element_dict(row) for row in sorted_rows]
+    return build_bookrag_chunk_rows_from_raw_elements(
+        doc_id=doc_id,
+        filename=filename,
+        raw_elements=raw_elements,
+        max_characters=max_characters,
+        overlap=overlap,
+        new_after_n_chars=new_after_n_chars,
+        combine_text_under_n_chars=combine_text_under_n_chars,
+        multipage_sections=multipage_sections,
+    )
+
+
+def _build_title_context_map(raw_elements: list[dict[str, Any]]) -> dict[str, dict[str, str | None]]:
+    title_stack: list[str] = []
+    context_map: dict[str, dict[str, str | None]] = {}
+    for element in raw_elements:
+        if not isinstance(element, dict):
+            continue
+        metadata = _metadata_dict(element)
+        element_id = _element_id_from_dict(element)
+        element_type = _type_name_from_dict(element)
+        if element_type == "Title":
+            title_text = _as_text(element.get("text"), max_len=1000)
+            if title_text:
+                depth = _as_int(metadata.get("category_depth"))
+                if depth is None or depth < 1:
+                    depth = len(title_stack) + 1 if title_stack else 1
+                title_stack = title_stack[: max(depth - 1, 0)]
+                title_stack.append(title_text)
+        section_title = title_stack[-1] if title_stack else None
+        title_path = " > ".join(title_stack) if title_stack else None
+        if element_id:
+            context_map[element_id] = {
+                "section_title": section_title,
+                "title_path": title_path,
+            }
+    return context_map
+
+
+def _chunk_source_dicts(chunk: Any) -> list[dict[str, Any]]:
+    metadata = getattr(chunk, "metadata", None)
+    orig_elements = getattr(metadata, "orig_elements", None) if metadata is not None else None
+    source_elements = list(orig_elements) if orig_elements else [chunk]
+    source_dicts: list[dict[str, Any]] = []
+    for element in source_elements:
+        if hasattr(element, "to_dict"):
+            element_dict = element.to_dict()
+            if isinstance(element_dict, dict):
+                source_dicts.append(element_dict)
+    return source_dicts
+
+
+def build_bookrag_chunk_rows_from_raw_elements(
+    *,
+    doc_id: str,
+    filename: str,
+    raw_elements: list[dict[str, Any]],
+    max_characters: int,
+    overlap: int,
+    new_after_n_chars: int,
+    combine_text_under_n_chars: int,
+    multipage_sections: bool,
+) -> list[dict[str, Any]]:
+    from unstructured.chunking.title import chunk_by_title
+    from unstructured.staging.base import elements_from_dicts
+
+    title_context_map = _build_title_context_map(raw_elements)
+    chunk_elements = chunk_by_title(
+        elements_from_dicts(raw_elements),
+        include_orig_elements=True,
+        max_characters=max_characters,
+        overlap=overlap,
+        overlap_all=False,
+        new_after_n_chars=new_after_n_chars,
+        combine_text_under_n_chars=combine_text_under_n_chars,
+        multipage_sections=multipage_sections,
+    )
+
+    rows: list[dict[str, Any]] = []
+    last_section_title: str | None = None
+    last_title_path: str | None = None
+    for ordinal, chunk in enumerate(chunk_elements, start=1):
+        if not hasattr(chunk, "to_dict"):
+            continue
+        chunk_dict = chunk.to_dict()
+        chunk_text = _as_text(chunk_dict.get("text"), max_len=32000)
+        source_dicts = _chunk_source_dicts(chunk)
+        source_element_ids: list[str] = []
+        source_types: set[str] = set()
+        page_numbers: list[int] = []
+        title_candidates: list[str] = []
+        table_html: str | None = None
+
+        for source in source_dicts:
+            source_id = _element_id_from_dict(source)
+            if source_id:
+                source_element_ids.append(source_id)
+                title_context = title_context_map.get(source_id) or {}
+                if title_context.get("title_path"):
+                    last_title_path = title_context.get("title_path")
+                    last_section_title = title_context.get("section_title") or last_title_path
+            source_type = _type_name_from_dict(source)
+            if source_type:
+                source_types.add(source_type)
+                if source_type == "Title":
+                    title_text = _as_text(source.get("text"), max_len=1000)
+                    if title_text:
+                        title_candidates.append(title_text)
+            metadata = _metadata_dict(source)
+            page_number = _as_int(metadata.get("page_number"))
+            if page_number is not None:
+                page_numbers.append(page_number)
+            html_value = _as_text(metadata.get("text_as_html"), max_len=32000)
+            if html_value and table_html is None:
+                table_html = html_value
+
+        section_title = title_candidates[0] if title_candidates else last_section_title
+        title_path = last_title_path
+        if title_candidates:
+            title_path = " > ".join(title_candidates)
+            last_title_path = title_path
+            last_section_title = section_title
+
+        if title_path and chunk_text and not chunk_text.startswith(title_path):
+            text_for_embedding = _as_text(f"{title_path}\n\n{chunk_text}", max_len=32000)
+        else:
+            text_for_embedding = chunk_text
+
+        chunk_type = "text"
+        if "Table" in source_types:
+            chunk_type = "table"
+        elif "Image" in source_types:
+            chunk_type = "image"
+
+        image_caption = None
+        image_context = None
+        if chunk_type == "image":
+            image_caption = section_title
+            image_context = chunk_text
+
+        rows.append(
+            {
+                "chunk_id": uuid.uuid4().hex,
+                "doc_id": doc_id,
+                "filename": filename,
+                "ordinal": ordinal,
+                "chunk_type": chunk_type,
+                "page_start": min(page_numbers) if page_numbers else None,
+                "page_end": max(page_numbers) if page_numbers else None,
+                "section_title": _as_text(section_title, max_len=2000),
+                "title_path": _as_text(title_path, max_len=4000),
+                "source_element_ids": _as_text(json.dumps(source_element_ids, ensure_ascii=False), max_len=32000),
+                "text": chunk_text,
+                "text_for_embedding": text_for_embedding,
+                "text_as_html": table_html,
+                "table_html": table_html,
+                "image_caption": _as_text(image_caption, max_len=4000),
+                "image_context": _as_text(image_context, max_len=32000),
+            }
+        )
+    return rows
+
+
+def _supports_fastload(columns: list[tuple[str, str]]) -> bool:
+    for _, column_type in columns:
+        normalized = column_type.upper()
+        if "CLOB" in normalized or "BLOB" in normalized:
+            return False
+    return True
+
+
 def _insert_rows(
     schema_name: str | None,
     table_name: str,
@@ -147,6 +492,7 @@ def _insert_rows(
     csv_stage_dir: Path | None = None,
     stats: dict[str, int] | None = None,
 ) -> int:
+    del csv_stage_dir
     if execute_sql_fn is None:
         raise RuntimeError("teradataml.execute_sql is unavailable.")
     if not rows:
@@ -156,9 +502,10 @@ def _insert_rows(
     inserted = 0
 
     if stats is not None:
-        stats.setdefault("read_csv_calls", 0)
-        stats.setdefault("read_csv_rows", 0)
-        stats.setdefault("read_csv_fallbacks", 0)
+        stats.setdefault("fastload_calls", 0)
+        stats.setdefault("fastload_rows", 0)
+        stats.setdefault("fastload_fallbacks", 0)
+        stats.setdefault("fastload_skipped", 0)
         stats.setdefault("copy_to_sql_calls", 0)
         stats.setdefault("copy_to_sql_rows", 0)
         stats.setdefault("copy_to_sql_fallbacks", 0)
@@ -168,18 +515,18 @@ def _insert_rows(
         stats.setdefault("fallback_rows", 0)
         stats.setdefault("fallback_batches", 0)
 
-    if csv_stage_dir is not None:
+    if _supports_fastload(columns):
         try:
-            csv_path = _write_rows_to_csv(csv_stage_dir, table_name, rows, columns)
-            _load_rows_from_csv(csv_path, schema_name, table_name)
-            inserted += len(rows)
+            inserted += _fastload_rows(schema_name, table_name, rows, columns)
             if stats is not None:
-                stats["read_csv_calls"] += 1
-                stats["read_csv_rows"] += len(rows)
+                stats["fastload_calls"] += 1
+                stats["fastload_rows"] += len(rows)
             return inserted
         except Exception:
             if stats is not None:
-                stats["read_csv_fallbacks"] += 1
+                stats["fastload_fallbacks"] += 1
+    elif stats is not None:
+        stats["fastload_skipped"] += 1
 
     if len(rows) > 1:
         try:
@@ -280,6 +627,66 @@ def persist_bookrag_blocks(
         table_targets["blocks"],
         blocks,
         BOOKRAG_BLOCK_COLUMNS,
+        execute_sql_fn,
+        csv_stage_dir=csv_stage_dir,
+        stats=stats,
+    )
+
+
+def persist_bookrag_documents(
+    *,
+    schema_name: str | None,
+    table_targets: dict[str, str],
+    rows: list[dict[str, Any]],
+    execute_sql_fn: ExecuteSqlFn | None,
+    csv_stage_dir: Path | None = None,
+    stats: dict[str, int] | None = None,
+) -> int:
+    return _insert_rows(
+        schema_name,
+        table_targets["documents"],
+        rows,
+        BOOKRAG_DOCUMENT_COLUMNS,
+        execute_sql_fn,
+        csv_stage_dir=csv_stage_dir,
+        stats=stats,
+    )
+
+
+def persist_bookrag_raw_rows(
+    *,
+    schema_name: str | None,
+    table_targets: dict[str, str],
+    rows: list[dict[str, Any]],
+    execute_sql_fn: ExecuteSqlFn | None,
+    csv_stage_dir: Path | None = None,
+    stats: dict[str, int] | None = None,
+) -> int:
+    return _insert_rows(
+        schema_name,
+        table_targets["raw"],
+        rows,
+        BOOKRAG_RAW_COLUMNS,
+        execute_sql_fn,
+        csv_stage_dir=csv_stage_dir,
+        stats=stats,
+    )
+
+
+def persist_bookrag_chunks(
+    *,
+    schema_name: str | None,
+    table_targets: dict[str, str],
+    rows: list[dict[str, Any]],
+    execute_sql_fn: ExecuteSqlFn | None,
+    csv_stage_dir: Path | None = None,
+    stats: dict[str, int] | None = None,
+) -> int:
+    return _insert_rows(
+        schema_name,
+        table_targets["chunks"],
+        rows,
+        BOOKRAG_CHUNK_COLUMNS,
         execute_sql_fn,
         csv_stage_dir=csv_stage_dir,
         stats=stats,

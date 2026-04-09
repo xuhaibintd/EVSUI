@@ -18,6 +18,7 @@ Teradata Vector Store is a `FastAPI + Jinja2 + HTMX` three-step interface for co
 - Full `VectorStore.create(...)` parameter form
 - Built-in parameter sets for `VECTORDISTANCE / KMEANS / HNSW`
 - `Multi Format` mode runs Unstructured Workflow (`teradata-sql` destination connector), creates a Teradata table first, and writes processed text rows into `<Vector Store Name>_unstructured`.
+- `Multi-Format BookRAG` mode skips `VectorStore.create()` and writes Unstructured `by_title` chunks into a dedicated Teradata table while preserving full chunk JSON for traceability.
 
 3. Step 3: Retrieval Chat
 - Supports `VectorStore.ask` and `VectorStore.similarity_search`
