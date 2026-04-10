@@ -21,6 +21,31 @@ def _parse_csv_values(raw: Any) -> list[str]:
     return [chunk.strip() for chunk in str(raw or "").split(",") if chunk.strip()]
 
 
+def _first_defined(*values: Any) -> Any:
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        return value
+    return None
+
+
+def _infer_provider_from_model_name(raw_model: str) -> str:
+    model = str(raw_model or "").strip().lower()
+    if not model:
+        return ""
+    if model.startswith("gpt-"):
+        return "openai"
+    if model.startswith("gemini-"):
+        return "vertexai"
+    if model.startswith("us."):
+        return "bedrock"
+    if model.startswith("claude-"):
+        return "anthropic"
+    return ""
+
+
 def _normalize_bookrag_workflow_name(raw_name: str | None) -> str:
     name = str(raw_name or "").strip()
     if not name:
@@ -43,66 +68,91 @@ def _resolve_multi_format_accuracy_options(
     warnings: list[str] = []
 
     infer_table_structure = _to_bool(
-        create_values.get("multi_format_infer_table_structure", "")
-        or runtime.get("multi_format_infer_table_structure")
-        or runtime.get("infer_table_structure")
-        or os.getenv("MULTI_FORMAT_INFER_TABLE_STRUCTURE", "true"),
+        _first_defined(
+            create_values.get("multi_format_infer_table_structure", ""),
+            runtime.get("multi_format_infer_table_structure"),
+            runtime.get("infer_table_structure"),
+            os.getenv("MULTI_FORMAT_INFER_TABLE_STRUCTURE", "true"),
+        ),
         default=True,
     )
     hi_res_model_name = str(
-        create_values.get("multi_format_hi_res_model_name", "")
-        or runtime.get("multi_format_hi_res_model_name")
-        or runtime.get("hi_res_model_name")
-        or os.getenv("MULTI_FORMAT_HI_RES_MODEL_NAME", "")
+        _first_defined(
+            create_values.get("multi_format_hi_res_model_name", ""),
+            runtime.get("multi_format_hi_res_model_name"),
+            runtime.get("hi_res_model_name"),
+            os.getenv("MULTI_FORMAT_HI_RES_MODEL_NAME", ""),
+        )
+        or ""
     ).strip()
     vlm_provider = str(
-        create_values.get("multi_format_vlm_provider", "")
-        or runtime.get("multi_format_vlm_provider")
-        or runtime.get("vlm_provider")
-        or os.getenv("MULTI_FORMAT_VLM_PROVIDER", "")
+        _first_defined(
+            create_values.get("multi_format_vlm_provider", ""),
+            runtime.get("multi_format_vlm_provider"),
+            runtime.get("vlm_provider"),
+            os.getenv("MULTI_FORMAT_VLM_PROVIDER", ""),
+        )
+        or ""
     ).strip()
     vlm_model = str(
-        create_values.get("multi_format_vlm_model", "")
-        or runtime.get("multi_format_vlm_model")
-        or runtime.get("vlm_model")
-        or os.getenv("MULTI_FORMAT_VLM_MODEL", "")
+        _first_defined(
+            create_values.get("multi_format_vlm_model", ""),
+            runtime.get("multi_format_vlm_model"),
+            runtime.get("vlm_model"),
+            os.getenv("MULTI_FORMAT_VLM_MODEL", ""),
+        )
+        or ""
     ).strip()
     vlm_provider_api_key = str(
-        create_values.get("multi_format_vlm_provider_api_key", "")
-        or runtime.get("multi_format_vlm_provider_api_key")
-        or runtime.get("vlm_provider_api_key")
-        or os.getenv("MULTI_FORMAT_VLM_PROVIDER_API_KEY", "")
+        _first_defined(
+            create_values.get("multi_format_vlm_provider_api_key", ""),
+            runtime.get("multi_format_vlm_provider_api_key"),
+            runtime.get("vlm_provider_api_key"),
+            os.getenv("MULTI_FORMAT_VLM_PROVIDER_API_KEY", ""),
+        )
+        or ""
     ).strip()
 
     enable_generative_ocr = _to_bool(
-        create_values.get("multi_format_enable_generative_ocr", "")
-        or runtime.get("multi_format_enable_generative_ocr")
-        or os.getenv("MULTI_FORMAT_ENABLE_GENERATIVE_OCR", "true"),
+        _first_defined(
+            create_values.get("multi_format_enable_generative_ocr", ""),
+            runtime.get("multi_format_enable_generative_ocr"),
+            os.getenv("MULTI_FORMAT_ENABLE_GENERATIVE_OCR", "true"),
+        ),
         default=True,
     )
     enable_table_to_html = _to_bool(
-        create_values.get("multi_format_enable_table_to_html", "")
-        or runtime.get("multi_format_enable_table_to_html")
-        or os.getenv("MULTI_FORMAT_ENABLE_TABLE_TO_HTML", "true"),
+        _first_defined(
+            create_values.get("multi_format_enable_table_to_html", ""),
+            runtime.get("multi_format_enable_table_to_html"),
+            os.getenv("MULTI_FORMAT_ENABLE_TABLE_TO_HTML", "true"),
+        ),
         default=True,
     )
     enable_table_description = _to_bool(
-        create_values.get("multi_format_enable_table_description", "")
-        or runtime.get("multi_format_enable_table_description")
-        or os.getenv("MULTI_FORMAT_ENABLE_TABLE_DESCRIPTION", "false"),
+        _first_defined(
+            create_values.get("multi_format_enable_table_description", ""),
+            runtime.get("multi_format_enable_table_description"),
+            os.getenv("MULTI_FORMAT_ENABLE_TABLE_DESCRIPTION", "false"),
+        ),
         default=False,
     )
     enable_image_description = _to_bool(
-        create_values.get("multi_format_enable_image_description", "")
-        or runtime.get("multi_format_enable_image_description")
-        or os.getenv("MULTI_FORMAT_ENABLE_IMAGE_DESCRIPTION", "false"),
+        _first_defined(
+            create_values.get("multi_format_enable_image_description", ""),
+            runtime.get("multi_format_enable_image_description"),
+            os.getenv("MULTI_FORMAT_ENABLE_IMAGE_DESCRIPTION", "false"),
+        ),
         default=False,
     )
 
     raw_extract_types = str(
-        create_values.get("multi_format_extract_image_block_types", "")
-        or runtime.get("multi_format_extract_image_block_types")
-        or os.getenv("MULTI_FORMAT_EXTRACT_IMAGE_BLOCK_TYPES", "auto")
+        _first_defined(
+            create_values.get("multi_format_extract_image_block_types", ""),
+            runtime.get("multi_format_extract_image_block_types"),
+            os.getenv("MULTI_FORMAT_EXTRACT_IMAGE_BLOCK_TYPES", "auto"),
+        )
+        or "auto"
     ).strip()
     if raw_extract_types.lower() == "auto":
         extract_image_block_types: list[str] = []
@@ -130,7 +180,7 @@ def _resolve_multi_format_accuracy_options(
         "unique_element_ids": True,
     }
 
-    def _provider_settings(prefix: str, *, default_subtype: str, default_provider: str, default_model: str) -> tuple[str, dict[str, Any]]:
+    def _provider_settings(prefix: str, *, enabled: bool, default_subtype: str, default_provider: str, default_model: str) -> tuple[str, dict[str, Any]]:
         subtype = str(
             create_values.get(f"multi_format_{prefix}_subtype", "")
             or runtime.get(f"multi_format_{prefix}_subtype")
@@ -146,13 +196,11 @@ def _resolve_multi_format_accuracy_options(
             or runtime.get(f"multi_format_{prefix}_model")
             or os.getenv(f"MULTI_FORMAT_{prefix.upper()}_MODEL", default_model)
         ).strip() or default_model
-        settings: dict[str, Any] = {}
-        if subtype != "twopass_table2html":
-            if provider_type:
-                settings["provider_type"] = provider_type
-            if model:
-                settings["model"] = model
-        return subtype, settings
+        if enabled and subtype != "twopass_table2html" and (provider_type or model):
+            warnings.append(
+                f"multi format {prefix} provider/model are ignored for on-demand workflow templates; subtype '{subtype}' is sent to Unstructured without extra settings."
+            )
+        return subtype, {}
 
     enrichment_options = {
         "enable_generative_ocr": enable_generative_ocr,
@@ -162,6 +210,7 @@ def _resolve_multi_format_accuracy_options(
     }
     subtype, settings = _provider_settings(
         "generative_ocr",
+        enabled=enable_generative_ocr,
         default_subtype="openai_ocr",
         default_provider="openai",
         default_model="gpt-5-mini",
@@ -170,6 +219,7 @@ def _resolve_multi_format_accuracy_options(
     enrichment_options["generative_ocr_settings"] = settings
     subtype, settings = _provider_settings(
         "table_to_html",
+        enabled=enable_table_to_html,
         default_subtype="twopass_table2html",
         default_provider="",
         default_model="",
@@ -178,6 +228,7 @@ def _resolve_multi_format_accuracy_options(
     enrichment_options["table_to_html_settings"] = settings
     subtype, settings = _provider_settings(
         "table_description",
+        enabled=enable_table_description,
         default_subtype="openai_table_description",
         default_provider="openai",
         default_model="gpt-5-mini",
@@ -186,6 +237,7 @@ def _resolve_multi_format_accuracy_options(
     enrichment_options["table_description_settings"] = settings
     subtype, settings = _provider_settings(
         "image_description",
+        enabled=enable_image_description,
         default_subtype="openai_image_description",
         default_provider="openai",
         default_model="gpt-5-mini",
@@ -213,6 +265,18 @@ def _build_multi_format_workflow_partition_node(
     vlm_model = str(partition_options.get("vlm_model") or "").strip()
     vlm_provider_api_key = str(partition_options.get("vlm_provider_api_key") or "").strip()
     requested_strategy = (partition_strategy or "auto").strip().lower() or "auto"
+    inferred_vlm_provider = _infer_provider_from_model_name(vlm_model)
+    if inferred_vlm_provider:
+        if not vlm_provider:
+            vlm_provider = inferred_vlm_provider
+            warnings.append(
+                f"multi format VLM provider inferred as '{vlm_provider}' from model '{vlm_model}'."
+            )
+        elif vlm_provider.lower() != inferred_vlm_provider:
+            warnings.append(
+                f"multi format VLM provider '{vlm_provider}' does not match model '{vlm_model}'; overriding provider to '{inferred_vlm_provider}'."
+            )
+            vlm_provider = inferred_vlm_provider
 
     if requested_strategy == "auto":
         settings: dict[str, Any] = {
@@ -432,56 +496,78 @@ def build_bookrag_reusable_workflow_definition(
     image_partition_parameters = image_partition_parameters or {}
 
     workflow_name = _normalize_bookrag_workflow_name(
-        create_values.get("multi_format_bookrag_workflow_name")
-        or runtime.get("bookrag_workflow_name")
-        or os.getenv("BOOKRAG_WORKFLOW_NAME")
-        or "bookrag_raw_prod"
+        _first_defined(
+            create_values.get("multi_format_bookrag_workflow_name"),
+            runtime.get("bookrag_workflow_name"),
+            os.getenv("BOOKRAG_WORKFLOW_NAME"),
+            "bookrag_raw_prod",
+        )
     )
 
     enable_image_description = _to_bool(
-        create_values.get("multi_format_bookrag_enable_image_description", "")
-        or runtime.get("bookrag_enable_image_description")
-        or os.getenv("BOOKRAG_ENABLE_IMAGE_DESCRIPTION", "true"),
-        default=True,
+        _first_defined(
+            create_values.get("multi_format_bookrag_enable_image_description", ""),
+            runtime.get("bookrag_enable_image_description"),
+            os.getenv("BOOKRAG_ENABLE_IMAGE_DESCRIPTION", "false"),
+        ),
+        default=False,
     )
     enable_table_to_html = _to_bool(
-        create_values.get("multi_format_bookrag_enable_table_to_html", "")
-        or runtime.get("bookrag_enable_table_to_html")
-        or os.getenv("BOOKRAG_ENABLE_TABLE_TO_HTML", "true"),
-        default=True,
+        _first_defined(
+            create_values.get("multi_format_bookrag_enable_table_to_html", ""),
+            runtime.get("bookrag_enable_table_to_html"),
+            os.getenv("BOOKRAG_ENABLE_TABLE_TO_HTML", "false"),
+        ),
+        default=False,
     )
     enable_table_description = _to_bool(
-        create_values.get("multi_format_bookrag_enable_table_description", "")
-        or runtime.get("bookrag_enable_table_description")
-        or os.getenv("BOOKRAG_ENABLE_TABLE_DESCRIPTION", "false"),
+        _first_defined(
+            create_values.get("multi_format_bookrag_enable_table_description", ""),
+            runtime.get("bookrag_enable_table_description"),
+            os.getenv("BOOKRAG_ENABLE_TABLE_DESCRIPTION", "false"),
+        ),
         default=False,
     )
     enable_generative_ocr = _to_bool(
-        create_values.get("multi_format_bookrag_enable_generative_ocr", "")
-        or runtime.get("bookrag_enable_generative_ocr")
-        or os.getenv("BOOKRAG_ENABLE_GENERATIVE_OCR", "false"),
+        _first_defined(
+            create_values.get("multi_format_bookrag_enable_generative_ocr", ""),
+            runtime.get("bookrag_enable_generative_ocr"),
+            os.getenv("BOOKRAG_ENABLE_GENERATIVE_OCR", "false"),
+        ),
         default=False,
     )
 
     image_subtype = str(
-        create_values.get("multi_format_bookrag_image_description_subtype", "")
-        or runtime.get("bookrag_image_description_subtype")
-        or os.getenv("BOOKRAG_IMAGE_DESCRIPTION_SUBTYPE", "openai_image_description")
+        _first_defined(
+            create_values.get("multi_format_bookrag_image_description_subtype", ""),
+            runtime.get("bookrag_image_description_subtype"),
+            os.getenv("BOOKRAG_IMAGE_DESCRIPTION_SUBTYPE", "openai_image_description"),
+        )
+        or "openai_image_description"
     ).strip() or "openai_image_description"
     table_to_html_subtype = str(
-        create_values.get("multi_format_bookrag_table_to_html_subtype", "")
-        or runtime.get("bookrag_table_to_html_subtype")
-        or os.getenv("BOOKRAG_TABLE_TO_HTML_SUBTYPE", "openai_table2html")
+        _first_defined(
+            create_values.get("multi_format_bookrag_table_to_html_subtype", ""),
+            runtime.get("bookrag_table_to_html_subtype"),
+            os.getenv("BOOKRAG_TABLE_TO_HTML_SUBTYPE", "openai_table2html"),
+        )
+        or "openai_table2html"
     ).strip() or "openai_table2html"
     table_description_subtype = str(
-        create_values.get("multi_format_bookrag_table_description_subtype", "")
-        or runtime.get("bookrag_table_description_subtype")
-        or os.getenv("BOOKRAG_TABLE_DESCRIPTION_SUBTYPE", "openai_table_description")
+        _first_defined(
+            create_values.get("multi_format_bookrag_table_description_subtype", ""),
+            runtime.get("bookrag_table_description_subtype"),
+            os.getenv("BOOKRAG_TABLE_DESCRIPTION_SUBTYPE", "openai_table_description"),
+        )
+        or "openai_table_description"
     ).strip() or "openai_table_description"
     generative_ocr_subtype = str(
-        create_values.get("multi_format_bookrag_generative_ocr_subtype", "")
-        or runtime.get("bookrag_generative_ocr_subtype")
-        or os.getenv("BOOKRAG_GENERATIVE_OCR_SUBTYPE", "openai_ocr")
+        _first_defined(
+            create_values.get("multi_format_bookrag_generative_ocr_subtype", ""),
+            runtime.get("bookrag_generative_ocr_subtype"),
+            os.getenv("BOOKRAG_GENERATIVE_OCR_SUBTYPE", "openai_ocr"),
+        )
+        or "openai_ocr"
     ).strip() or "openai_ocr"
 
     partition_node, _, partition_warnings = build_bookrag_workflow_partition_node(

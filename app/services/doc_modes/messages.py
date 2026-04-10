@@ -7,7 +7,7 @@ def append_multi_format_summary(message: str, summary: dict | None) -> str:
 
     message = (
         f"{message} "
-        f"multi format chunks saved to {summary.get('table_name')} "
+        f"unstructured chunks saved to {summary.get('table_name')} "
         f"({summary.get('chunk_count')} rows from "
         f"{summary.get('document_count')} file(s))."
     )

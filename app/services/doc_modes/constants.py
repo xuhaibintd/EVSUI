@@ -42,8 +42,8 @@ DOC_PIPELINE_UI_DEFAULTS = {
 
 DOC_PIPELINE_OPTIONS = [
     {"value": "text_core", "label": "Text PDF Only"},
-    {"value": "multi_format", "label": "Multi-Format"},
-    {"value": "multi_format_bookrag", "label": "Multi-Format BookRAG"},
+    {"value": "multi_format", "label": "Unstructured"},
+    {"value": "multi_format_bookrag", "label": "Unstructured BookRAG"},
 ]
 DOC_PIPELINE_MODE_VALUES = {item["value"] for item in DOC_PIPELINE_OPTIONS}
 

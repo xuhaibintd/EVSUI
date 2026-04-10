@@ -177,15 +177,28 @@ def _parse_csv_values(raw: Any) -> list[str]:
     return [chunk.strip() for chunk in str(raw or "").split(",") if chunk.strip()]
 
 
+def _first_defined(*values: Any) -> Any:
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        return value
+    return None
+
+
 def _resolve_bookrag_image_partition_options(create_values: dict[str, str]) -> tuple[dict[str, Any], list[str], dict[str, Any]]:
     runtime = _load_unstructured_runtime_settings()
     warnings: list[str] = []
 
     raw_extract_types = str(
-        create_values.get("multi_format_bookrag_extract_image_block_types", "")
-        or runtime.get("bookrag_extract_image_block_types")
-        or runtime.get("extract_image_block_types")
-        or os.getenv("BOOKRAG_EXTRACT_IMAGE_BLOCK_TYPES", "")
+        _first_defined(
+            create_values.get("multi_format_bookrag_extract_image_block_types", ""),
+            runtime.get("bookrag_extract_image_block_types"),
+            runtime.get("extract_image_block_types"),
+            os.getenv("BOOKRAG_EXTRACT_IMAGE_BLOCK_TYPES", ""),
+        )
+        or ""
     ).strip()
     extract_mode = raw_extract_types.lower()
     if extract_mode == "auto":
@@ -194,29 +207,39 @@ def _resolve_bookrag_image_partition_options(create_values: dict[str, str]) -> t
         extract_image_block_types = _parse_csv_values(raw_extract_types)
 
     raw_infer_table_structure = str(
-        create_values.get("multi_format_bookrag_infer_table_structure", "")
-        or runtime.get("bookrag_infer_table_structure")
-        or runtime.get("infer_table_structure")
-        or os.getenv("BOOKRAG_INFER_TABLE_STRUCTURE", "")
+        _first_defined(
+            create_values.get("multi_format_bookrag_infer_table_structure", ""),
+            runtime.get("bookrag_infer_table_structure"),
+            runtime.get("infer_table_structure"),
+            os.getenv("BOOKRAG_INFER_TABLE_STRUCTURE", ""),
+        )
+        or ""
     ).strip()
     infer_table_structure = _to_bool(raw_infer_table_structure, default=False)
 
     coordinates = _to_bool(
-        create_values.get("multi_format_bookrag_coordinates", "true")
-        or runtime.get("bookrag_coordinates")
-        or os.getenv("BOOKRAG_COORDINATES", "true"),
+        _first_defined(
+            create_values.get("multi_format_bookrag_coordinates", "true"),
+            runtime.get("bookrag_coordinates"),
+            os.getenv("BOOKRAG_COORDINATES", "true"),
+        ),
         default=True,
     )
     unique_element_ids = _to_bool(
-        runtime.get("bookrag_unique_element_ids")
-        or runtime.get("unique_element_ids")
-        or os.getenv("BOOKRAG_UNIQUE_ELEMENT_IDS", "true"),
+        _first_defined(
+            runtime.get("bookrag_unique_element_ids"),
+            runtime.get("unique_element_ids"),
+            os.getenv("BOOKRAG_UNIQUE_ELEMENT_IDS", "true"),
+        ),
         default=True,
     )
     hi_res_model_name = str(
-        runtime.get("bookrag_hi_res_model_name")
-        or runtime.get("hi_res_model_name")
-        or os.getenv("BOOKRAG_HI_RES_MODEL_NAME", "")
+        _first_defined(
+            runtime.get("bookrag_hi_res_model_name"),
+            runtime.get("hi_res_model_name"),
+            os.getenv("BOOKRAG_HI_RES_MODEL_NAME", ""),
+        )
+        or ""
     ).strip()
 
     extra: dict[str, Any] = {
@@ -488,6 +511,26 @@ def _json_safe_value(value: Any) -> Any:
     if isinstance(value, (list, tuple, set)):
         return [_json_safe_value(item) for item in value]
     return str(value)
+
+def _workflow_debug_payload(
+    request_parameters: dict[str, Any],
+    *,
+    processing_profile: str,
+    workflow_id: str = "",
+    workflow_name: str = "",
+    job_id: str = "",
+    workflow_kind: str = "",
+) -> dict[str, Any]:
+    workflow_nodes = list(request_parameters.get("workflow_nodes") or [])
+    return {
+        "workflow_kind": workflow_kind or "workflow",
+        "processing_profile": processing_profile,
+        "workflow_id": workflow_id,
+        "workflow_name": workflow_name or str(request_parameters.get("workflow_name") or "").strip(),
+        "job_id": job_id or str(request_parameters.get("job_id") or "").strip(),
+        "workflow_node_count": len(workflow_nodes),
+        "workflow_nodes": _json_safe_value(workflow_nodes),
+    }
 
 
 def _bookrag_partition_options_for_file(

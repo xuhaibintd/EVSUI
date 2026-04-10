@@ -416,6 +416,8 @@
   display: grid;
   place-items: center;
   padding: 1rem;
+  background: rgba(15, 23, 42, 0.34);
+  backdrop-filter: blur(1px);
 }
 
 .confirm-modal[hidden] {
@@ -425,9 +427,13 @@
 .confirm-modal-backdrop {
   position: absolute;
   inset: 0;
+  padding: 0;
+  margin: 0;
   border: 0;
-  background: rgba(3, 9, 22, 0.65);
-  backdrop-filter: blur(2px);
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent !important;
+  box-shadow: none !important;
   cursor: default;
 }
 

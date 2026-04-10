@@ -34,7 +34,7 @@
   <div class="multi-format-section stack">
     <div class="multi-format-section-head">
       <h4>3. Enrichment Nodes</h4>
-      <p class="multi-format-section-copy">Each enrichment node has its own subtype, provider, and model settings.</p>
+      <p class="multi-format-section-copy">Each enrichment node currently uses subtype-only configuration for Unstructured on-demand workflows.</p>
     </div>
     <div class="multi-format-enrichment-stack">
       <article class="multi-format-enrichment-card" data-enrichment-card="generative_ocr" data-partition-routes="auto hi_res">
@@ -50,8 +50,6 @@
           </div>
           <div class="multi-format-enrichment-config" data-enrichment-panel-for="generative_ocr">
             {{ fields.render_field(mf.map['multi_format_generative_ocr_subtype'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
-            {{ fields.render_field(mf.map['multi_format_generative_ocr_provider_type'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
-            {{ fields.render_field(mf.map['multi_format_generative_ocr_model'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
           </div>
         </div>
       </article>
@@ -69,8 +67,6 @@
           </div>
           <div class="multi-format-enrichment-config" data-enrichment-panel-for="image_description">
             {{ fields.render_field(mf.map['multi_format_image_description_subtype'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
-            {{ fields.render_field(mf.map['multi_format_image_description_provider_type'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
-            {{ fields.render_field(mf.map['multi_format_image_description_model'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
           </div>
         </div>
       </article>
@@ -88,8 +84,6 @@
           </div>
           <div class="multi-format-enrichment-config" data-enrichment-panel-for="table_description">
             {{ fields.render_field(mf.map['multi_format_table_description_subtype'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
-            {{ fields.render_field(mf.map['multi_format_table_description_provider_type'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
-            {{ fields.render_field(mf.map['multi_format_table_description_model'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
           </div>
         </div>
       </article>
@@ -98,7 +92,7 @@
         <div class="multi-format-enrichment-head">
           <div>
             <h5>Table to HTML</h5>
-            <p>Pick a node mode. `twopass_table2html` ignores provider and model.</p>
+            <p>Pick a node subtype. `twopass_table2html` is the safest template-compatible option.</p>
           </div>
         </div>
         <div class="multi-format-enrichment-row">
@@ -107,8 +101,6 @@
           </div>
           <div class="multi-format-enrichment-config" data-enrichment-panel-for="table_to_html">
             {{ fields.render_field(mf.map['multi_format_table_to_html_subtype'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
-            {{ fields.render_field(mf.map['multi_format_table_to_html_provider_type'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
-            {{ fields.render_field(mf.map['multi_format_table_to_html_model'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
           </div>
         </div>
       </article>
