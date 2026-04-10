@@ -96,6 +96,51 @@
     });
   }
 
+  function bindEnrichmentParams(scope = document) {
+    const forms = scope.querySelectorAll("#section-create form[hx-post='/ui/create/upload']");
+    forms.forEach((form) => {
+      const toggles = form.querySelectorAll("select[data-enrichment-toggle]");
+      if (!toggles.length) {
+        return;
+      }
+      if (form.dataset.enrichmentParamsBound === "1") {
+        return;
+      }
+      form.dataset.enrichmentParamsBound = "1";
+
+      const syncByEnrichment = () => {
+        const locked = form.classList.contains("disabled-block");
+        toggles.forEach((toggle) => {
+          if (!(toggle instanceof HTMLSelectElement)) {
+            return;
+          }
+          const key = (toggle.dataset.enrichmentToggle || "").trim();
+          if (!key) {
+            return;
+          }
+          const card = form.querySelector(`[data-enrichment-card='${key}']`);
+          const panel = form.querySelector(`[data-enrichment-panel-for='${key}']`);
+          if (!(panel instanceof HTMLElement)) {
+            return;
+          }
+          const enabled = (toggle.value || "").trim().toLowerCase() === "true";
+          const cardHidden = card instanceof HTMLElement && card.hidden;
+          panel.hidden = !enabled || cardHidden;
+          panel.classList.toggle("enrichment-panel-hidden", !enabled || cardHidden);
+          panel.querySelectorAll("input, select, textarea").forEach((control) => {
+            control.disabled = !enabled || locked || cardHidden;
+          });
+        });
+      };
+
+      toggles.forEach((toggle) => {
+        toggle.addEventListener("change", syncByEnrichment);
+      });
+      form.addEventListener("change", syncByEnrichment, true);
+      syncByEnrichment();
+    });
+  }
+
   function bindDocPipelineParams(scope = document) {
     const forms = scope.querySelectorAll("#section-create form[hx-post='/ui/create/upload']");
     forms.forEach((form) => {
@@ -142,8 +187,10 @@
   app.bindAlgorithmParams = bindAlgorithmParams;
   app.bindDocPipelineParams = bindDocPipelineParams;
   app.bindPartitionRouteParams = bindPartitionRouteParams;
+  app.bindEnrichmentParams = bindEnrichmentParams;
 
   app.registerBinder(bindAlgorithmParams);
   app.registerBinder(bindDocPipelineParams);
   app.registerBinder(bindPartitionRouteParams);
+  app.registerBinder(bindEnrichmentParams);
 })(window);

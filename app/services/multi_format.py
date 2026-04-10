@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import httpx
 import json
 import mimetypes
 import os
@@ -10,6 +9,30 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any, Callable
+
+from app.services.teradata_sql import (
+    ExecuteSqlFn,
+    _count_teradata_rows,
+    _qualified_table_sql,
+    _sql_literal,
+    _teradata_table_exists,
+)
+from app.services.unstructured_runtime import (
+    BOOKRAG_PDF_IMAGE_EXTENSIONS,
+    BOOKRAG_RAW_STAGE_DIR_DEFAULT,
+    EXCEL_EXTENSIONS,
+    UNSTRUCTURED_DEBUG_DIR_DEFAULT,
+    UNSTRUCTURED_FAST_UNSAFE_IMAGE_EXTENSIONS,
+    UNSTRUCTURED_TERADATA_FLUSH_WAIT_INTERVAL_DEFAULT,
+    UNSTRUCTURED_TERADATA_FLUSH_WAIT_SECONDS_DEFAULT,
+    _env_flag,
+    _load_unstructured_runtime_config,
+    _load_unstructured_runtime_settings,
+    _parse_langs,
+    _resolve_bookrag_workflow_poll_config,
+    _resolve_multi_format_workflow_poll_config,
+    _resolve_partition_strategy,
+)
 
 from app.services.bookrag_schema import build_bookrag_table_targets, prepare_bookrag_document_table, prepare_bookrag_raw_table
 from app.services.bookrag_storage import (
@@ -20,37 +43,18 @@ from app.services.bookrag_storage import (
     persist_bookrag_raw_rows,
     write_bookrag_raw_stage_file,
 )
+from app.services.unstructured_job_runner import (
+    create_unstructured_client as _create_unstructured_client,
+    enforce_unstructured_job_submission_spacing as _enforce_unstructured_job_submission_spacing,
+    run_unstructured_workflow_job_for_file as _run_unstructured_workflow_job_for_file,
+)
+from app.services.unstructured_workflow_builder import (
+    build_bookrag_reusable_workflow_definition as _workflow_builder_build_bookrag_reusable_workflow_definition,
+    build_bookrag_workflow_partition_node as _workflow_builder_build_bookrag_workflow_partition_node,
+    build_multi_format_workflow_definition as _workflow_builder_build_multi_format_workflow_definition,
+)
 
 TERADATA_IDENTIFIER_MAX_LEN = 30
-UNSTRUCTURED_CONFIG_FILE_DEFAULT = Path(__file__).resolve().parents[1] / "config" / "unstructured.json"
-UNSTRUCTURED_WORKFLOW_API_URL_DEFAULT = "https://platform.unstructuredapp.io/api/v1"
-UNSTRUCTURED_WORKFLOW_POLL_SECONDS_DEFAULT = 900
-UNSTRUCTURED_WORKFLOW_POLL_INTERVAL_DEFAULT = 2
-UNSTRUCTURED_TERADATA_FLUSH_WAIT_SECONDS_DEFAULT = 20
-UNSTRUCTURED_TERADATA_FLUSH_WAIT_INTERVAL_DEFAULT = 2
-UNSTRUCTURED_DEBUG_DIR_DEFAULT = Path(__file__).resolve().parents[2] / "uploads" / "multi_format_stage"
-BOOKRAG_RAW_STAGE_DIR_DEFAULT = Path(__file__).resolve().parents[2] / "uploads" / "bookrag_raw_stage"
-BOOKRAG_PDF_IMAGE_EXTENSIONS = {
-    ".pdf",
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".tif",
-    ".tiff",
-    ".bmp",
-    ".gif",
-    ".webp",
-}
-UNSTRUCTURED_FAST_UNSAFE_IMAGE_EXTENSIONS = BOOKRAG_PDF_IMAGE_EXTENSIONS - {".pdf"}
-EXCEL_OPENXML_EXTENSIONS = {".xlsx", ".xlsm", ".xltx", ".xltm"}
-EXCEL_LEGACY_EXTENSIONS = {".xls"}
-EXCEL_EXTENSIONS = EXCEL_OPENXML_EXTENSIONS | EXCEL_LEGACY_EXTENSIONS
-
-
-ExecuteSqlFn = Callable[[str], Any]
-ResolvePathFn = Callable[[str], str]
-
-
 FILE_BASED_CREATE_KEYS_TO_REMOVE = {
     "chunk_size",
     "chunk_overlap",
@@ -309,71 +313,6 @@ def _resolve_multi_format_table_target(
     return table_name, schema_name, qualified, warnings
 
 
-def _qualified_table_sql(schema_name: str | None, table_name: str) -> str:
-    if schema_name:
-        return f'"{schema_name}"."{table_name}"'
-    return f'"{table_name}"'
-
-
-def _cursor_first_scalar(cursor) -> str | int | None:
-    if cursor is None:
-        return None
-    fetchone = getattr(cursor, "fetchone", None)
-    if callable(fetchone):
-        try:
-            row = fetchone()
-        except Exception:
-            row = None
-        if isinstance(row, dict):
-            for value in row.values():
-                return value
-            return None
-        if isinstance(row, (list, tuple)) and row:
-            return row[0]
-        if row is not None:
-            try:
-                return row[0]  # tuple-like row wrappers
-            except Exception:
-                pass
-        if row is not None:
-            return row
-
-    fetchall = getattr(cursor, "fetchall", None)
-    if callable(fetchall):
-        try:
-            rows = fetchall()
-        except Exception:
-            rows = []
-        if not rows:
-            return None
-        first = rows[0]
-        if isinstance(first, dict):
-            for value in first.values():
-                return value
-            return None
-        if isinstance(first, (list, tuple)) and first:
-            return first[0]
-        try:
-            return first[0]  # tuple-like row wrappers
-        except Exception:
-            pass
-        return first
-    return None
-
-
-def _teradata_table_exists(qualified_table_sql: str, execute_sql_fn: ExecuteSqlFn | None) -> bool:
-    if execute_sql_fn is None:
-        raise RuntimeError("teradataml.execute_sql is unavailable.")
-    try:
-        execute_sql_fn(f"SELECT TOP 1 1 FROM {qualified_table_sql}")
-        return True
-    except Exception as ex:
-        msg = str(ex).lower()
-        if "3807" in msg or "does not exist" in msg or "not found" in msg:
-            return False
-        raise
-
-
 def _teradata_column_exists(
     schema_name: str | None,
     table_name: str,
@@ -453,23 +392,6 @@ def _ensure_unstructured_teradata_table(
     return warnings
 
 
-def _count_teradata_rows(schema_name: str | None, table_name: str, execute_sql_fn: ExecuteSqlFn | None) -> int | None:
-    if execute_sql_fn is None:
-        return None
-    qualified_table = _qualified_table_sql(schema_name, table_name)
-    try:
-        cursor = execute_sql_fn(f"SELECT COUNT(*) FROM {qualified_table}")
-    except Exception:
-        return None
-    scalar = _cursor_first_scalar(cursor)
-    if scalar is None:
-        return None
-    try:
-        return int(scalar)
-    except Exception:
-        return None
-
-
 def _wait_for_table_rows(
     schema_name: str | None,
     table_name: str,
@@ -499,36 +421,6 @@ def _strip_file_based_create_params(payload: dict[str, Any]) -> dict[str, Any]:
     for key in FILE_BASED_CREATE_KEYS_TO_REMOVE:
         cleaned.pop(key, None)
     return cleaned
-
-
-def _env_flag(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    value = str(raw).strip().lower()
-    if value in {"1", "true", "yes", "on"}:
-        return True
-    if value in {"0", "false", "no", "off"}:
-        return False
-    return default
-
-
-def _parse_langs(raw: str) -> list[str]:
-    items = [chunk.strip() for chunk in str(raw or "").replace("\n", ",").split(",") if chunk.strip()]
-    return items
-
-
-def _resolve_partition_strategy(raw: str) -> str:
-    value = str(raw or "auto").strip().lower()
-    if value == "fast":
-        return "fast"
-    if value in {"hi_res", "layout"}:
-        return "hi_res"
-    if value == "vlm":
-        return "vlm"
-    if value == "ocr_only":
-        return "ocr_only"
-    return "auto"
 
 
 def _now_ts() -> str:
@@ -709,17 +601,6 @@ def _as_int(value: Any) -> int | None:
         return int(value)
     except Exception:
         return None
-
-
-def _sql_literal(value: Any) -> str:
-    if value is None:
-        return "NULL"
-    if isinstance(value, bool):
-        return "1" if value else "0"
-    if isinstance(value, int):
-        return str(value)
-    text = str(value).replace("'", "''")
-    return f"'{text}'"
 
 
 def _is_excel_file(src: Path) -> bool:
@@ -1054,331 +935,6 @@ def _partition_document_elements(
     return elements, partition_parameters
 
 
-def _resolve_bookrag_workflow_poll_config() -> tuple[int, int]:
-    runtime = _load_unstructured_runtime_settings()
-    timeout_seconds = _to_int(
-        runtime.get("bookrag_workflow_poll_seconds")
-        or runtime.get("workflow_poll_seconds")
-        or os.getenv("BOOKRAG_WORKFLOW_POLL_SECONDS")
-        or os.getenv("UNSTRUCTURED_WORKFLOW_POLL_SECONDS"),
-        default=UNSTRUCTURED_WORKFLOW_POLL_SECONDS_DEFAULT,
-        minimum=10,
-        maximum=3600,
-    )
-    poll_interval_seconds = _to_int(
-        runtime.get("bookrag_workflow_poll_interval_seconds")
-        or runtime.get("workflow_poll_interval_seconds")
-        or os.getenv("BOOKRAG_WORKFLOW_POLL_INTERVAL_SECONDS")
-        or os.getenv("UNSTRUCTURED_WORKFLOW_POLL_INTERVAL_SECONDS"),
-        default=UNSTRUCTURED_WORKFLOW_POLL_INTERVAL_DEFAULT,
-        minimum=1,
-        maximum=60,
-    )
-    return timeout_seconds, min(timeout_seconds, max(1, poll_interval_seconds))
-
-
-def _resolve_multi_format_workflow_poll_config() -> tuple[int, int]:
-    runtime = _load_unstructured_runtime_settings()
-    timeout_seconds = _to_int(
-        runtime.get("multi_format_workflow_poll_seconds")
-        or runtime.get("workflow_poll_seconds")
-        or os.getenv("MULTI_FORMAT_WORKFLOW_POLL_SECONDS")
-        or os.getenv("UNSTRUCTURED_WORKFLOW_POLL_SECONDS"),
-        default=UNSTRUCTURED_WORKFLOW_POLL_SECONDS_DEFAULT,
-        minimum=10,
-        maximum=3600,
-    )
-    poll_interval_seconds = _to_int(
-        runtime.get("multi_format_workflow_poll_interval_seconds")
-        or runtime.get("workflow_poll_interval_seconds")
-        or os.getenv("MULTI_FORMAT_WORKFLOW_POLL_INTERVAL_SECONDS")
-        or os.getenv("UNSTRUCTURED_WORKFLOW_POLL_INTERVAL_SECONDS"),
-        default=UNSTRUCTURED_WORKFLOW_POLL_INTERVAL_DEFAULT,
-        minimum=1,
-        maximum=60,
-    )
-    return timeout_seconds, min(timeout_seconds, max(1, poll_interval_seconds))
-
-
-def _resolve_multi_format_accuracy_options(create_values: dict[str, str]) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
-    runtime = _load_unstructured_runtime_settings()
-    warnings: list[str] = []
-
-    infer_table_structure = _to_bool(
-        create_values.get("multi_format_infer_table_structure", "")
-        or runtime.get("multi_format_infer_table_structure")
-        or runtime.get("infer_table_structure")
-        or os.getenv("MULTI_FORMAT_INFER_TABLE_STRUCTURE", "true"),
-        default=True,
-    )
-    hi_res_model_name = str(
-        create_values.get("multi_format_hi_res_model_name", "")
-        or runtime.get("multi_format_hi_res_model_name")
-        or runtime.get("hi_res_model_name")
-        or os.getenv("MULTI_FORMAT_HI_RES_MODEL_NAME", "")
-    ).strip()
-    vlm_provider = str(
-        create_values.get("multi_format_vlm_provider", "")
-        or runtime.get("multi_format_vlm_provider")
-        or runtime.get("vlm_provider")
-        or os.getenv("MULTI_FORMAT_VLM_PROVIDER", "")
-    ).strip()
-    vlm_model = str(
-        create_values.get("multi_format_vlm_model", "")
-        or runtime.get("multi_format_vlm_model")
-        or runtime.get("vlm_model")
-        or os.getenv("MULTI_FORMAT_VLM_MODEL", "")
-    ).strip()
-    vlm_provider_api_key = str(
-        create_values.get("multi_format_vlm_provider_api_key", "")
-        or runtime.get("multi_format_vlm_provider_api_key")
-        or runtime.get("vlm_provider_api_key")
-        or os.getenv("MULTI_FORMAT_VLM_PROVIDER_API_KEY", "")
-    ).strip()
-
-    enable_generative_ocr = _to_bool(
-        create_values.get("multi_format_enable_generative_ocr", "")
-        or runtime.get("multi_format_enable_generative_ocr")
-        or os.getenv("MULTI_FORMAT_ENABLE_GENERATIVE_OCR", "true"),
-        default=True,
-    )
-    enable_table_to_html = _to_bool(
-        create_values.get("multi_format_enable_table_to_html", "")
-        or runtime.get("multi_format_enable_table_to_html")
-        or os.getenv("MULTI_FORMAT_ENABLE_TABLE_TO_HTML", "true"),
-        default=True,
-    )
-    enable_table_description = _to_bool(
-        create_values.get("multi_format_enable_table_description", "")
-        or runtime.get("multi_format_enable_table_description")
-        or os.getenv("MULTI_FORMAT_ENABLE_TABLE_DESCRIPTION", "false"),
-        default=False,
-    )
-    enable_image_description = _to_bool(
-        create_values.get("multi_format_enable_image_description", "")
-        or runtime.get("multi_format_enable_image_description")
-        or os.getenv("MULTI_FORMAT_ENABLE_IMAGE_DESCRIPTION", "false"),
-        default=False,
-    )
-
-    raw_extract_types = str(
-        create_values.get("multi_format_extract_image_block_types", "")
-        or runtime.get("multi_format_extract_image_block_types")
-        or os.getenv("MULTI_FORMAT_EXTRACT_IMAGE_BLOCK_TYPES", "auto")
-    ).strip()
-    if raw_extract_types.lower() == "auto":
-        extract_image_block_types: list[str] = []
-        if enable_generative_ocr:
-            extract_image_block_types.extend(["NarrativeText", "Title", "ListItem", "UncategorizedText"])
-        if enable_table_to_html or enable_table_description:
-            extract_image_block_types.append("Table")
-        if enable_image_description:
-            extract_image_block_types.append("Image")
-    else:
-        extract_image_block_types = _parse_csv_values(raw_extract_types)
-    normalized_extract_types: list[str] = []
-    for item in extract_image_block_types:
-        value = str(item or "").strip()
-        if value and value not in normalized_extract_types:
-            normalized_extract_types.append(value)
-
-    partition_options: dict[str, Any] = {
-        "infer_table_structure": infer_table_structure,
-        "extract_image_block_types": normalized_extract_types,
-        "hi_res_model_name": hi_res_model_name or None,
-        "vlm_provider": vlm_provider or None,
-        "vlm_model": vlm_model or None,
-        "vlm_provider_api_key": vlm_provider_api_key or None,
-        "unique_element_ids": True,
-    }
-
-    def _provider_settings(prefix: str, *, default_subtype: str, default_provider: str, default_model: str) -> tuple[str, dict[str, Any]]:
-        subtype = str(
-            create_values.get(f"multi_format_{prefix}_subtype", "")
-            or runtime.get(f"multi_format_{prefix}_subtype")
-            or os.getenv(f"MULTI_FORMAT_{prefix.upper()}_SUBTYPE", default_subtype)
-        ).strip() or default_subtype
-        provider_type = str(
-            create_values.get(f"multi_format_{prefix}_provider_type", "")
-            or runtime.get(f"multi_format_{prefix}_provider_type")
-            or os.getenv(f"MULTI_FORMAT_{prefix.upper()}_PROVIDER_TYPE", default_provider)
-        ).strip() or default_provider
-        model = str(
-            create_values.get(f"multi_format_{prefix}_model", "")
-            or runtime.get(f"multi_format_{prefix}_model")
-            or os.getenv(f"MULTI_FORMAT_{prefix.upper()}_MODEL", default_model)
-        ).strip() or default_model
-        settings: dict[str, Any] = {}
-        if subtype != "twopass_table2html":
-            if provider_type:
-                settings["provider_type"] = provider_type
-            if model:
-                settings["model"] = model
-        return subtype, settings
-
-    enrichment_options = {
-        "enable_generative_ocr": enable_generative_ocr,
-        "enable_table_to_html": enable_table_to_html,
-        "enable_table_description": enable_table_description,
-        "enable_image_description": enable_image_description,
-    }
-    subtype, settings = _provider_settings(
-        "generative_ocr",
-        default_subtype="openai_ocr",
-        default_provider="openai",
-        default_model="gpt-5-mini",
-    )
-    enrichment_options["generative_ocr_subtype"] = subtype
-    enrichment_options["generative_ocr_settings"] = settings
-    subtype, settings = _provider_settings(
-        "table_to_html",
-        default_subtype="twopass_table2html",
-        default_provider="",
-        default_model="",
-    )
-    enrichment_options["table_to_html_subtype"] = subtype
-    enrichment_options["table_to_html_settings"] = settings
-    subtype, settings = _provider_settings(
-        "table_description",
-        default_subtype="openai_table_description",
-        default_provider="openai",
-        default_model="gpt-5-mini",
-    )
-    enrichment_options["table_description_subtype"] = subtype
-    enrichment_options["table_description_settings"] = settings
-    subtype, settings = _provider_settings(
-        "image_description",
-        default_subtype="openai_image_description",
-        default_provider="openai",
-        default_model="gpt-5-mini",
-    )
-    enrichment_options["image_description_subtype"] = subtype
-    enrichment_options["image_description_settings"] = settings
-
-    return partition_options, enrichment_options, warnings
-
-
-def _build_multi_format_workflow_partition_node(
-    *,
-    src: Path,
-    partition_strategy: str,
-    languages: list[str],
-    partition_options: dict[str, Any] | None,
-) -> tuple[dict[str, Any], list[str]]:
-    warnings: list[str] = []
-    partition_options = partition_options or {}
-    extract_image_block_types = partition_options.get("extract_image_block_types") or []
-    hi_res_model_name = str(partition_options.get("hi_res_model_name") or "").strip()
-    infer_table_structure = bool(partition_options.get("infer_table_structure"))
-    unique_element_ids = bool(partition_options.get("unique_element_ids", True))
-    vlm_provider = str(partition_options.get("vlm_provider") or "").strip()
-    vlm_model = str(partition_options.get("vlm_model") or "").strip()
-    vlm_provider_api_key = str(partition_options.get("vlm_provider_api_key") or "").strip()
-    requested_strategy = (partition_strategy or "auto").strip().lower() or "auto"
-
-    if requested_strategy == "auto":
-        settings: dict[str, Any] = {
-            "strategy": "auto",
-            "output_format": "application/json",
-            "format_html": False,
-            "unique_element_ids": unique_element_ids,
-            "is_dynamic": True,
-            "allow_fast": True,
-        }
-        if vlm_provider:
-            settings["provider"] = vlm_provider
-        if vlm_model:
-            settings["model"] = vlm_model
-        if vlm_provider_api_key:
-            settings["provider_api_key"] = vlm_provider_api_key
-        return {
-            "name": "Partitioner",
-            "type": "partition",
-            "subtype": "vlm",
-            "settings": settings,
-        }, warnings
-
-    if requested_strategy == "vlm":
-        settings = {
-            "strategy": "vlm",
-            "output_format": "application/json",
-            "format_html": False,
-            "unique_element_ids": unique_element_ids,
-            "is_dynamic": False,
-            "allow_fast": False,
-        }
-        if vlm_provider:
-            settings["provider"] = vlm_provider
-        if vlm_model:
-            settings["model"] = vlm_model
-        if vlm_provider_api_key:
-            settings["provider_api_key"] = vlm_provider_api_key
-        return {
-            "name": "Partitioner",
-            "type": "partition",
-            "subtype": "vlm",
-            "settings": settings,
-        }, warnings
-
-    settings = {
-        "strategy": requested_strategy,
-        "include_page_breaks": False,
-        "unique_element_ids": unique_element_ids,
-    }
-    if languages:
-        settings["ocr_languages"] = languages
-    if extract_image_block_types:
-        settings["extract_image_block_types"] = extract_image_block_types
-    if requested_strategy == "hi_res" and infer_table_structure:
-        settings["pdf_infer_table_structure"] = True
-        settings["infer_table_structure"] = True
-    if hi_res_model_name and requested_strategy == "hi_res":
-        settings["hi_res_model_name"] = hi_res_model_name
-    return {
-        "name": "Partitioner",
-        "type": "partition",
-        "subtype": "unstructured_api",
-        "settings": settings,
-    }, warnings
-
-
-def _build_multi_format_enrichment_nodes(*, enrichment_options: dict[str, Any], partition_strategy: str) -> tuple[list[dict[str, Any]], list[str]]:
-    requested_strategy = (partition_strategy or "auto").strip().lower() or "auto"
-    if requested_strategy not in {"auto", "hi_res"}:
-        return [], []
-
-    nodes: list[dict[str, Any]] = []
-    if enrichment_options.get("enable_image_description"):
-        nodes.append({
-            "name": "Image Description",
-            "type": "prompter",
-            "subtype": str(enrichment_options.get("image_description_subtype") or "openai_image_description"),
-            "settings": dict(enrichment_options.get("image_description_settings") or {}),
-        })
-    if enrichment_options.get("enable_table_to_html"):
-        nodes.append({
-            "name": "Table to HTML",
-            "type": "prompter",
-            "subtype": str(enrichment_options.get("table_to_html_subtype") or "twopass_table2html"),
-            "settings": dict(enrichment_options.get("table_to_html_settings") or {}),
-        })
-    if enrichment_options.get("enable_table_description"):
-        nodes.append({
-            "name": "Table Description",
-            "type": "prompter",
-            "subtype": str(enrichment_options.get("table_description_subtype") or "openai_table_description"),
-            "settings": dict(enrichment_options.get("table_description_settings") or {}),
-        })
-    if enrichment_options.get("enable_generative_ocr"):
-        nodes.append({
-            "name": "Generative OCR",
-            "type": "prompter",
-            "subtype": str(enrichment_options.get("generative_ocr_subtype") or "openai_ocr"),
-            "settings": dict(enrichment_options.get("generative_ocr_settings") or {}),
-        })
-
-    return nodes, []
-
 
 def _build_bookrag_workflow_partition_node(
     *,
@@ -1387,160 +943,12 @@ def _build_bookrag_workflow_partition_node(
     languages: list[str],
     image_partition_parameters: dict[str, Any] | None,
 ) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
-    warnings: list[str] = []
-    image_partition_parameters = image_partition_parameters or {}
-    extract_image_block_types = image_partition_parameters.get("extract_image_block_types") or []
-    normalized_extract_types: list[str] = []
-    for item in extract_image_block_types:
-        value = str(item or "").strip()
-        if not value:
-            continue
-        normalized = "Image" if value.lower() == "image" else "Table" if value.lower() == "table" else value
-        if normalized not in normalized_extract_types:
-            normalized_extract_types.append(normalized)
-
-    hi_res_model_name = str(image_partition_parameters.get("hi_res_model_name") or "").strip()
-    infer_table_structure = bool(image_partition_parameters.get("infer_table_structure"))
-    requested_strategy = (partition_strategy or "auto").strip().lower() or "auto"
-    unique_element_ids = bool(image_partition_parameters.get("unique_element_ids", True))
-
-    if requested_strategy == "auto":
-        if languages:
-            warnings.append(
-                f"bookrag ocr_languages for {src.name} are ignored when workflow strategy='auto'; Unstructured auto routing controls OCR internally."
-            )
-        if normalized_extract_types:
-            warnings.append(
-                f"bookrag extract_image_block_types for {src.name} are ignored when workflow strategy='auto'; downstream enrichment nodes handle matching elements automatically."
-            )
-        if infer_table_structure:
-            warnings.append(
-                f"bookrag infer_table_structure for {src.name} is ignored when workflow strategy='auto'; use the Table to HTML enrichment node instead."
-            )
-        settings: dict[str, Any] = {
-            "strategy": "auto",
-            "output_format": "application/json",
-            "format_html": False,
-            "unique_element_ids": unique_element_ids,
-            "is_dynamic": True,
-            "allow_fast": True,
-        }
-        workflow_node = {
-            "name": "Partitioner",
-            "type": "partition",
-            "subtype": "vlm",
-            "settings": settings,
-        }
-    elif requested_strategy == "vlm":
-        settings = {
-            "strategy": "vlm",
-            "output_format": "application/json",
-            "format_html": False,
-            "unique_element_ids": unique_element_ids,
-            "is_dynamic": False,
-            "allow_fast": False,
-        }
-        if infer_table_structure:
-            settings["infer_table_structure"] = True
-        workflow_node = {
-            "name": "Partitioner",
-            "type": "partition",
-            "subtype": "vlm",
-            "settings": settings,
-        }
-    else:
-        settings = {
-            "strategy": requested_strategy,
-            "include_page_breaks": False,
-            "unique_element_ids": unique_element_ids,
-        }
-        if languages:
-            settings["ocr_languages"] = languages
-        if normalized_extract_types:
-            settings["extract_image_block_types"] = normalized_extract_types
-        if requested_strategy == "hi_res" and infer_table_structure:
-            settings["pdf_infer_table_structure"] = True
-            settings["infer_table_structure"] = True
-        if hi_res_model_name and requested_strategy == "hi_res":
-            settings["hi_res_model_name"] = hi_res_model_name
-        if requested_strategy not in {"hi_res", "vlm"} and infer_table_structure:
-            warnings.append(
-                f"bookrag infer_table_structure was requested for {src.name} but is only enabled when strategy='hi_res' or 'vlm'."
-            )
-        workflow_node = {
-            "name": "Partitioner",
-            "type": "partition",
-            "subtype": "unstructured_api",
-            "settings": settings,
-        }
-
-    request_parameters = {
-        "source_file": str(src),
-        "workflow_type": "custom",
-        "workflow_nodes": [workflow_node],
-    }
-    return workflow_node, request_parameters, warnings
-
-
-def _normalize_bookrag_workflow_name(raw_name: str | None) -> str:
-    name = str(raw_name or "").strip()
-    if not name:
-        return "bookrag_raw_prod"
-    return re.sub(r"\s+", "_", name)
-
-
-def _workflow_node_payload(node: Any) -> dict[str, Any]:
-    if hasattr(node, "model_dump"):
-        data = node.model_dump(by_alias=True, exclude_none=True)
-    elif isinstance(node, dict):
-        data = dict(node)
-    else:
-        data = {
-            "name": getattr(node, "name", None),
-            "type": getattr(node, "type", None),
-            "subtype": getattr(node, "subtype", None),
-            "settings": getattr(node, "settings", None),
-        }
-    return {
-        "name": str(data.get("name") or "").strip(),
-        "type": str(data.get("type") or "").strip(),
-        "subtype": str(data.get("subtype") or "").strip(),
-        "settings": _json_safe_value(data.get("settings") or {}),
-    }
-
-
-def _workflow_nodes_signature(nodes: list[Any]) -> str:
-    normalized = [_workflow_node_payload(node) for node in nodes]
-    return json.dumps(normalized, ensure_ascii=False, sort_keys=True)
-
-
-def _workflow_debug_payload(
-    request_parameters: dict[str, Any] | None,
-    *,
-    processing_profile: str = "",
-    workflow_id: str = "",
-    workflow_name: str = "",
-    job_id: str = "",
-    workflow_kind: str = "",
-) -> dict[str, Any]:
-    request_parameters = dict(request_parameters or {})
-    workflow_nodes = [_workflow_node_payload(node) for node in (request_parameters.get("workflow_nodes") or [])]
-    partition_node = workflow_nodes[0] if workflow_nodes else {}
-    chunk_node = workflow_nodes[1] if len(workflow_nodes) > 1 else {}
-    partition_settings = partition_node.get("settings") or {}
-    return {
-        "workflow_kind": workflow_kind or request_parameters.get("workflow_type") or "custom",
-        "workflow_id": str(workflow_id or request_parameters.get("workflow_id") or "").strip(),
-        "workflow_name": str(workflow_name or request_parameters.get("workflow_name") or "").strip(),
-        "job_id": str(job_id or request_parameters.get("job_id") or "").strip(),
-        "job_definition": _json_safe_value(request_parameters),
-        "workflow_nodes": workflow_nodes,
-        "partition_node": partition_node,
-        "chunk_node": chunk_node,
-        "partition_subtype": str(partition_node.get("subtype") or "").strip(),
-        "partition_strategy": str(partition_settings.get("strategy") or "").strip(),
-        "processing_profile": processing_profile,
-    }
+    return _workflow_builder_build_bookrag_workflow_partition_node(
+        src=src,
+        partition_strategy=partition_strategy,
+        languages=languages,
+        image_partition_parameters=image_partition_parameters,
+    )
 
 
 def _build_bookrag_reusable_workflow_definition(
@@ -1550,144 +958,13 @@ def _build_bookrag_reusable_workflow_definition(
     languages: list[str],
     image_partition_parameters: dict[str, Any] | None,
 ) -> tuple[str, list[dict[str, Any]], dict[str, Any], list[str], str]:
-    runtime = _load_unstructured_runtime_settings()
-    warnings: list[str] = []
-    image_partition_parameters = image_partition_parameters or {}
-
-    workflow_name = _normalize_bookrag_workflow_name(
-        create_values.get("multi_format_bookrag_workflow_name")
-        or runtime.get("bookrag_workflow_name")
-        or os.getenv("BOOKRAG_WORKFLOW_NAME")
-        or "bookrag_raw_prod"
-    )
-
-    enable_image_description = _to_bool(
-        create_values.get("multi_format_bookrag_enable_image_description", "")
-        or runtime.get("bookrag_enable_image_description")
-        or os.getenv("BOOKRAG_ENABLE_IMAGE_DESCRIPTION", "true"),
-        default=True,
-    )
-    enable_table_to_html = _to_bool(
-        create_values.get("multi_format_bookrag_enable_table_to_html", "")
-        or runtime.get("bookrag_enable_table_to_html")
-        or os.getenv("BOOKRAG_ENABLE_TABLE_TO_HTML", "true"),
-        default=True,
-    )
-    enable_table_description = _to_bool(
-        create_values.get("multi_format_bookrag_enable_table_description", "")
-        or runtime.get("bookrag_enable_table_description")
-        or os.getenv("BOOKRAG_ENABLE_TABLE_DESCRIPTION", "false"),
-        default=False,
-    )
-    enable_generative_ocr = _to_bool(
-        create_values.get("multi_format_bookrag_enable_generative_ocr", "")
-        or runtime.get("bookrag_enable_generative_ocr")
-        or os.getenv("BOOKRAG_ENABLE_GENERATIVE_OCR", "false"),
-        default=False,
-    )
-
-    image_subtype = str(
-        create_values.get("multi_format_bookrag_image_description_subtype", "")
-        or runtime.get("bookrag_image_description_subtype")
-        or os.getenv("BOOKRAG_IMAGE_DESCRIPTION_SUBTYPE", "openai_image_description")
-    ).strip() or "openai_image_description"
-    table_to_html_subtype = str(
-        create_values.get("multi_format_bookrag_table_to_html_subtype", "")
-        or runtime.get("bookrag_table_to_html_subtype")
-        or os.getenv("BOOKRAG_TABLE_TO_HTML_SUBTYPE", "openai_table2html")
-    ).strip() or "openai_table2html"
-    table_description_subtype = str(
-        create_values.get("multi_format_bookrag_table_description_subtype", "")
-        or runtime.get("bookrag_table_description_subtype")
-        or os.getenv("BOOKRAG_TABLE_DESCRIPTION_SUBTYPE", "openai_table_description")
-    ).strip() or "openai_table_description"
-    generative_ocr_subtype = str(
-        create_values.get("multi_format_bookrag_generative_ocr_subtype", "")
-        or runtime.get("bookrag_generative_ocr_subtype")
-        or os.getenv("BOOKRAG_GENERATIVE_OCR_SUBTYPE", "openai_ocr")
-    ).strip() or "openai_ocr"
-
-    partition_node, _, partition_warnings = _build_bookrag_workflow_partition_node(
-        src=Path("bookrag_document"),
-        partition_strategy=partition_strategy or "auto",
+    return _workflow_builder_build_bookrag_reusable_workflow_definition(
+        create_values=create_values,
+        partition_strategy=partition_strategy,
         languages=languages,
         image_partition_parameters=image_partition_parameters,
+        runtime=_load_unstructured_runtime_settings(),
     )
-    warnings.extend(partition_warnings)
-
-    workflow_nodes: list[dict[str, Any]] = [partition_node]
-    partition_strategy_label = partition_node['settings'].get('strategy', 'auto')
-    partition_subtype_label = partition_node.get('subtype', '') or 'unknown'
-    profile_parts = [f"partition:{partition_subtype_label}:{partition_strategy_label}"]
-    if enable_image_description:
-        workflow_nodes.append({
-            "name": "Image Description",
-            "type": "prompter",
-            "subtype": image_subtype,
-            "settings": {},
-        })
-        profile_parts.append("image_description")
-    if enable_table_to_html:
-        workflow_nodes.append({
-            "name": "Table to HTML",
-            "type": "prompter",
-            "subtype": table_to_html_subtype,
-            "settings": {},
-        })
-        profile_parts.append("table_to_html")
-    if enable_table_description:
-        workflow_nodes.append({
-            "name": "Table Description",
-            "type": "prompter",
-            "subtype": table_description_subtype,
-            "settings": {},
-        })
-        profile_parts.append("table_description")
-    if enable_generative_ocr:
-        workflow_nodes.append({
-            "name": "Generative OCR",
-            "type": "prompter",
-            "subtype": generative_ocr_subtype,
-            "settings": {},
-        })
-        profile_parts.append("generative_ocr")
-
-    request_parameters = {
-        "workflow_type": "custom",
-        "workflow_name": workflow_name,
-        "workflow_nodes": workflow_nodes,
-    }
-    return workflow_name, workflow_nodes, request_parameters, warnings, ",".join(profile_parts)
-
-
-def _normalize_multi_format_workflow_name(raw_name: str | None) -> str:
-    name = str(raw_name or "").strip()
-    if not name:
-        return "multi_format_prod"
-    return re.sub(r"\s+", "_", name)
-
-
-def _build_multi_format_workflow_chunk_node(
-    *,
-    chunk_size: int,
-    chunk_overlap: int,
-    include_orig_elements: bool,
-    overlap_all: bool,
-) -> dict[str, Any]:
-    return {
-        "name": "Chunker",
-        "type": "chunk",
-        "subtype": "chunk_by_character",
-        "settings": {
-            "unstructured_api_url": None,
-            "unstructured_api_key": None,
-            "include_orig_elements": include_orig_elements,
-            "new_after_n_chars": chunk_size,
-            "max_characters": chunk_size,
-            "overlap": chunk_overlap,
-            "overlap_all": overlap_all,
-        },
-    }
 
 
 def _build_multi_format_workflow_definition(
@@ -1701,55 +978,17 @@ def _build_multi_format_workflow_definition(
     include_orig_elements: bool,
     overlap_all: bool,
 ) -> tuple[dict[str, Any], list[str], str]:
-    runtime = _load_unstructured_runtime_settings()
-    warnings: list[str] = []
-
-    workflow_name = _normalize_multi_format_workflow_name(
-        create_values.get("multi_format_workflow_name")
-        or runtime.get("multi_format_workflow_name")
-        or os.getenv("MULTI_FORMAT_WORKFLOW_NAME")
-        or "multi_format_prod"
-    )
-
-    partition_options, enrichment_options, option_warnings = _resolve_multi_format_accuracy_options(create_values)
-    warnings.extend(option_warnings)
-
-    partition_node, partition_warnings = _build_multi_format_workflow_partition_node(
+    return _workflow_builder_build_multi_format_workflow_definition(
+        create_values=create_values,
         src=src,
-        partition_strategy=partition_strategy or "auto",
+        partition_strategy=partition_strategy,
         languages=languages,
-        partition_options=partition_options,
-    )
-    warnings.extend(partition_warnings)
-
-    enrichment_nodes, enrichment_warnings = _build_multi_format_enrichment_nodes(
-        enrichment_options=enrichment_options,
-        partition_strategy=partition_strategy or "auto",
-    )
-    warnings.extend(enrichment_warnings)
-
-    chunker_node = _build_multi_format_workflow_chunk_node(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
         include_orig_elements=include_orig_elements,
         overlap_all=overlap_all,
+        runtime=_load_unstructured_runtime_settings(),
     )
-    workflow_nodes = [partition_node, *enrichment_nodes, chunker_node]
-    request_parameters = {
-        "workflow_type": "custom",
-        "workflow_name": workflow_name,
-        "workflow_nodes": workflow_nodes,
-    }
-    partition_strategy_label = partition_node['settings'].get('strategy', 'auto')
-    partition_subtype_label = partition_node.get('subtype', '') or 'unknown'
-    profile_parts = [f"partition:{partition_subtype_label}:{partition_strategy_label}"]
-    for node in enrichment_nodes:
-        node_name = str(node.get('name') or '').strip().lower().replace(' ', '_') or 'enrichment'
-        node_subtype = str(node.get('subtype') or '').strip() or 'unknown'
-        profile_parts.append(f"{node_name}:{node_subtype}")
-    profile_parts.append("chunk:chunk_by_character")
-    processing_profile = ",".join(profile_parts)
-    return request_parameters, warnings, processing_profile
 
 
 def _find_bookrag_workflow_by_name(client, workflow_name: str):
@@ -1839,148 +1078,6 @@ def _ensure_bookrag_reusable_workflow(
     return workflow_id, workflow_name, warnings
 
 
-def _create_unstructured_on_demand_job(*, request_parameters: dict[str, Any], src: Path) -> tuple[str, dict[str, Any]]:
-    api_key, api_url = _load_unstructured_runtime_config()
-    content_type = mimetypes.guess_type(src.name)[0] or "application/octet-stream"
-    endpoint = f"{api_url.rstrip('/')}" + "/jobs/"
-    request_data = json.dumps({"job_nodes": request_parameters.get("workflow_nodes", [])}, ensure_ascii=False)
-    response = httpx.post(
-        endpoint,
-        headers={
-            "unstructured-api-key": api_key,
-            "accept": "application/json",
-        },
-        files=[
-            ("request_data", (None, request_data, "application/json")),
-            (
-                "input_files",
-                (src.name, src.read_bytes(), content_type),
-            ),
-        ],
-        timeout=120.0,
-    )
-    if response.status_code >= 400:
-        raise RuntimeError(f"Unstructured create_job failed. status={response.status_code} body={response.text}")
-    try:
-        payload = response.json()
-    except Exception as ex:
-        raise RuntimeError(f"Unstructured create_job returned non-JSON response. status={response.status_code}") from ex
-    job_id = str(payload.get("id") or "").strip()
-    if not job_id:
-        raise RuntimeError("Unstructured create_job returned no job ID.")
-    return job_id, payload
-
-
-def _wait_for_unstructured_job(client, *, job_id: str, timeout_seconds: int, poll_interval_seconds: int):
-    from unstructured_client.models import operations
-
-    started = time.time()
-    last_status = ""
-    while True:
-        response = client.jobs.get_job(request=operations.GetJobRequest(job_id=job_id))
-        if int(getattr(response, "status_code", 0) or 0) >= 400:
-            raise RuntimeError(f"Unstructured get_job failed. status={getattr(response, 'status_code', '?')}, job_id={job_id}")
-        job_info = getattr(response, "job_information", None)
-        if job_info is None:
-            raise RuntimeError(f"Unstructured get_job returned no job information. job_id={job_id}")
-        raw_status = getattr(job_info, "status", "")
-        status = str(getattr(raw_status, "value", raw_status) or "").strip().upper()
-        if status == "COMPLETED":
-            return job_info
-        if status in {"FAILED", "STOPPED"}:
-            raise RuntimeError(f"Unstructured job ended with status={status}. job_id={job_id}")
-        last_status = status or last_status
-        if time.time() - started >= timeout_seconds:
-            raise RuntimeError(
-                "Timed out waiting for Unstructured job completion. "
-                f"job_id={job_id}, last_status={last_status or 'UNKNOWN'}, timeout_seconds={timeout_seconds}. "
-                "Increase the mode-specific workflow poll timeout or UNSTRUCTURED_WORKFLOW_POLL_SECONDS if this is expected for large files."
-            )
-        time.sleep(max(1, poll_interval_seconds))
-
-
-def _download_unstructured_job_output_payload(client, job_info) -> Any:
-    from unstructured_client.models import operations
-
-    output_node_files = list(getattr(job_info, "output_node_files", None) or [])
-    if output_node_files:
-        target = output_node_files[-1]
-        request = operations.DownloadJobOutputRequest(
-            job_id=str(getattr(job_info, "id", "") or ""),
-            file_id=str(getattr(target, "file_id", "") or ""),
-            node_id=str(getattr(target, "node_id", "") or ""),
-        )
-    else:
-        input_file_ids = list(getattr(job_info, "input_file_ids", None) or [])
-        if not input_file_ids:
-            raise RuntimeError(f"Unstructured job returned no downloadable output references. job_id={getattr(job_info, 'id', '')}")
-        request = operations.DownloadJobOutputRequest(
-            job_id=str(getattr(job_info, "id", "") or ""),
-            file_id=str(input_file_ids[0]),
-        )
-
-    response = client.jobs.download_job_output(request=request)
-    if int(getattr(response, "status_code", 0) or 0) >= 400:
-        raise RuntimeError(f"Unstructured download_job_output failed. status={getattr(response, 'status_code', '?')}, job_id={getattr(job_info, 'id', '')}")
-    return getattr(response, "any", None)
-
-
-def _extract_elements_from_unstructured_job_output(payload: Any) -> list[dict[str, Any]]:
-    if isinstance(payload, list):
-        return [item for item in payload if isinstance(item, dict)]
-    if isinstance(payload, dict):
-        for key in ("elements", "output", "data"):
-            candidate = payload.get(key)
-            if isinstance(candidate, list):
-                return [item for item in candidate if isinstance(item, dict)]
-        list_values = [value for value in payload.values() if isinstance(value, list)]
-        if len(list_values) == 1:
-            return [item for item in list_values[0] if isinstance(item, dict)]
-    raise RuntimeError("Unsupported Unstructured workflow output format; expected a JSON array or object containing an elements array.")
-
-
-def _enforce_unstructured_job_submission_spacing(last_submitted_at: float | None) -> float:
-    minimum_spacing_seconds = 1.1
-    now = time.time()
-    if last_submitted_at is not None:
-        remaining = minimum_spacing_seconds - (now - last_submitted_at)
-        if remaining > 0:
-            time.sleep(remaining)
-    return time.time()
-
-
-def _run_unstructured_workflow_job_for_file(
-    client,
-    *,
-    request_parameters: dict[str, Any],
-    src: Path,
-    timeout_seconds: int,
-    poll_interval_seconds: int,
-) -> tuple[Any, list[dict[str, Any]], dict[str, Any], str, str, str]:
-    job_id, create_job_payload = _create_unstructured_on_demand_job(request_parameters=request_parameters, src=src)
-    job_info = _wait_for_unstructured_job(
-        client,
-        job_id=job_id,
-        timeout_seconds=timeout_seconds,
-        poll_interval_seconds=poll_interval_seconds,
-    )
-    payload = _download_unstructured_job_output_payload(client, job_info)
-    elements = _extract_elements_from_unstructured_job_output(payload)
-    workflow_id = str(getattr(job_info, "workflow_id", "") or create_job_payload.get("workflow_id") or "").strip()
-    workflow_name = str(getattr(job_info, "workflow_name", "") or create_job_payload.get("workflow_name") or request_parameters.get("workflow_name") or "").strip()
-    file_request_parameters = dict(request_parameters)
-    file_request_parameters.update(
-        {
-            "workflow_id": workflow_id,
-            "workflow_name": workflow_name,
-            "source_file": str(src),
-            "job_id": job_id,
-            "poll_timeout_seconds": timeout_seconds,
-            "poll_interval_seconds": poll_interval_seconds,
-        }
-    )
-    return payload, elements, file_request_parameters, job_id, workflow_id, workflow_name
-
 def _insert_chunk_rows(
     schema_name: str | None,
     table_name: str,
@@ -2002,50 +1099,9 @@ def _insert_chunk_rows(
     return inserted
 
 
-def _load_unstructured_runtime_settings() -> dict[str, Any]:
-    config_path = UNSTRUCTURED_CONFIG_FILE_DEFAULT
-    config: dict[str, Any] = {}
-    if config_path.exists():
-        try:
-            config = json.loads(config_path.read_text(encoding="utf-8"))
-            if not isinstance(config, dict):
-                raise RuntimeError("must be a JSON object")
-        except Exception as ex:
-            raise RuntimeError(f"Invalid Unstructured config at {config_path}: {ex}") from ex
-    return config
-
-
-def _load_unstructured_runtime_config() -> tuple[str, str]:
-    config = _load_unstructured_runtime_settings()
-
-    api_key = str(
-        config.get("api_key")
-        or config.get("key_id")
-        or config.get("UNSTRUCTURED_API_KEY")
-        or config.get("UNSTRUCTURED_API_KEY_AUTH")
-        or ""
-    ).strip()
-    api_url = str(
-        config.get("api_url")
-        or config.get("UNSTRUCTURED_API_URL")
-        or config.get("UNSTRUCTURED_PLATFORM_URL")
-        or UNSTRUCTURED_WORKFLOW_API_URL_DEFAULT
-    ).strip()
-
-    if not api_key:
-        raise RuntimeError(
-            f"Unstructured API key missing. Set key_id/api_key in {UNSTRUCTURED_CONFIG_FILE_DEFAULT}."
-        )
-    if not api_url:
-        api_url = UNSTRUCTURED_WORKFLOW_API_URL_DEFAULT
-    return api_key, api_url
-
-
 def _new_unstructured_client():
     api_key, api_url = _load_unstructured_runtime_config()
-    from unstructured_client import UnstructuredClient
-
-    return UnstructuredClient(api_key_auth=api_key, server_url=api_url.rstrip("/"))
+    return _create_unstructured_client(api_key=api_key, api_url=api_url)
 
 
 def _apply_bookrag_tree_pipeline(
@@ -2054,7 +1110,7 @@ def _apply_bookrag_tree_pipeline(
     vector_store_name: str,
     *,
     execute_sql_fn: ExecuteSqlFn | None,
-    resolve_path_hint: ResolvePathFn,
+    resolve_path_hint: Callable[[str], str],
     effective_schema_name: str | None,
     document_files: list[str],
     partition_strategy: str,
@@ -2091,7 +1147,8 @@ def _apply_bookrag_tree_pipeline(
     if bookrag_chunk_overlap >= bookrag_chunk_size:
         bookrag_chunk_overlap = max(0, bookrag_chunk_size // 10)
 
-    client = _new_unstructured_client()
+    api_key, api_url = _load_unstructured_runtime_config()
+    client = _create_unstructured_client(api_key=api_key, api_url=api_url)
     debug_dir = _prepare_unstructured_debug_dir(vector_store_name)
     raw_stage_dir = _prepare_bookrag_raw_stage_dir(vector_store_name)
     partition_warnings: list[str] = []
@@ -2136,6 +1193,8 @@ def _apply_bookrag_tree_pipeline(
             src=src,
             timeout_seconds=timeout_seconds,
             poll_interval_seconds=poll_interval_seconds,
+            api_key=api_key,
+            api_url=api_url,
         )
         job_ids.append(job_id)
         if workflow_id:
@@ -2277,7 +1336,7 @@ def apply_multi_format_pipeline(
     connection_params: dict | None = None,
     *,
     execute_sql_fn: ExecuteSqlFn | None,
-    resolve_path_hint: ResolvePathFn,
+    resolve_path_hint: Callable[[str], str],
     pipeline_mode: str = "multi_format",
 ) -> tuple[dict, dict]:
     connection_params = connection_params or {}
@@ -2352,7 +1411,9 @@ def apply_multi_format_pipeline(
         )
     )
 
-    client = _new_unstructured_client()
+    api_key, api_url = _load_unstructured_runtime_config()
+    client = _create_unstructured_client(api_key=api_key, api_url=api_url)
+    runtime_settings = _load_unstructured_runtime_settings()
     timeout_seconds, poll_interval_seconds = _resolve_multi_format_workflow_poll_config()
     debug_dir = _prepare_unstructured_debug_dir(vector_store_name)
     inserted_rows = 0
@@ -2386,7 +1447,7 @@ def apply_multi_format_pipeline(
             include_orig_elements=include_orig_elements,
         )
         partition_warnings.extend(file_partition_warnings)
-        request_parameters, workflow_definition_warnings, processing_profile = _build_multi_format_workflow_definition(
+        request_parameters, workflow_definition_warnings, processing_profile = _workflow_builder_build_multi_format_workflow_definition(
             create_values=create_values,
             src=src,
             partition_strategy=file_partition_strategy,
@@ -2395,6 +1456,7 @@ def apply_multi_format_pipeline(
             chunk_overlap=chunk_overlap,
             include_orig_elements=file_include_orig_elements,
             overlap_all=overlap_all,
+            runtime=runtime_settings,
         )
         partition_warnings.extend(workflow_definition_warnings)
         last_workflow_name = str(request_parameters.get("workflow_name") or "").strip()
@@ -2410,6 +1472,8 @@ def apply_multi_format_pipeline(
             src=src,
             timeout_seconds=timeout_seconds,
             poll_interval_seconds=poll_interval_seconds,
+            api_key=api_key,
+            api_url=api_url,
         )
         job_ids.append(job_id)
         if workflow_id:

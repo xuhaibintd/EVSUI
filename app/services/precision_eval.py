@@ -166,6 +166,22 @@ def list_precision_eval_files(*, document_root: Path, debug_root: Path) -> dict[
     }
 
 
+def build_precision_eval_panel_context(
+    *,
+    document_root: Path,
+    debug_root: Path,
+    selected_pdf_path: str = "",
+    selected_json_path: str = "",
+) -> dict[str, object]:
+    file_options = list_precision_eval_files(document_root=document_root, debug_root=debug_root)
+    return {
+        "pdf_options": file_options.get("pdf_options", []),
+        "json_options": file_options.get("json_options", []),
+        "selected_pdf_path": str(selected_pdf_path or "").strip(),
+        "selected_json_path": str(selected_json_path or "").strip(),
+    }
+
+
 def resolve_precision_eval_path(raw_path: str, *, allowed_root: Path, expected_suffixes: set[str]) -> Path:
     raw = str(raw_path or "").strip()
     if not raw:

@@ -107,7 +107,8 @@
 
 .monitor-toggle span {
   display: block;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .monitor-toggle input[type="checkbox"] {
@@ -118,9 +119,8 @@
   margin: 0.45rem 0 0.4rem;
   color: #a7c0e7;
   font-size: 0.76rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .monitor-title-line {
@@ -371,6 +371,7 @@
   color: #f0f6ff;
   font-family: var(--font-mono);
   font-size: 0.78rem;
+  overflow-wrap: anywhere;
 }
 
 .vs-destroy-actions {

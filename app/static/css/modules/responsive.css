@@ -92,6 +92,46 @@
   }
 }
 
+@media (max-width: 1440px) {
+  :root {
+    --left-rail-w: clamp(12.5rem, 18vw, 15.5rem);
+    --connect-form-w: clamp(18rem, 30vw, 25rem);
+    --content-max-w: 100%;
+  }
+
+  .topbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "brand actions"
+      "title title";
+    align-items: start;
+  }
+
+  .brand-block {
+    grid-area: brand;
+  }
+
+  .title-block {
+    grid-area: title;
+    min-width: 0;
+  }
+
+  .top-actions {
+    grid-area: actions;
+    justify-self: end;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .workflow-layout {
+    grid-template-columns: clamp(17rem, 32vw, 22rem) minmax(0, 1fr);
+  }
+
+  .grid-layout {
+    grid-template-columns: minmax(14rem, 1fr) minmax(0, 1.45fr) minmax(14rem, 1fr);
+  }
+}
+
 @media (max-height: 900px) and (min-width: 1101px) and (max-width: 1600px) {
   :root {
     --ui-topbar-h: clamp(76px, 10vh, 92px);
@@ -126,7 +166,8 @@
 @media (max-width: 1100px) {
   html,
   body {
-    overflow: hidden;
+    overflow-x: hidden;
+    overflow-y: auto;
   }
 
   .topbar {
@@ -136,8 +177,9 @@
   }
 
   .page {
-    height: calc(100dvh - var(--ui-topbar-h));
-    max-height: calc(100dvh - var(--ui-topbar-h));
+    min-height: calc(100dvh - var(--ui-topbar-h));
+    height: auto;
+    max-height: none;
     overflow: auto;
   }
 
@@ -155,7 +197,7 @@
   }
 
   .menu-layout {
-    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
     height: 100%;
     min-height: 0;
     max-width: 100%;
@@ -164,12 +206,12 @@
   .left-menu {
     min-height: 0;
     max-height: none;
-    height: 100%;
-    overflow: hidden;
-    width: min(100%, 320px);
-    max-width: 320px;
+    height: auto;
+    overflow: visible;
+    width: 100%;
+    max-width: none;
     margin: 0;
-    justify-self: start;
+    justify-self: stretch;
   }
 
   .panel.left-menu {
@@ -180,9 +222,8 @@
   .eyebrow {
     font-size: clamp(0.58rem, 1.2vw, 0.72rem);
     letter-spacing: 0.03em;
-    white-space: nowrap;
-    overflow: visible;
-    text-overflow: clip;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .menu-item {
@@ -249,9 +290,9 @@
   }
 
   #section-create #create-result {
-    height: 36vh;
-    min-height: 36vh;
-    max-height: 36vh;
+    height: clamp(14rem, 34vh, 24rem);
+    min-height: clamp(14rem, 34vh, 24rem);
+    max-height: clamp(14rem, 34vh, 24rem);
   }
 
   .param-grid,
@@ -362,9 +403,8 @@
     font-family: var(--font-ui);
     font-weight: 600;
     letter-spacing: 0;
-    white-space: nowrap;
-    overflow: visible;
-    text-overflow: clip;
+    white-space: normal;
+    overflow-wrap: anywhere;
     line-height: 1.15;
     padding: 0.4rem 0.48rem;
     border-radius: 10px;

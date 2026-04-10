@@ -1,12 +1,13 @@
 .menu-layout {
   display: grid;
-  grid-template-columns: var(--left-rail-w) minmax(0, 1fr);
+  grid-template-columns: minmax(13rem, var(--left-rail-w)) minmax(0, 1fr);
   gap: var(--layout-gap);
   align-items: stretch;
   height: 100%;
   min-height: 0;
   width: 100%;
   max-width: var(--content-max-w);
+  min-width: 0;
   margin: 0 auto;
   overflow-x: hidden;
 }
@@ -34,9 +35,8 @@
   width: 100%;
   min-width: 0;
   text-align: left;
-  white-space: nowrap;
-  overflow: visible;
-  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
   border: 1px solid #d7dee8;
   background: #ffffff;
   color: #1f2937;
@@ -169,6 +169,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 0.65rem;
 }
 
@@ -213,7 +214,7 @@
 
 .workflow-layout {
   display: grid;
-  grid-template-columns: 380px minmax(0, 1fr);
+  grid-template-columns: clamp(18rem, 27vw, 24rem) minmax(0, 1fr);
   gap: var(--layout-gap);
   align-items: start;
 }
@@ -229,7 +230,7 @@
 
 .grid-layout {
   display: grid;
-  grid-template-columns: 1fr 1.6fr 1fr;
+  grid-template-columns: minmax(16rem, 1fr) minmax(0, 1.55fr) minmax(16rem, 1fr);
   gap: var(--layout-gap);
 }
 
@@ -243,7 +244,7 @@
   padding: 0.95rem;
   background: linear-gradient(180deg, var(--panel) 0%, rgba(8, 20, 45, 0.72) 100%);
   box-shadow: inset 0 0 0 1px rgba(74, 104, 165, 0.14), 0 10px 25px rgba(0, 0, 0, 0.22);
-  min-height: 78vh;
+  min-height: clamp(30rem, 66dvh, 78vh);
 }
 
 .workflow-layout .panel {
@@ -290,9 +291,8 @@
   border-radius: 8px;
   border: 1px solid;
   font-size: 0.83rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .status.ok {

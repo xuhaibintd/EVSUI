@@ -4,7 +4,7 @@ import json
 from copy import deepcopy
 from typing import Any
 
-from app.services.doc_modes.common import DOC_PIPELINE_UI_DEFAULTS
+from app.services.doc_modes.constants import DOC_PIPELINE_UI_DEFAULTS
 
 
 CREATE_FIELDS: list[dict[str, str]] = [
@@ -199,6 +199,16 @@ _TEXT_CORE_FIELDS = [
     "vector_column",
 ]
 
+_TEXT_CORE_WRAPPER_CLASS = {
+    "chunk_size": "field doc-field-short",
+    "optimized_chunking": "field doc-field-short",
+    "header_height": "field doc-field-short",
+    "footer_height": "field doc-field-short",
+    "object_names": "field doc-field-medium",
+    "data_columns": "field doc-field-long",
+    "vector_column": "field doc-field-medium",
+}
+
 _BOOL_FIELDS = {"optimized_chunking", "delay_jitter", "ignore_embedding_errors", "batch", "apply_heuristics"}
 CREATE_FIELD_MAX_LEN = 50
 ALLOWED_VALIDATION_TARGETS = {"vectorstore.ask", "vectorstore.similarity_search"}
@@ -324,7 +334,10 @@ def build_create_ui_sections() -> list[dict[str, Any]]:
 
 
 def build_text_core_ui_fields() -> list[dict[str, Any]]:
-    return [_clone_ui_field(name) for name in _TEXT_CORE_FIELDS]
+    return [
+        _clone_ui_field(name, wrapper_class=_TEXT_CORE_WRAPPER_CLASS.get(name, "field"))
+        for name in _TEXT_CORE_FIELDS
+    ]
 
 
 def group_create_fields() -> list[tuple[str, list[dict[str, str]]]]:

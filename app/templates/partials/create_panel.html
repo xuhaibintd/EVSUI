@@ -1,6 +1,4 @@
-{% import "partials/create_field_macros.html" as fields %}
-
-<p class="muted step-lock-note" {% if evs.connected %}hidden{% endif %}>Step 2 is locked. Complete Step 1 first.</p>
+﻿{% import "partials/create_field_macros.html" as fields %}
 
 <form
   class="stack {% if not evs.connected %}disabled-block{% endif %}"
@@ -11,56 +9,54 @@
   novalidate
 >
   <section class="param-group">
-    <h3>Select Documents</h3>
-    <div class="select-docs-layout">
-      <div class="select-docs-right">
-        {% set _doc_pipeline_mode = create_values.get('doc_pipeline_mode', '') %}
-        <section class="doc-pipeline-panel" aria-label="Content processing mode">
-          <label class="field doc-pipeline-mode-field">
-            <span class="field-label">Content Processing Mode</span>
-            <select
-              name="doc_pipeline_mode"
-              data-doc-pipeline-mode
-              required
-              {% if not evs.connected %}disabled{% endif %}
-            >
-              <option value="" {% if not _doc_pipeline_mode %}selected{% endif %}>(select)</option>
-              {% for mode in doc_pipeline_options %}
-              <option value="{{ mode.value }}" {% if _doc_pipeline_mode == mode.value %}selected{% endif %}>{{ mode.label }}</option>
-              {% endfor %}
-            </select>
-          </label>
-          <div class="doc-pipeline-groups">
-            {% include "partials/create_doc_modes/text_core.html" %}
-            {% include "partials/create_doc_modes/multi_format.html" %}
-            {% include "partials/create_doc_modes/multi_format_bookrag.html" %}
-          </div>
-        </section>
-      </div>
-
-      <div class="select-docs-left">
-        <label class="field field-file-auto">
-          <span>Upload PDF / Documents</span>
-          <div class="file-input-shell" data-file-shell>
-            <input
-              type="file"
-              name="files"
-              multiple
-              class="file-input-native"
-              data-file-input
-              data-file-default="No files selected"
-              data-file-multi-label="files selected"
-              {% if not evs.connected %}disabled{% endif %}
-            />
-            <button type="button" class="ghost file-input-btn" data-file-trigger {% if not evs.connected %}disabled{% endif %}>Choose Files</button>
-            <span class="file-input-name" data-file-name>No files selected</span>
-          </div>
-        </label>
-        <div class="selected-files-panel" data-selected-doc-paths>
-          {% include "partials/selected_documents.html" %}
+    <h3>Upload PDF / Documents</h3>
+    <div class="select-docs-left">
+      <label class="field field-file-auto upload-field-inline">
+        <div class="file-input-shell" data-file-shell>
+          <input
+            type="file"
+            name="files"
+            multiple
+            class="file-input-native"
+            data-file-input
+            data-file-default="No files selected"
+            data-file-multi-label="files selected"
+            {% if not evs.connected %}disabled{% endif %}
+          />
+          <button type="button" class="ghost file-input-btn" data-file-trigger {% if not evs.connected %}disabled{% endif %}>Choose Files</button>
+          <span class="file-input-name" data-file-name>No files selected</span>
         </div>
+      </label>
+      <div class="selected-files-panel" data-selected-doc-paths>
+        {% include "partials/selected_documents.html" %}
       </div>
     </div>
+  </section>
+
+  <section class="param-group">
+    <h3>Document Processing Settings</h3>
+    {% set _doc_pipeline_mode = create_values.get('doc_pipeline_mode', '') %}
+    <section class="doc-pipeline-panel" aria-label="Content processing mode">
+      <label class="field doc-pipeline-mode-field">
+        <span class="field-label">Content Processing Mode</span>
+        <select
+          name="doc_pipeline_mode"
+          data-doc-pipeline-mode
+          required
+          {% if not evs.connected %}disabled{% endif %}
+        >
+          <option value="" {% if not _doc_pipeline_mode %}selected{% endif %}>(select)</option>
+          {% for mode in doc_pipeline_options %}
+          <option value="{{ mode.value }}" {% if _doc_pipeline_mode == mode.value %}selected{% endif %}>{{ mode.label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div class="doc-pipeline-groups">
+        {% include "partials/create_doc_modes/text_core.html" %}
+        {% include "partials/create_doc_modes/multi_format.html" %}
+        {% include "partials/create_doc_modes/multi_format_bookrag.html" %}
+      </div>
+    </section>
   </section>
 
   <input type="hidden" name="create_preset" value="auto" />
@@ -143,3 +139,4 @@
 <div id="create-result">
   {% include "partials/create_result.html" %}
 </div>
+

@@ -151,8 +151,21 @@ button.ghost {
 
 .file-main {
   display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 0.5rem;
+}
+
+.file-main strong {
+  flex: 1 1 14rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.file-main span {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .selected-files-panel {

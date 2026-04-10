@@ -10,7 +10,7 @@
     if ('disabled' in button && button.disabled) {
       return;
     }
-    const force = button.dataset.requiresConnected === 'true';
+    const force = button.dataset.allowLocked === 'true';
     const section = button.dataset.section;
     const target = button.dataset.target;
     if (section) {

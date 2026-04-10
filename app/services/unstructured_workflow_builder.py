@@ -1,0 +1,625 @@
+from __future__ import annotations
+
+import os
+import re
+from pathlib import Path
+from typing import Any
+
+
+def _to_bool(raw: Any, default: bool = False) -> bool:
+    if raw is None:
+        return default
+    value = str(raw).strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off", ""}:
+        return False
+    return default
+
+
+def _parse_csv_values(raw: Any) -> list[str]:
+    return [chunk.strip() for chunk in str(raw or "").split(",") if chunk.strip()]
+
+
+def _normalize_bookrag_workflow_name(raw_name: str | None) -> str:
+    name = str(raw_name or "").strip()
+    if not name:
+        return "bookrag_raw_prod"
+    return re.sub(r"\s+", "_", name)
+
+
+def _normalize_multi_format_workflow_name(raw_name: str | None) -> str:
+    name = str(raw_name or "").strip()
+    if not name:
+        return "multi_format_prod"
+    return re.sub(r"\s+", "_", name)
+
+
+def _resolve_multi_format_accuracy_options(
+    create_values: dict[str, str],
+    *,
+    runtime: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
+    warnings: list[str] = []
+
+    infer_table_structure = _to_bool(
+        create_values.get("multi_format_infer_table_structure", "")
+        or runtime.get("multi_format_infer_table_structure")
+        or runtime.get("infer_table_structure")
+        or os.getenv("MULTI_FORMAT_INFER_TABLE_STRUCTURE", "true"),
+        default=True,
+    )
+    hi_res_model_name = str(
+        create_values.get("multi_format_hi_res_model_name", "")
+        or runtime.get("multi_format_hi_res_model_name")
+        or runtime.get("hi_res_model_name")
+        or os.getenv("MULTI_FORMAT_HI_RES_MODEL_NAME", "")
+    ).strip()
+    vlm_provider = str(
+        create_values.get("multi_format_vlm_provider", "")
+        or runtime.get("multi_format_vlm_provider")
+        or runtime.get("vlm_provider")
+        or os.getenv("MULTI_FORMAT_VLM_PROVIDER", "")
+    ).strip()
+    vlm_model = str(
+        create_values.get("multi_format_vlm_model", "")
+        or runtime.get("multi_format_vlm_model")
+        or runtime.get("vlm_model")
+        or os.getenv("MULTI_FORMAT_VLM_MODEL", "")
+    ).strip()
+    vlm_provider_api_key = str(
+        create_values.get("multi_format_vlm_provider_api_key", "")
+        or runtime.get("multi_format_vlm_provider_api_key")
+        or runtime.get("vlm_provider_api_key")
+        or os.getenv("MULTI_FORMAT_VLM_PROVIDER_API_KEY", "")
+    ).strip()
+
+    enable_generative_ocr = _to_bool(
+        create_values.get("multi_format_enable_generative_ocr", "")
+        or runtime.get("multi_format_enable_generative_ocr")
+        or os.getenv("MULTI_FORMAT_ENABLE_GENERATIVE_OCR", "true"),
+        default=True,
+    )
+    enable_table_to_html = _to_bool(
+        create_values.get("multi_format_enable_table_to_html", "")
+        or runtime.get("multi_format_enable_table_to_html")
+        or os.getenv("MULTI_FORMAT_ENABLE_TABLE_TO_HTML", "true"),
+        default=True,
+    )
+    enable_table_description = _to_bool(
+        create_values.get("multi_format_enable_table_description", "")
+        or runtime.get("multi_format_enable_table_description")
+        or os.getenv("MULTI_FORMAT_ENABLE_TABLE_DESCRIPTION", "false"),
+        default=False,
+    )
+    enable_image_description = _to_bool(
+        create_values.get("multi_format_enable_image_description", "")
+        or runtime.get("multi_format_enable_image_description")
+        or os.getenv("MULTI_FORMAT_ENABLE_IMAGE_DESCRIPTION", "false"),
+        default=False,
+    )
+
+    raw_extract_types = str(
+        create_values.get("multi_format_extract_image_block_types", "")
+        or runtime.get("multi_format_extract_image_block_types")
+        or os.getenv("MULTI_FORMAT_EXTRACT_IMAGE_BLOCK_TYPES", "auto")
+    ).strip()
+    if raw_extract_types.lower() == "auto":
+        extract_image_block_types: list[str] = []
+        if enable_generative_ocr:
+            extract_image_block_types.extend(["NarrativeText", "Title", "ListItem", "UncategorizedText"])
+        if enable_table_to_html or enable_table_description:
+            extract_image_block_types.append("Table")
+        if enable_image_description:
+            extract_image_block_types.append("Image")
+    else:
+        extract_image_block_types = _parse_csv_values(raw_extract_types)
+    normalized_extract_types: list[str] = []
+    for item in extract_image_block_types:
+        value = str(item or "").strip()
+        if value and value not in normalized_extract_types:
+            normalized_extract_types.append(value)
+
+    partition_options: dict[str, Any] = {
+        "infer_table_structure": infer_table_structure,
+        "extract_image_block_types": normalized_extract_types,
+        "hi_res_model_name": hi_res_model_name or None,
+        "vlm_provider": vlm_provider or None,
+        "vlm_model": vlm_model or None,
+        "vlm_provider_api_key": vlm_provider_api_key or None,
+        "unique_element_ids": True,
+    }
+
+    def _provider_settings(prefix: str, *, default_subtype: str, default_provider: str, default_model: str) -> tuple[str, dict[str, Any]]:
+        subtype = str(
+            create_values.get(f"multi_format_{prefix}_subtype", "")
+            or runtime.get(f"multi_format_{prefix}_subtype")
+            or os.getenv(f"MULTI_FORMAT_{prefix.upper()}_SUBTYPE", default_subtype)
+        ).strip() or default_subtype
+        provider_type = str(
+            create_values.get(f"multi_format_{prefix}_provider_type", "")
+            or runtime.get(f"multi_format_{prefix}_provider_type")
+            or os.getenv(f"MULTI_FORMAT_{prefix.upper()}_PROVIDER_TYPE", default_provider)
+        ).strip() or default_provider
+        model = str(
+            create_values.get(f"multi_format_{prefix}_model", "")
+            or runtime.get(f"multi_format_{prefix}_model")
+            or os.getenv(f"MULTI_FORMAT_{prefix.upper()}_MODEL", default_model)
+        ).strip() or default_model
+        settings: dict[str, Any] = {}
+        if subtype != "twopass_table2html":
+            if provider_type:
+                settings["provider_type"] = provider_type
+            if model:
+                settings["model"] = model
+        return subtype, settings
+
+    enrichment_options = {
+        "enable_generative_ocr": enable_generative_ocr,
+        "enable_table_to_html": enable_table_to_html,
+        "enable_table_description": enable_table_description,
+        "enable_image_description": enable_image_description,
+    }
+    subtype, settings = _provider_settings(
+        "generative_ocr",
+        default_subtype="openai_ocr",
+        default_provider="openai",
+        default_model="gpt-5-mini",
+    )
+    enrichment_options["generative_ocr_subtype"] = subtype
+    enrichment_options["generative_ocr_settings"] = settings
+    subtype, settings = _provider_settings(
+        "table_to_html",
+        default_subtype="twopass_table2html",
+        default_provider="",
+        default_model="",
+    )
+    enrichment_options["table_to_html_subtype"] = subtype
+    enrichment_options["table_to_html_settings"] = settings
+    subtype, settings = _provider_settings(
+        "table_description",
+        default_subtype="openai_table_description",
+        default_provider="openai",
+        default_model="gpt-5-mini",
+    )
+    enrichment_options["table_description_subtype"] = subtype
+    enrichment_options["table_description_settings"] = settings
+    subtype, settings = _provider_settings(
+        "image_description",
+        default_subtype="openai_image_description",
+        default_provider="openai",
+        default_model="gpt-5-mini",
+    )
+    enrichment_options["image_description_subtype"] = subtype
+    enrichment_options["image_description_settings"] = settings
+
+    return partition_options, enrichment_options, warnings
+
+
+def _build_multi_format_workflow_partition_node(
+    *,
+    src: Path,
+    partition_strategy: str,
+    languages: list[str],
+    partition_options: dict[str, Any] | None,
+) -> tuple[dict[str, Any], list[str]]:
+    warnings: list[str] = []
+    partition_options = partition_options or {}
+    extract_image_block_types = partition_options.get("extract_image_block_types") or []
+    hi_res_model_name = str(partition_options.get("hi_res_model_name") or "").strip()
+    infer_table_structure = bool(partition_options.get("infer_table_structure"))
+    unique_element_ids = bool(partition_options.get("unique_element_ids", True))
+    vlm_provider = str(partition_options.get("vlm_provider") or "").strip()
+    vlm_model = str(partition_options.get("vlm_model") or "").strip()
+    vlm_provider_api_key = str(partition_options.get("vlm_provider_api_key") or "").strip()
+    requested_strategy = (partition_strategy or "auto").strip().lower() or "auto"
+
+    if requested_strategy == "auto":
+        settings: dict[str, Any] = {
+            "strategy": "auto",
+            "output_format": "application/json",
+            "format_html": False,
+            "unique_element_ids": unique_element_ids,
+            "is_dynamic": True,
+            "allow_fast": True,
+        }
+        if vlm_provider:
+            settings["provider"] = vlm_provider
+        if vlm_model:
+            settings["model"] = vlm_model
+        if vlm_provider_api_key:
+            settings["provider_api_key"] = vlm_provider_api_key
+        return {
+            "name": "Partitioner",
+            "type": "partition",
+            "subtype": "vlm",
+            "settings": settings,
+        }, warnings
+
+    if requested_strategy == "vlm":
+        settings = {
+            "strategy": "vlm",
+            "output_format": "application/json",
+            "format_html": False,
+            "unique_element_ids": unique_element_ids,
+            "is_dynamic": False,
+            "allow_fast": False,
+        }
+        if vlm_provider:
+            settings["provider"] = vlm_provider
+        if vlm_model:
+            settings["model"] = vlm_model
+        if vlm_provider_api_key:
+            settings["provider_api_key"] = vlm_provider_api_key
+        return {
+            "name": "Partitioner",
+            "type": "partition",
+            "subtype": "vlm",
+            "settings": settings,
+        }, warnings
+
+    settings = {
+        "strategy": requested_strategy,
+        "include_page_breaks": False,
+        "unique_element_ids": unique_element_ids,
+    }
+    if languages:
+        settings["ocr_languages"] = languages
+    if extract_image_block_types:
+        settings["extract_image_block_types"] = extract_image_block_types
+    if requested_strategy == "hi_res" and infer_table_structure:
+        settings["pdf_infer_table_structure"] = True
+        settings["infer_table_structure"] = True
+    if hi_res_model_name and requested_strategy == "hi_res":
+        settings["hi_res_model_name"] = hi_res_model_name
+    return {
+        "name": "Partitioner",
+        "type": "partition",
+        "subtype": "unstructured_api",
+        "settings": settings,
+    }, warnings
+
+
+def _build_multi_format_enrichment_nodes(*, enrichment_options: dict[str, Any], partition_strategy: str) -> tuple[list[dict[str, Any]], list[str]]:
+    requested_strategy = (partition_strategy or "auto").strip().lower() or "auto"
+    if requested_strategy not in {"auto", "hi_res"}:
+        return [], []
+
+    nodes: list[dict[str, Any]] = []
+    if enrichment_options.get("enable_image_description"):
+        nodes.append({
+            "name": "Image Description",
+            "type": "prompter",
+            "subtype": str(enrichment_options.get("image_description_subtype") or "openai_image_description"),
+            "settings": dict(enrichment_options.get("image_description_settings") or {}),
+        })
+    if enrichment_options.get("enable_table_to_html"):
+        nodes.append({
+            "name": "Table to HTML",
+            "type": "prompter",
+            "subtype": str(enrichment_options.get("table_to_html_subtype") or "twopass_table2html"),
+            "settings": dict(enrichment_options.get("table_to_html_settings") or {}),
+        })
+    if enrichment_options.get("enable_table_description"):
+        nodes.append({
+            "name": "Table Description",
+            "type": "prompter",
+            "subtype": str(enrichment_options.get("table_description_subtype") or "openai_table_description"),
+            "settings": dict(enrichment_options.get("table_description_settings") or {}),
+        })
+    if enrichment_options.get("enable_generative_ocr"):
+        nodes.append({
+            "name": "Generative OCR",
+            "type": "prompter",
+            "subtype": str(enrichment_options.get("generative_ocr_subtype") or "openai_ocr"),
+            "settings": dict(enrichment_options.get("generative_ocr_settings") or {}),
+        })
+
+    return nodes, []
+
+
+def build_bookrag_workflow_partition_node(
+    *,
+    src: Path,
+    partition_strategy: str,
+    languages: list[str],
+    image_partition_parameters: dict[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
+    warnings: list[str] = []
+    image_partition_parameters = image_partition_parameters or {}
+    extract_image_block_types = image_partition_parameters.get("extract_image_block_types") or []
+    normalized_extract_types: list[str] = []
+    for item in extract_image_block_types:
+        value = str(item or "").strip()
+        if not value:
+            continue
+        normalized = "Image" if value.lower() == "image" else "Table" if value.lower() == "table" else value
+        if normalized not in normalized_extract_types:
+            normalized_extract_types.append(normalized)
+
+    hi_res_model_name = str(image_partition_parameters.get("hi_res_model_name") or "").strip()
+    infer_table_structure = bool(image_partition_parameters.get("infer_table_structure"))
+    requested_strategy = (partition_strategy or "auto").strip().lower() or "auto"
+    unique_element_ids = bool(image_partition_parameters.get("unique_element_ids", True))
+
+    if requested_strategy == "auto":
+        if languages:
+            warnings.append(
+                f"bookrag ocr_languages for {src.name} are ignored when workflow strategy='auto'; Unstructured auto routing controls OCR internally."
+            )
+        if normalized_extract_types:
+            warnings.append(
+                f"bookrag extract_image_block_types for {src.name} are ignored when workflow strategy='auto'; downstream enrichment nodes handle matching elements automatically."
+            )
+        if infer_table_structure:
+            warnings.append(
+                f"bookrag infer_table_structure for {src.name} is ignored when workflow strategy='auto'; use the Table to HTML enrichment node instead."
+            )
+        settings: dict[str, Any] = {
+            "strategy": "auto",
+            "output_format": "application/json",
+            "format_html": False,
+            "unique_element_ids": unique_element_ids,
+            "is_dynamic": True,
+            "allow_fast": True,
+        }
+        workflow_node = {
+            "name": "Partitioner",
+            "type": "partition",
+            "subtype": "vlm",
+            "settings": settings,
+        }
+    elif requested_strategy == "vlm":
+        settings = {
+            "strategy": "vlm",
+            "output_format": "application/json",
+            "format_html": False,
+            "unique_element_ids": unique_element_ids,
+            "is_dynamic": False,
+            "allow_fast": False,
+        }
+        if infer_table_structure:
+            settings["infer_table_structure"] = True
+        workflow_node = {
+            "name": "Partitioner",
+            "type": "partition",
+            "subtype": "vlm",
+            "settings": settings,
+        }
+    else:
+        settings = {
+            "strategy": requested_strategy,
+            "include_page_breaks": False,
+            "unique_element_ids": unique_element_ids,
+        }
+        if languages:
+            settings["ocr_languages"] = languages
+        if normalized_extract_types:
+            settings["extract_image_block_types"] = normalized_extract_types
+        if requested_strategy == "hi_res" and infer_table_structure:
+            settings["pdf_infer_table_structure"] = True
+            settings["infer_table_structure"] = True
+        if hi_res_model_name and requested_strategy == "hi_res":
+            settings["hi_res_model_name"] = hi_res_model_name
+        if requested_strategy not in {"hi_res", "vlm"} and infer_table_structure:
+            warnings.append(
+                f"bookrag infer_table_structure was requested for {src.name} but is only enabled when strategy='hi_res' or 'vlm'."
+            )
+        workflow_node = {
+            "name": "Partitioner",
+            "type": "partition",
+            "subtype": "unstructured_api",
+            "settings": settings,
+        }
+
+    request_parameters = {
+        "source_file": str(src),
+        "workflow_type": "custom",
+        "workflow_nodes": [workflow_node],
+    }
+    return workflow_node, request_parameters, warnings
+
+
+def build_bookrag_reusable_workflow_definition(
+    *,
+    create_values: dict[str, str],
+    partition_strategy: str,
+    languages: list[str],
+    image_partition_parameters: dict[str, Any] | None,
+    runtime: dict[str, Any],
+) -> tuple[str, list[dict[str, Any]], dict[str, Any], list[str], str]:
+    warnings: list[str] = []
+    image_partition_parameters = image_partition_parameters or {}
+
+    workflow_name = _normalize_bookrag_workflow_name(
+        create_values.get("multi_format_bookrag_workflow_name")
+        or runtime.get("bookrag_workflow_name")
+        or os.getenv("BOOKRAG_WORKFLOW_NAME")
+        or "bookrag_raw_prod"
+    )
+
+    enable_image_description = _to_bool(
+        create_values.get("multi_format_bookrag_enable_image_description", "")
+        or runtime.get("bookrag_enable_image_description")
+        or os.getenv("BOOKRAG_ENABLE_IMAGE_DESCRIPTION", "true"),
+        default=True,
+    )
+    enable_table_to_html = _to_bool(
+        create_values.get("multi_format_bookrag_enable_table_to_html", "")
+        or runtime.get("bookrag_enable_table_to_html")
+        or os.getenv("BOOKRAG_ENABLE_TABLE_TO_HTML", "true"),
+        default=True,
+    )
+    enable_table_description = _to_bool(
+        create_values.get("multi_format_bookrag_enable_table_description", "")
+        or runtime.get("bookrag_enable_table_description")
+        or os.getenv("BOOKRAG_ENABLE_TABLE_DESCRIPTION", "false"),
+        default=False,
+    )
+    enable_generative_ocr = _to_bool(
+        create_values.get("multi_format_bookrag_enable_generative_ocr", "")
+        or runtime.get("bookrag_enable_generative_ocr")
+        or os.getenv("BOOKRAG_ENABLE_GENERATIVE_OCR", "false"),
+        default=False,
+    )
+
+    image_subtype = str(
+        create_values.get("multi_format_bookrag_image_description_subtype", "")
+        or runtime.get("bookrag_image_description_subtype")
+        or os.getenv("BOOKRAG_IMAGE_DESCRIPTION_SUBTYPE", "openai_image_description")
+    ).strip() or "openai_image_description"
+    table_to_html_subtype = str(
+        create_values.get("multi_format_bookrag_table_to_html_subtype", "")
+        or runtime.get("bookrag_table_to_html_subtype")
+        or os.getenv("BOOKRAG_TABLE_TO_HTML_SUBTYPE", "openai_table2html")
+    ).strip() or "openai_table2html"
+    table_description_subtype = str(
+        create_values.get("multi_format_bookrag_table_description_subtype", "")
+        or runtime.get("bookrag_table_description_subtype")
+        or os.getenv("BOOKRAG_TABLE_DESCRIPTION_SUBTYPE", "openai_table_description")
+    ).strip() or "openai_table_description"
+    generative_ocr_subtype = str(
+        create_values.get("multi_format_bookrag_generative_ocr_subtype", "")
+        or runtime.get("bookrag_generative_ocr_subtype")
+        or os.getenv("BOOKRAG_GENERATIVE_OCR_SUBTYPE", "openai_ocr")
+    ).strip() or "openai_ocr"
+
+    partition_node, _, partition_warnings = build_bookrag_workflow_partition_node(
+        src=Path("bookrag_document"),
+        partition_strategy=partition_strategy or "auto",
+        languages=languages,
+        image_partition_parameters=image_partition_parameters,
+    )
+    warnings.extend(partition_warnings)
+
+    workflow_nodes: list[dict[str, Any]] = [partition_node]
+    partition_strategy_label = partition_node['settings'].get('strategy', 'auto')
+    partition_subtype_label = partition_node.get('subtype', '') or 'unknown'
+    profile_parts = [f"partition:{partition_subtype_label}:{partition_strategy_label}"]
+    if enable_image_description:
+        workflow_nodes.append({
+            "name": "Image Description",
+            "type": "prompter",
+            "subtype": image_subtype,
+            "settings": {},
+        })
+        profile_parts.append("image_description")
+    if enable_table_to_html:
+        workflow_nodes.append({
+            "name": "Table to HTML",
+            "type": "prompter",
+            "subtype": table_to_html_subtype,
+            "settings": {},
+        })
+        profile_parts.append("table_to_html")
+    if enable_table_description:
+        workflow_nodes.append({
+            "name": "Table Description",
+            "type": "prompter",
+            "subtype": table_description_subtype,
+            "settings": {},
+        })
+        profile_parts.append("table_description")
+    if enable_generative_ocr:
+        workflow_nodes.append({
+            "name": "Generative OCR",
+            "type": "prompter",
+            "subtype": generative_ocr_subtype,
+            "settings": {},
+        })
+        profile_parts.append("generative_ocr")
+
+    request_parameters = {
+        "workflow_type": "custom",
+        "workflow_name": workflow_name,
+        "workflow_nodes": workflow_nodes,
+    }
+    return workflow_name, workflow_nodes, request_parameters, warnings, ",".join(profile_parts)
+
+
+def _build_multi_format_workflow_chunk_node(
+    *,
+    chunk_size: int,
+    chunk_overlap: int,
+    include_orig_elements: bool,
+    overlap_all: bool,
+) -> dict[str, Any]:
+    return {
+        "name": "Chunker",
+        "type": "chunk",
+        "subtype": "chunk_by_character",
+        "settings": {
+            "unstructured_api_url": None,
+            "unstructured_api_key": None,
+            "include_orig_elements": include_orig_elements,
+            "new_after_n_chars": chunk_size,
+            "max_characters": chunk_size,
+            "overlap": chunk_overlap,
+            "overlap_all": overlap_all,
+        },
+    }
+
+
+def build_multi_format_workflow_definition(
+    *,
+    create_values: dict[str, str],
+    src: Path,
+    partition_strategy: str,
+    languages: list[str],
+    chunk_size: int,
+    chunk_overlap: int,
+    include_orig_elements: bool,
+    overlap_all: bool,
+    runtime: dict[str, Any],
+) -> tuple[dict[str, Any], list[str], str]:
+    warnings: list[str] = []
+
+    workflow_name = _normalize_multi_format_workflow_name(
+        create_values.get("multi_format_workflow_name")
+        or runtime.get("multi_format_workflow_name")
+        or os.getenv("MULTI_FORMAT_WORKFLOW_NAME")
+        or "multi_format_prod"
+    )
+
+    partition_options, enrichment_options, option_warnings = _resolve_multi_format_accuracy_options(
+        create_values,
+        runtime=runtime,
+    )
+    warnings.extend(option_warnings)
+
+    partition_node, partition_warnings = _build_multi_format_workflow_partition_node(
+        src=src,
+        partition_strategy=partition_strategy or "auto",
+        languages=languages,
+        partition_options=partition_options,
+    )
+    warnings.extend(partition_warnings)
+
+    enrichment_nodes, enrichment_warnings = _build_multi_format_enrichment_nodes(
+        enrichment_options=enrichment_options,
+        partition_strategy=partition_strategy or "auto",
+    )
+    warnings.extend(enrichment_warnings)
+
+    chunker_node = _build_multi_format_workflow_chunk_node(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        include_orig_elements=include_orig_elements,
+        overlap_all=overlap_all,
+    )
+    workflow_nodes = [partition_node, *enrichment_nodes, chunker_node]
+    request_parameters = {
+        "workflow_type": "custom",
+        "workflow_name": workflow_name,
+        "workflow_nodes": workflow_nodes,
+    }
+    partition_strategy_label = partition_node['settings'].get('strategy', 'auto')
+    partition_subtype_label = partition_node.get('subtype', '') or 'unknown'
+    profile_parts = [f"partition:{partition_subtype_label}:{partition_strategy_label}"]
+    for node in enrichment_nodes:
+        node_name = str(node.get('name') or '').strip().lower().replace(' ', '_') or 'enrichment'
+        node_subtype = str(node.get('subtype') or '').strip() or 'unknown'
+        profile_parts.append(f"{node_name}:{node_subtype}")
+    profile_parts.append("chunk:chunk_by_character")
+    processing_profile = ",".join(profile_parts)
+    return request_parameters, warnings, processing_profile

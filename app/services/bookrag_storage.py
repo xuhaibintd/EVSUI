@@ -16,11 +16,8 @@ from app.services.bookrag_schema import (
     BOOKRAG_INSERT_BATCH_MAX_SQL_CHARS,
     BOOKRAG_NODE_COLUMNS,
     BOOKRAG_RAW_COLUMNS,
-    ExecuteSqlFn,
-    _qualified_table_sql,
-    _sql_literal,
-    _sql_typed_literal,
 )
+from app.services.teradata_sql import ExecuteSqlFn, _qualified_table_sql, _sql_literal, _sql_typed_literal
 
 
 

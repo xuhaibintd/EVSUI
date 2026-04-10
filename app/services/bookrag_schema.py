@@ -2,15 +2,21 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import Any, Callable
+from typing import Any
+
+from app.services.teradata_sql import (
+    ExecuteSqlFn,
+    _qualified_table_sql,
+    _sql_literal,
+    _sql_typed_literal,
+    _teradata_table_exists,
+)
 
 BOOKRAG_EMBEDDING_NODE_TYPES = ("text", "table", "image")
 
 TERADATA_IDENTIFIER_MAX_LEN = 30
 BOOKRAG_INSERT_BATCH_MAX_ROWS = 32
 BOOKRAG_INSERT_BATCH_MAX_SQL_CHARS = 180000
-
-ExecuteSqlFn = Callable[[str], Any]
 
 BOOKRAG_DOCUMENT_COLUMNS: list[tuple[str, str]] = [
     ("doc_id", 'VARCHAR(64) NOT NULL'),
@@ -152,31 +158,6 @@ def build_bookrag_table_targets(vector_store_name: str) -> dict[str, str]:
     }
 
 
-def _qualified_table_sql(schema_name: str | None, table_name: str) -> str:
-    if schema_name:
-        return f'"{schema_name}"."{table_name}"'
-    return f'"{table_name}"'
-
-
-def _sql_literal(value: Any) -> str:
-    if value is None:
-        return "NULL"
-    if isinstance(value, bool):
-        return "1" if value else "0"
-    if isinstance(value, int):
-        return str(value)
-    text = str(value).replace("'", "''")
-    return f"'{text}'"
-
-
-def _column_cast_type(column_type: str) -> str:
-    return re.sub(r"\s+NOT\s+NULL\s*$", "", column_type, flags=re.IGNORECASE).strip()
-
-
-def _sql_typed_literal(value: Any, column_type: str) -> str:
-    return f"CAST({_sql_literal(value)} AS {_column_cast_type(column_type)})"
-
-
 def _build_table_ddl(qualified_table: str, columns: list[tuple[str, str]]) -> str:
     first_name, first_type = columns[0]
     column_lines: list[str] = [f'  "{first_name}" {first_type}']
@@ -190,19 +171,6 @@ CREATE SET TABLE {qualified_table} (
 {ddl_body}
 )
 """
-
-
-def _teradata_table_exists(qualified_table_sql: str, execute_sql_fn: ExecuteSqlFn | None) -> bool:
-    if execute_sql_fn is None:
-        raise RuntimeError("teradataml.execute_sql is unavailable.")
-    try:
-        execute_sql_fn(f"SELECT TOP 1 1 FROM {qualified_table_sql}")
-        return True
-    except Exception as ex:
-        msg = str(ex).lower()
-        if "3807" in msg or "does not exist" in msg or "not found" in msg:
-            return False
-        raise
 
 
 def _ensure_table(

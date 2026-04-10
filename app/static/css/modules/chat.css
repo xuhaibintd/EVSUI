@@ -185,7 +185,8 @@
   font-size: 1rem;
   font-weight: 700;
   color: #111111;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 #section-chat .chat-api-card {
@@ -197,6 +198,7 @@
   font-size: 0.8rem;
   color: #394150;
   background: #ffffff;
+  overflow-wrap: anywhere;
 }
 
 /* Question composer and actions */
@@ -237,6 +239,15 @@
   display: block;
   margin-top: 0.45rem;
   color: #5f6368;
+}
+
+
+@media (max-width: 1280px) {
+  #section-chat .chat-retrieval-inline {
+    grid-template-columns: 1fr;
+    gap: 0.6rem;
+    align-items: stretch;
+  }
 }
 
 @media (max-width: 960px) {

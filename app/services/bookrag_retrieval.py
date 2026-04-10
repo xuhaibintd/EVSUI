@@ -2,7 +2,8 @@
 
 from typing import Any
 
-from app.services.bookrag_schema import _qualified_table_sql, _sql_literal, build_bookrag_table_targets
+from app.services.bookrag_schema import build_bookrag_table_targets
+from app.services.teradata_sql import _qualified_table_sql, _sql_literal
 from app.utils.table_state import format_preview, normalize_header_key, table_from_result
 
 NodeRow = dict[str, Any]

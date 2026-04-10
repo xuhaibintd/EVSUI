@@ -6,8 +6,9 @@ html,
 body {
   width: 100%;
   height: 100%;
-  overflow: hidden;
-  overscroll-behavior: none;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-x: none;
 }
 
 html {
@@ -84,7 +85,8 @@ body {
   font-size: 0.58rem;
   font-weight: 600;
   letter-spacing: 0.16em;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
   line-height: 1.1;
   color: #7fa3df;
 }
@@ -111,9 +113,8 @@ body {
   padding: 0.42rem 0.62rem;
   font-size: 0.82rem;
   line-height: 1.2;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
   background: rgba(7, 20, 48, 0.95);
   color: #c8daf7;
 }
@@ -180,9 +181,8 @@ p {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   line-height: 1.2;
-  white-space: nowrap;
-  overflow: visible;
-  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .top-actions {
@@ -196,6 +196,8 @@ p {
   color: #cfe0ff;
   text-transform: uppercase;
   letter-spacing: 0.06em;
+  overflow-wrap: anywhere;
+  text-align: right;
 }
 
 .chip-btn {
@@ -223,6 +225,7 @@ p {
   padding: var(--page-pad);
   flex: 1 1 auto;
   min-height: 0;
+  min-width: 0;
   height: calc(100vh - var(--ui-topbar-h));
   max-height: calc(100vh - var(--ui-topbar-h));
   height: calc(100dvh - var(--ui-topbar-h));
@@ -231,7 +234,7 @@ p {
 }
 
 .login-wrap {
-  min-height: calc(100vh - 140px);
+  min-height: max(24rem, calc(100dvh - 140px));
   display: grid;
   place-items: center;
   padding: 1.5rem;

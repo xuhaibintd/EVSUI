@@ -11,7 +11,7 @@
       <h4>1. Partition Route</h4>
       <p class="muted">BookRAG uses its own workflow route and parameters. It is independent from the standard Multi-Format chain.</p>
     </div>
-    <div class="param-grid compact compact-tight multi-format-route-grid">
+    <div class="multi-format-bookrag-route-grid">
       {{ fields.render_field(mf.map['multi_format_bookrag_strategy'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
       {{ fields.render_field(mf.map['multi_format_bookrag_ocr_languages'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
       {{ fields.render_field(mf.map['multi_format_bookrag_extract_image_block_types'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
@@ -23,7 +23,7 @@
       <h4>2. Chunking</h4>
       <p class="muted">These settings control BookRAG chunk assembly after parsing.</p>
     </div>
-    <div class="param-grid compact compact-tight multi-format-route-grid">
+    <div class="multi-format-bookrag-chunk-grid">
       {{ fields.render_field(mf.map['multi_format_bookrag_chunk_size'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
       {{ fields.render_field(mf.map['multi_format_bookrag_chunk_overlap'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
       {{ fields.render_field(mf.map['multi_format_bookrag_new_after_n_chars'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}

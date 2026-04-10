@@ -7,7 +7,6 @@
     const lockedSections = options.lockedSections || ["section-create", "section-chat"];
     const menuHintId = options.menuHintId || "menu-hint";
     const wizardNoteSelector = options.wizardNoteSelector || "#section-connect .wizard-note";
-    const lockHintText = options.lockHintText || "Complete Step 1 to unlock Steps 2 and 3.";
     const noteConnectedText = options.noteConnectedText || "Step 1 completed. Continue to Step 2.";
     const noteDisconnectedText = options.noteDisconnectedText || "Complete Step 1 to continue.";
 
@@ -57,7 +56,7 @@
     function setLockState(locked) {
       const menuHint = document.getElementById(menuHintId);
       if (menuHint) {
-        menuHint.textContent = locked ? lockHintText : "";
+        menuHint.textContent = "";
       }
 
       document.querySelectorAll(".menu-item").forEach((item) => {
@@ -65,6 +64,9 @@
         item.classList.toggle("locked", locked && isLockedMenu);
         if (isLockedMenu) {
           item.setAttribute("aria-disabled", locked ? "true" : "false");
+          if ("disabled" in item) {
+            item.disabled = locked;
+          }
         }
       });
 
@@ -80,14 +82,6 @@
 
         section.classList.toggle("locked", locked);
 
-        const overlay = section.querySelector(".lock-overlay");
-        if (overlay) {
-          overlay.hidden = !locked;
-        }
-
-        section.querySelectorAll(".step-lock-note").forEach((note) => {
-          note.hidden = !locked;
-        });
 
         section
           .querySelectorAll(".panel-content .disabled-block")
