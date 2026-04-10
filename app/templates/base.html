@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Teradata Vector Store</title>
-  <link rel="stylesheet" href="{{ url_for('static', path='css/app.css') }}?v=20260409-8" />
+  <link rel="stylesheet" href="{{ url_for('static', path='css/app.css') }}?v=20260410-14" />
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
   <script defer src="{{ url_for('static', path='js/step-gate.js') }}?v=20260215-1914"></script>
   <script defer src="{{ url_for('static', path='js/modules/core.js') }}?v=20260309-1"></script>
@@ -19,9 +19,9 @@
 <body>
   <header class="topbar">
     <div class="brand-block">
-      <p class="brand-name" aria-label="teradata logo">
-        <span class="brand-wordmark">teradata</span><span class="brand-dot">.</span>
-      </p>
+      <div class="brand-name" aria-label="teradata logo">
+        <img class="brand-logo-img" src="{{ url_for('static', path='img/teradata-logo-2024.png') }}" alt="Teradata" />
+      </div>
       <p class="brand-sub">Enterprise AI Platform</p>
     </div>
     <div class="title-block">

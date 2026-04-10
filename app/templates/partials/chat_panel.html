@@ -6,10 +6,10 @@
   <form id="chat-form" class="stack chat-shell" data-retrieval-mode-form data-bookrag-api-form hx-post="/ui/chat" hx-target="#chat-messages" hx-swap="innerHTML">
     {% set is_oob = false %}
     {% include "partials/chat_vector_store_list.html" %}
-    <div class="label" style="margin: 0.1rem 0 0;">Retrieval Method</div>
-    <div class="chat-retrieval-grid" role="radiogroup" aria-label="Retrieval method" style="display:flex; gap:0.5rem; align-items:stretch;">
-      <div class="chat-retrieval-card chat-retrieval-option is-selected" data-retrieval-option="native" style="flex:1 1 0; min-width:0;">
-        <div class="chat-retrieval-inline" style="display:grid; grid-template-columns:max-content minmax(0,1fr); gap:0.8rem; align-items:center;">
+    <div class="label chat-section-label">Retrieval Method</div>
+    <div class="chat-retrieval-grid" role="radiogroup" aria-label="Retrieval method">
+      <div class="chat-retrieval-card chat-retrieval-option is-selected" data-retrieval-option="native">
+        <div class="chat-retrieval-inline">
           <label class="chat-retrieval-head" for="retrieval-mode-native">
             <span class="chat-retrieval-choice">
               <input type="radio" id="retrieval-mode-native" name="retrieval_mode" value="native" data-retrieval-mode-toggle checked {% if not evs.connected %}disabled{% endif %}>
@@ -22,8 +22,8 @@
           </select>
         </div>
       </div>
-      <div class="chat-retrieval-card chat-retrieval-option chat-api-card" data-retrieval-option="api" style="flex:1 1 0; min-width:0;">
-        <div class="chat-retrieval-inline" style="display:grid; grid-template-columns:max-content minmax(0,1fr); gap:0.8rem; align-items:center;">
+      <div class="chat-retrieval-card chat-retrieval-option chat-api-card" data-retrieval-option="api">
+        <div class="chat-retrieval-inline">
           <label class="chat-retrieval-head" for="retrieval-mode-api">
             <span class="chat-retrieval-choice">
               <input type="radio" id="retrieval-mode-api" name="retrieval_mode" value="api" data-retrieval-mode-toggle {% if not evs.connected %}disabled{% endif %}>

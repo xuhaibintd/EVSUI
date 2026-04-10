@@ -1,3 +1,14 @@
+.precision-panel-head {
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.precision-panel-title {
+  margin: 0;
+}
+
 .precision-eval-panel .basic-layout {
   align-items: start;
 }

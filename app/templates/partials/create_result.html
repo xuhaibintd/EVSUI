@@ -1,4 +1,4 @@
-{% if is_htmx %}
+{% if is_htmx is defined and is_htmx %}
 <div id="top-op-stack-shell" class="top-op-stack" aria-live="polite" hx-swap-oob="outerHTML">
   {% include "partials/top_status.html" %}
 </div>

@@ -89,6 +89,17 @@
   gap: 0.55rem;
 }
 
+.basic-inline-grid {
+  display: grid;
+  grid-template-columns: minmax(18ch, 1.15fr) repeat(5, minmax(0, 1fr));
+  gap: 0.55rem;
+  align-items: end;
+}
+
+.basic-inline-field {
+  min-width: 0;
+}
+
 .basic-row {
   display: grid;
   gap: 0.55rem;
