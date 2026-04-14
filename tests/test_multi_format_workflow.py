@@ -59,6 +59,83 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
         self.assertNotIn('extract_image_block_types', partition_node['settings'])
         self.assertEqual(processing_profile, 'partition:unstructured_api:hi_res,chunk:chunk_by_character')
 
+    def test_chunk_by_title_adds_title_only_settings(self) -> None:
+        request_parameters, warnings, processing_profile = multi_format._build_multi_format_workflow_definition(
+            create_values=self._create_values(
+                multi_format_strategy='hi_res',
+                multi_format_chunk_strategy='chunk_by_title',
+                multi_format_chunk_new_after_n_chars='500',
+                multi_format_chunk_combine_text_under_n_chars='200',
+                multi_format_chunk_multipage_sections='false',
+            ),
+            src=Path('sample.pdf'),
+            partition_strategy='hi_res',
+            languages=['eng'],
+            chunk_size=600,
+            chunk_overlap=80,
+            include_orig_elements=False,
+            overlap_all=True,
+        )
+
+        self.assertEqual(warnings, [])
+        chunk_node = request_parameters['workflow_nodes'][-1]
+        self.assertEqual(chunk_node['subtype'], 'chunk_by_title')
+        self.assertEqual(chunk_node['settings']['max_characters'], 600)
+        self.assertEqual(chunk_node['settings']['new_after_n_chars'], 500)
+        self.assertEqual(chunk_node['settings']['overlap'], 80)
+        self.assertEqual(chunk_node['settings']['combine_text_under_n_chars'], 200)
+        self.assertFalse(chunk_node['settings']['multipage_sections'])
+        self.assertEqual(processing_profile, 'partition:unstructured_api:hi_res,chunk:chunk_by_title')
+
+    def test_chunk_by_similarity_uses_similarity_threshold(self) -> None:
+        request_parameters, warnings, processing_profile = multi_format._build_multi_format_workflow_definition(
+            create_values=self._create_values(
+                multi_format_chunk_strategy='chunk_by_similarity',
+                multi_format_chunk_similarity_threshold='0.7',
+            ),
+            src=Path('sample.pdf'),
+            partition_strategy='auto',
+            languages=['eng'],
+            chunk_size=600,
+            chunk_overlap=80,
+            include_orig_elements=False,
+            overlap_all=True,
+        )
+
+        self.assertEqual(warnings, [])
+        chunk_node = request_parameters['workflow_nodes'][-1]
+        self.assertEqual(chunk_node['subtype'], 'chunk_by_similarity')
+        self.assertEqual(chunk_node['settings']['max_characters'], 600)
+        self.assertEqual(chunk_node['settings']['similarity_threshold'], 0.7)
+        self.assertNotIn('overlap', chunk_node['settings'])
+        self.assertEqual(processing_profile, 'partition:vlm:auto,chunk:chunk_by_similarity')
+
+    def test_chunk_by_page_uses_page_chunk_settings(self) -> None:
+        request_parameters, warnings, processing_profile = multi_format._build_multi_format_workflow_definition(
+            create_values=self._create_values(
+                multi_format_chunk_strategy='chunk_by_page',
+                multi_format_chunk_new_after_n_chars='450',
+            ),
+            src=Path('sample.pdf'),
+            partition_strategy='auto',
+            languages=['eng'],
+            chunk_size=600,
+            chunk_overlap=80,
+            include_orig_elements=False,
+            overlap_all=True,
+        )
+
+        self.assertEqual(warnings, [])
+        chunk_node = request_parameters['workflow_nodes'][-1]
+        self.assertEqual(chunk_node['subtype'], 'chunk_by_page')
+        self.assertEqual(chunk_node['settings']['max_characters'], 600)
+        self.assertEqual(chunk_node['settings']['new_after_n_chars'], 450)
+        self.assertEqual(chunk_node['settings']['overlap'], 80)
+        self.assertTrue(chunk_node['settings']['overlap_all'])
+        self.assertNotIn('combine_text_under_n_chars', chunk_node['settings'])
+        self.assertNotIn('similarity_threshold', chunk_node['settings'])
+        self.assertEqual(processing_profile, 'partition:vlm:auto,chunk:chunk_by_page')
+
     def test_auto_route_uses_auto_partition_and_enrichment_chain(self) -> None:
         create_values = self._create_values(
             multi_format_strategy='auto',

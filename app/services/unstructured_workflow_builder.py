@@ -17,6 +17,30 @@ def _to_bool(raw: Any, default: bool = False) -> bool:
     return default
 
 
+def _to_int(raw: Any, *, default: int, minimum: int | None = None, maximum: int | None = None) -> int:
+    try:
+        value = int(str(raw).strip())
+    except Exception:
+        value = default
+    if minimum is not None and value < minimum:
+        value = minimum
+    if maximum is not None and value > maximum:
+        value = maximum
+    return value
+
+
+def _to_float(raw: Any, *, default: float, minimum: float | None = None, maximum: float | None = None) -> float:
+    try:
+        value = float(str(raw).strip())
+    except Exception:
+        value = default
+    if minimum is not None and value < minimum:
+        value = minimum
+    if maximum is not None and value > maximum:
+        value = maximum
+    return value
+
+
 def _parse_csv_values(raw: Any) -> list[str]:
     return [chunk.strip() for chunk in str(raw or "").split(",") if chunk.strip()]
 
@@ -623,26 +647,103 @@ def build_bookrag_reusable_workflow_definition(
     return workflow_name, workflow_nodes, request_parameters, warnings, ",".join(profile_parts)
 
 
-def _build_multi_format_workflow_chunk_node(
+def _resolve_multi_format_chunk_options(
+    create_values: dict[str, str],
     *,
+    runtime: dict[str, Any],
     chunk_size: int,
     chunk_overlap: int,
+) -> dict[str, Any]:
+    strategy = str(
+        _first_defined(
+            create_values.get("multi_format_chunk_strategy", ""),
+            runtime.get("multi_format_chunk_strategy"),
+            os.getenv("MULTI_FORMAT_CHUNK_STRATEGY", "chunk_by_character"),
+        )
+        or "chunk_by_character"
+    ).strip().lower()
+    if strategy not in {"chunk_by_character", "chunk_by_title", "chunk_by_page", "chunk_by_similarity"}:
+        strategy = "chunk_by_character"
+
+    new_after_n_chars = _to_int(
+        _first_defined(
+            create_values.get("multi_format_chunk_new_after_n_chars", ""),
+            runtime.get("multi_format_chunk_new_after_n_chars"),
+            os.getenv("MULTI_FORMAT_CHUNK_NEW_AFTER_N_CHARS", str(chunk_size)),
+        ),
+        default=chunk_size,
+        minimum=1,
+        maximum=chunk_size,
+    )
+    combine_text_under_n_chars = _to_int(
+        _first_defined(
+            create_values.get("multi_format_chunk_combine_text_under_n_chars", ""),
+            runtime.get("multi_format_chunk_combine_text_under_n_chars"),
+            os.getenv("MULTI_FORMAT_CHUNK_COMBINE_TEXT_UNDER_N_CHARS", str(min(chunk_size, 600))),
+        ),
+        default=min(chunk_size, 600),
+        minimum=0,
+        maximum=chunk_size,
+    )
+    multipage_sections = _to_bool(
+        _first_defined(
+            create_values.get("multi_format_chunk_multipage_sections", ""),
+            runtime.get("multi_format_chunk_multipage_sections"),
+            os.getenv("MULTI_FORMAT_CHUNK_MULTIPAGE_SECTIONS", "true"),
+        ),
+        default=True,
+    )
+    similarity_threshold = _to_float(
+        _first_defined(
+            create_values.get("multi_format_chunk_similarity_threshold", ""),
+            runtime.get("multi_format_chunk_similarity_threshold"),
+            os.getenv("MULTI_FORMAT_CHUNK_SIMILARITY_THRESHOLD", "0.5"),
+        ),
+        default=0.5,
+        minimum=0.0,
+        maximum=1.0,
+    )
+
+    return {
+        "strategy": strategy,
+        "chunk_size": chunk_size,
+        "chunk_overlap": chunk_overlap,
+        "new_after_n_chars": new_after_n_chars,
+        "combine_text_under_n_chars": combine_text_under_n_chars,
+        "multipage_sections": multipage_sections,
+        "similarity_threshold": similarity_threshold,
+    }
+
+
+def _build_multi_format_workflow_chunk_node(
+    *,
+    chunk_options: dict[str, Any],
     include_orig_elements: bool,
     overlap_all: bool,
 ) -> dict[str, Any]:
+    strategy = str(chunk_options.get("strategy") or "chunk_by_character").strip().lower() or "chunk_by_character"
+    settings: dict[str, Any] = {
+        "unstructured_api_url": None,
+        "unstructured_api_key": None,
+        "include_orig_elements": include_orig_elements,
+        "max_characters": int(chunk_options.get("chunk_size") or 600),
+    }
+
+    if strategy in {"chunk_by_character", "chunk_by_title", "chunk_by_page"}:
+        settings["new_after_n_chars"] = int(chunk_options.get("new_after_n_chars") or settings["max_characters"])
+        settings["overlap"] = int(chunk_options.get("chunk_overlap") or 0)
+        settings["overlap_all"] = overlap_all
+    if strategy == "chunk_by_title":
+        settings["combine_text_under_n_chars"] = int(chunk_options.get("combine_text_under_n_chars") or 0)
+        settings["multipage_sections"] = bool(chunk_options.get("multipage_sections", True))
+    if strategy == "chunk_by_similarity":
+        settings["similarity_threshold"] = float(chunk_options.get("similarity_threshold") or 0.5)
+
     return {
         "name": "Chunker",
         "type": "chunk",
-        "subtype": "chunk_by_character",
-        "settings": {
-            "unstructured_api_url": None,
-            "unstructured_api_key": None,
-            "include_orig_elements": include_orig_elements,
-            "new_after_n_chars": chunk_size,
-            "max_characters": chunk_size,
-            "overlap": chunk_overlap,
-            "overlap_all": overlap_all,
-        },
+        "subtype": strategy,
+        "settings": settings,
     }
 
 
@@ -687,9 +788,14 @@ def build_multi_format_workflow_definition(
     )
     warnings.extend(enrichment_warnings)
 
-    chunker_node = _build_multi_format_workflow_chunk_node(
+    chunk_options = _resolve_multi_format_chunk_options(
+        create_values,
+        runtime=runtime,
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
+    )
+    chunker_node = _build_multi_format_workflow_chunk_node(
+        chunk_options=chunk_options,
         include_orig_elements=include_orig_elements,
         overlap_all=overlap_all,
     )
@@ -706,6 +812,6 @@ def build_multi_format_workflow_definition(
         node_name = str(node.get('name') or '').strip().lower().replace(' ', '_') or 'enrichment'
         node_subtype = str(node.get('subtype') or '').strip() or 'unknown'
         profile_parts.append(f"{node_name}:{node_subtype}")
-    profile_parts.append("chunk:chunk_by_character")
+    profile_parts.append(f"chunk:{chunker_node['subtype']}")
     processing_profile = ",".join(profile_parts)
     return request_parameters, warnings, processing_profile

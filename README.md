@@ -17,8 +17,8 @@ Teradata Vector Store is a `FastAPI + Jinja2 + HTMX` three-step interface for co
 - Supports multi-file upload
 - Full `VectorStore.create(...)` parameter form
 - Built-in parameter sets for `VECTORDISTANCE / KMEANS / HNSW`
-- `Multi Format` mode runs Unstructured Workflow (`teradata-sql` destination connector), creates a Teradata table first, and writes processed text rows into `<Vector Store Name>_unstructured`.
-- `Multi-Format BookRAG` mode skips `VectorStore.create()` and writes Unstructured `by_title` chunks into a dedicated Teradata table while preserving full chunk JSON for traceability.
+- `Multi Format` mode uses Unstructured Workflow Endpoint on-demand jobs, creates a Teradata table first, and writes processed chunk rows into `<Vector Store Name>_unstructured`.
+- `Multi-Format BookRAG` mode skips `VectorStore.create()` and uses a reusable Unstructured Workflow Endpoint definition to collect raw elements into dedicated Teradata tables for traceability.
 
 3. Step 3: Retrieval Chat
 - Supports `VectorStore.ask` and `VectorStore.similarity_search`
@@ -47,6 +47,107 @@ Teradata Vector Store is a `FastAPI + Jinja2 + HTMX` three-step interface for co
   - `teradatagenai`
   - `unstructured-client`
   - `packaging`
+
+## Unstructured Chain Guide
+
+This project should follow Unstructured's current hosted API guidance:
+
+- Use the **Workflow Endpoint / on-demand jobs** for production workflows.
+- Treat the **Partition Endpoint** as **legacy / prototyping only**.
+- Do not mix Workflow and Partition assumptions in the same feature design.
+
+Official references:
+- Workflow docs: https://docs.unstructured.io/api-reference/workflow/workflows
+- Workflow UI guide: https://docs.unstructured.io/ui/workflows
+- Partition Endpoint overview: https://docs.unstructured.io/platform-api/partition-api/overview
+- Partition Endpoint parameters: https://docs.unstructured.io/api-reference/partition/api-parameters
+- Partitioning strategy guide: https://docs.unstructured.io/ui/partitioning
+
+### Official API Choice
+
+1. **Workflow Endpoint**
+- Officially recommended for production-level usage.
+- Supports batches, latest models, enrichments, chunking strategies, embeddings, and remote sources.
+- Conceptual chain: `Source -> Partitioner -> optional Enrichment -> optional Chunker -> optional Embedder -> Destination`
+
+2. **Partition Endpoint**
+- Officially marked as legacy / rapid prototyping.
+- Intended for one local file at a time, with limited chunking.
+- Conceptual chain: `Local file -> Partitioner(strategy=...) -> optional chunking_strategy`
+
+### Current EVSUI Mapping
+
+1. **Unstructured** (`doc_pipeline_mode=multi_format`)
+- Uses the **Workflow Endpoint**.
+- Implemented chain: `Partitioner -> optional Enrichment nodes -> Chunker`
+- Current workflow chunker options in EVSUI:
+  - `chunk_by_character`
+  - `chunk_by_title`
+  - `chunk_by_page`
+  - `chunk_by_similarity`
+
+2. **Unstructured BookRAG** (`doc_pipeline_mode=multi_format_bookrag`)
+- Uses the **Workflow Endpoint**.
+- Current implemented chain: `Partitioner -> optional Enrichment nodes`
+- Current app behavior stores raw workflow output in Teradata BookRAG tables.
+- Current BookRAG flow does **not** add a Workflow `Chunker` node.
+- Do not describe the current BookRAG implementation as `by_title` chunking unless the code actually adds a Workflow chunk node.
+
+### Official Route Combinations For Workflow Endpoint
+
+1. **Fast**
+- Official use: text-only documents.
+- Recommended chain: `Partitioner(Fast) -> Chunker`
+- Do **not** expect image description, table description, table-to-HTML, or generative OCR outputs here.
+
+2. **Auto**
+- Official recommendation: use in most cases.
+- Recommended chain: `Partitioner(Auto) -> optional Enrichment nodes -> Chunker`
+- For PDFs, Auto can route page-by-page: simple embedded-text pages can go to Fast; more complex pages can go to High Res or VLM.
+
+3. **High Res**
+- Official use: supported file types needing stronger structure handling, simple tables, images, or bounding-box coordinates.
+- Recommended chain: `Partitioner(High Res) -> optional Enrichment nodes -> Chunker`
+
+4. **VLM**
+- Official use: highest-quality processing for visually complex PDFs/images, especially complex tables, images, multilingual, scanned, or handwritten content.
+- Recommended chain: `Partitioner(VLM) -> Chunker`
+- For VLM workflows, separate image-description, table-description, table-to-HTML, and generative-OCR nodes are **not needed (or allowed)** by the official workflow guidance.
+
+### Official Route Selection Guidance
+
+- **Auto**: recommended in most cases.
+- **Fast**: only when you are sure the files are text-only and have no tables, images, multilingual, scanned, or handwritten content.
+- **High Res**: use when you are sure at least one file has images or simple tables, and you need stronger layout handling or coordinates.
+- **VLM**: best when files contain complex tables, images, multilingual text, scanned pages, or handwriting.
+
+### Official Enrichment Rules
+
+- `Fast + enrichment nodes`: do not expect enrichment outputs.
+- `Auto/High Res + enrichment nodes`: supported when the file content and routed partition path are eligible.
+- `VLM + separate enrichment nodes`: do not add them as a normal design pattern; official workflow guidance says they are not needed or allowed.
+
+### Current EVSUI Defaults
+
+These are **application defaults**, not official Unstructured defaults:
+
+- `multi_format_strategy = auto`
+- `multi_format_chunk_strategy = chunk_by_character`
+- `multi_format_chunk_size = 600`
+- `multi_format_chunk_overlap = 80`
+- `multi_format_chunk_new_after_n_chars = 600`
+- `multi_format_chunk_combine_text_under_n_chars = 600`
+- `multi_format_chunk_multipage_sections = true`
+- `multi_format_chunk_similarity_threshold = 0.5`
+- `multi_format_infer_table_structure = false`
+- all Unstructured enrichments default to `false` in the UI
+
+### Coding Rules For This Repo
+
+- When updating `multi_format`, think in **Workflow Endpoint** terms only.
+- Do not reintroduce Partition Endpoint-only concepts such as `chunking_strategy=basic` into the current `multi_format` workflow path.
+- If documentation, UI labels, or tests mention `by_title`, `basic`, or other chunk labels, make sure they match the actual chain in code.
+- If BookRAG later adds a real Workflow `Chunker` node, update this README and tests in the same change.
 
 ## Multi Format Config
 

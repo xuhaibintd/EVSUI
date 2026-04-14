@@ -2,8 +2,13 @@ from __future__ import annotations
 
 DOC_PIPELINE_UI_DEFAULTS = {
     "multi_format_strategy": "auto",
+    "multi_format_chunk_strategy": "chunk_by_character",
     "multi_format_chunk_size": "600",
     "multi_format_chunk_overlap": "80",
+    "multi_format_chunk_new_after_n_chars": "600",
+    "multi_format_chunk_combine_text_under_n_chars": "600",
+    "multi_format_chunk_multipage_sections": "true",
+    "multi_format_chunk_similarity_threshold": "0.5",
     "multi_format_ocr_languages": "",
     "multi_format_vlm_provider": "",
     "multi_format_vlm_model": "",
@@ -42,8 +47,8 @@ DOC_PIPELINE_UI_DEFAULTS = {
 
 DOC_PIPELINE_OPTIONS = [
     {"value": "text_core", "label": "Text PDF Only"},
-    {"value": "multi_format", "label": "Unstructured"},
-    {"value": "multi_format_bookrag", "label": "Unstructured BookRAG"},
+    {"value": "multi_format", "label": "Multi-Format"},
+    {"value": "multi_format_bookrag", "label": "Multi-Format BookRAG"},
 ]
 DOC_PIPELINE_MODE_VALUES = {item["value"] for item in DOC_PIPELINE_OPTIONS}
 

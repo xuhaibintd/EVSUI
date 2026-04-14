@@ -173,6 +173,9 @@ def _build_multi_format_field_map() -> dict[str, dict[str, object]]:
     partition_hi_res_attrs = {"data-partition-routes": "hi_res"}
     partition_vlm_attrs = {"data-partition-routes": "auto vlm"}
     enrichment_route_attrs = {"data-partition-routes": "auto hi_res"}
+    chunk_title_attrs = {"data-chunk-strategies": "chunk_by_title"}
+    chunk_similarity_attrs = {"data-chunk-strategies": "chunk_by_similarity"}
+    chunk_sequential_attrs = {"data-chunk-strategies": "chunk_by_character chunk_by_title chunk_by_page"}
 
     return {
         "multi_format_strategy": _select_field(
@@ -476,12 +479,25 @@ def _build_multi_format_field_map() -> dict[str, dict[str, object]]:
             option_groups=enrichment_model_groups,
             wrapper_class="field doc-field-xxl",
         ),
+        "multi_format_chunk_strategy": _select_field(
+            "multi_format_chunk_strategy",
+            "Chunk Strategy",
+            "multi_format_chunk_strategy",
+            help_text="Workflow chunker subtype.",
+            options=[
+                {"value": "chunk_by_character", "label": "By Character"},
+                {"value": "chunk_by_title", "label": "By Title"},
+                {"value": "chunk_by_page", "label": "By Page"},
+                {"value": "chunk_by_similarity", "label": "By Similarity"},
+            ],
+            wrapper_class="field doc-field-short",
+        ),
         "multi_format_chunk_size": _text_field(
             "multi_format_chunk_size",
             "Chunk Size",
             "multi_format_chunk_size",
             kind="number",
-            help_text="Character budget per chunk after partition and enrichments.",
+            help_text="Max characters per chunk.",
             wrapper_class="field doc-field-short",
         ),
         "multi_format_chunk_overlap": _text_field(
@@ -490,6 +506,47 @@ def _build_multi_format_field_map() -> dict[str, dict[str, object]]:
             "multi_format_chunk_overlap",
             kind="number",
             help_text="Character overlap between neighboring chunks.",
+            wrapper_attrs=chunk_sequential_attrs,
+            wrapper_class="field doc-field-short",
+        ),
+        "multi_format_chunk_new_after_n_chars": _text_field(
+            "multi_format_chunk_new_after_n_chars",
+            "New After N Chars",
+            "multi_format_chunk_new_after_n_chars",
+            kind="number",
+            help_text="Start a new chunk after this size threshold.",
+            wrapper_attrs=chunk_sequential_attrs,
+            wrapper_class="field doc-field-short",
+        ),
+        "multi_format_chunk_combine_text_under_n_chars": _text_field(
+            "multi_format_chunk_combine_text_under_n_chars",
+            "Combine Text Under N Chars",
+            "multi_format_chunk_combine_text_under_n_chars",
+            kind="number",
+            help_text="Only used by title-based chunking.",
+            wrapper_attrs=chunk_title_attrs,
+            wrapper_class="field doc-field-short",
+        ),
+        "multi_format_chunk_multipage_sections": _select_field(
+            "multi_format_chunk_multipage_sections",
+            "Multipage Sections",
+            "multi_format_chunk_multipage_sections",
+            help_text="Allow title-based sections to continue across pages.",
+            wrapper_attrs=chunk_title_attrs,
+            options=[
+                {"value": "true", "label": "true"},
+                {"value": "false", "label": "false"},
+            ],
+            wrapper_class="field doc-field-short",
+        ),
+        "multi_format_chunk_similarity_threshold": _text_field(
+            "multi_format_chunk_similarity_threshold",
+            "Similarity Threshold",
+            "multi_format_chunk_similarity_threshold",
+            kind="number",
+            help_text="Similarity cutoff for semantic chunk grouping.",
+            wrapper_attrs=chunk_similarity_attrs,
+            input_attrs={"step": "0.05", "min": "0.0", "max": "1.0"},
             wrapper_class="field doc-field-short",
         ),
         "multi_format_bookrag_strategy": {
@@ -626,8 +683,13 @@ def build_multi_format_ui_fields() -> list[dict[str, object]]:
         "multi_format_image_description_subtype",
         "multi_format_image_description_provider_type",
         "multi_format_image_description_model",
+        "multi_format_chunk_strategy",
         "multi_format_chunk_size",
         "multi_format_chunk_overlap",
+        "multi_format_chunk_new_after_n_chars",
+        "multi_format_chunk_combine_text_under_n_chars",
+        "multi_format_chunk_multipage_sections",
+        "multi_format_chunk_similarity_threshold",
     )
 
 

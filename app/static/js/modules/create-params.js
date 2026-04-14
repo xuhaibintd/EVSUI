@@ -178,6 +178,44 @@
     });
   }
 
+  function bindChunkStrategyParams(scope = document) {
+    const forms = scope.querySelectorAll("#section-create form[hx-post='/ui/create/upload']");
+    forms.forEach((form) => {
+      const strategySelect = form.querySelector("select[name='multi_format_chunk_strategy']");
+      const fields = form.querySelectorAll("[data-chunk-strategies]");
+      if (!(strategySelect instanceof HTMLSelectElement) || !fields.length) {
+        return;
+      }
+      if (strategySelect.dataset.chunkStrategyBound === "1") {
+        return;
+      }
+      strategySelect.dataset.chunkStrategyBound = "1";
+
+      const syncByChunkStrategy = () => {
+        const current = (strategySelect.value || "").trim().toLowerCase() || "chunk_by_character";
+        const locked = form.classList.contains("disabled-block");
+        fields.forEach((field) => {
+          if (!(field instanceof HTMLElement)) {
+            return;
+          }
+          const allowed = (field.dataset.chunkStrategies || "")
+            .split(/\s+/)
+            .map((item) => item.trim().toLowerCase())
+            .filter(Boolean);
+          const show = !allowed.length || allowed.includes(current);
+          field.classList.toggle("chunk-strategy-hidden", !show);
+          field.hidden = !show;
+          field.querySelectorAll("input, select, textarea").forEach((control) => {
+            control.disabled = !show || locked;
+          });
+        });
+      };
+
+      strategySelect.addEventListener("change", syncByChunkStrategy);
+      syncByChunkStrategy();
+    });
+  }
+
   function bindEnrichmentParams(scope = document) {
     const forms = scope.querySelectorAll("#section-create form[hx-post='/ui/create/upload']");
     forms.forEach((form) => {
@@ -271,10 +309,12 @@
   app.bindPartitionRouteParams = bindPartitionRouteParams;
   app.bindProviderModelFilters = bindProviderModelFilters;
   app.bindEnrichmentParams = bindEnrichmentParams;
+  app.bindChunkStrategyParams = bindChunkStrategyParams;
 
   app.registerBinder(bindAlgorithmParams);
   app.registerBinder(bindDocPipelineParams);
   app.registerBinder(bindPartitionRouteParams);
   app.registerBinder(bindProviderModelFilters);
   app.registerBinder(bindEnrichmentParams);
+  app.registerBinder(bindChunkStrategyParams);
 })(window);

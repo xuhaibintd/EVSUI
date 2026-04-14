@@ -3,7 +3,7 @@ from __future__ import annotations
 from app.services.multi_format import apply_multi_format_pipeline
 
 MODE = "multi_format_bookrag"
-LABEL = "Unstructured BookRAG"
+LABEL = "Multi-Format BookRAG"
 SKIP_VECTORSTORE_CREATE = True
 
 

@@ -4,7 +4,7 @@ from app.services.doc_modes.messages import append_multi_format_summary
 from app.services.multi_format import apply_multi_format_pipeline
 
 MODE = "multi_format"
-LABEL = "Unstructured"
+LABEL = "Multi-Format"
 SKIP_VECTORSTORE_CREATE = False
 
 

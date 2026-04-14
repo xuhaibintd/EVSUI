@@ -157,8 +157,13 @@
       <h4>4. Chunking</h4>
     </div>
     <div class="multi-format-chunk-grid">
+      {{ fields.render_field(mf.map['multi_format_chunk_strategy'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
       {{ fields.render_field(mf.map['multi_format_chunk_size'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
       {{ fields.render_field(mf.map['multi_format_chunk_overlap'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+      {{ fields.render_field(mf.map['multi_format_chunk_new_after_n_chars'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+      {{ fields.render_field(mf.map['multi_format_chunk_combine_text_under_n_chars'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+      {{ fields.render_field(mf.map['multi_format_chunk_multipage_sections'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+      {{ fields.render_field(mf.map['multi_format_chunk_similarity_threshold'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
     </div>
   </div>
 </div>
