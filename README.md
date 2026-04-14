@@ -30,7 +30,7 @@ Teradata Vector Store is a `FastAPI + Jinja2 + HTMX` three-step interface for co
 - In Step 3, clicking `Run List` loads real vector stores and displays an available item by default.
 - Step 1 `destroy` refreshes only Step 1 list data, not the Step 3 dropdown.
 - No auto-list on connect; list execution is manual.
-- Step 2 submit validation blocks create unless `vector_store_name`, `doc_pipeline_mode`, `embeddings_model`, and uploaded files are present.
+- Step 2 submit validation blocks create unless `vector_store_name`, `doc_pipeline_mode`, `embeddings_model`, and a document source are present. Uploaded files and `document_files` both satisfy this check.
 - For uploaded-file create flow, `object_names` is not auto-filled by the UI.
 - Step 2 does not report success when `VectorStore.create()` merely returns; it waits until `VectorStore.status()` reaches `Ready`.
 - If `create()` reports `already exists`, the app verifies existence with unfiltered `VSManager.list()` and only reuses the store when its current status is `Ready`.

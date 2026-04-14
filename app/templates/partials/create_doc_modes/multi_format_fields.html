@@ -10,8 +10,53 @@
     <div class="multi-format-section-head">
       <h4>1. Route</h4>
     </div>
-    <div class="multi-format-route-select-grid">
-      {{ fields.render_field(mf.map['multi_format_strategy'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+    <div class="multi-format-route-select-grid" style="display:grid; grid-template-columns:minmax(18rem, 22rem) minmax(0, 1fr); gap:1rem; align-items:start; width:100%;">
+      <div class="multi-format-route-select-column" style="grid-column:1; grid-row:1; min-width:0; max-width:22rem; width:100%;">
+        {{ fields.render_field(mf.map['multi_format_strategy'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+      </div>
+      <div class="multi-format-route-overview stack" style="grid-column:2; grid-row:1; align-self:start; min-width:0; width:100%; margin:0; padding:0;">
+        <p class="multi-format-section-copy" style="margin-top:0;">Route decides partition quality, layout handling, and whether enrichment nodes can produce extra outputs.</p>
+
+        <article class="multi-format-route-card" data-partition-routes="fast">
+          <h5>Fast</h5>
+          <p>Fast is the speed-first route for text-heavy documents. It is best when the file already contains embedded text and you mainly want quick chunk output.</p>
+          <ul>
+            <li>Best for: text-only or mostly text PDFs.</li>
+            <li>Behavior: prioritizes speed over layout understanding.</li>
+            <li>Enrichment: image description, table description, table-to-HTML, and generative OCR are not produced.</li>
+          </ul>
+        </article>
+
+        <article class="multi-format-route-card" data-partition-routes="auto">
+          <h5>Auto</h5>
+          <p>Auto is the safest default. Unstructured dynamically routes content to Fast, High Res, or VLM depending on file and page complexity.</p>
+          <ul>
+            <li>Best for: mixed PDFs with both plain text pages and complex pages.</li>
+            <li>Behavior: simple pages can go to Fast; tables, images, or complex layout can go to High Res or VLM.</li>
+            <li>Enrichment: can produce enrichment outputs when the routed content supports them.</li>
+          </ul>
+        </article>
+
+        <article class="multi-format-route-card" data-partition-routes="hi_res">
+          <h5>High Res</h5>
+          <p>High Res is the structure-aware route for complex layouts. Use it when tables, images, OCR hints, or page structure matter more than raw speed.</p>
+          <ul>
+            <li>Best for: scanned PDFs, tables, images, and layout-sensitive extraction.</li>
+            <li>Behavior: stronger page analysis and element extraction than Fast.</li>
+            <li>Enrichment: image description, table description, table-to-HTML, and generative OCR can be used here.</li>
+          </ul>
+        </article>
+
+        <article class="multi-format-route-card" data-partition-routes="vlm">
+          <h5>VLM</h5>
+          <p>VLM is the highest-quality route for image-heavy or visually complex documents, using a vision-language model for parsing.</p>
+          <ul>
+            <li>Best for: difficult pages where visual understanding matters most.</li>
+            <li>Behavior: highest quality, usually slower and more expensive than Fast.</li>
+            <li>Enrichment: some outputs are handled directly by VLM, so separate enrichment nodes are more limited than in High Res.</li>
+          </ul>
+        </article>
+      </div>
     </div>
   </div>
 

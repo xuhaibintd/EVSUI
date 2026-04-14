@@ -72,9 +72,9 @@ def _resolve_multi_format_accuracy_options(
             create_values.get("multi_format_infer_table_structure", ""),
             runtime.get("multi_format_infer_table_structure"),
             runtime.get("infer_table_structure"),
-            os.getenv("MULTI_FORMAT_INFER_TABLE_STRUCTURE", "true"),
+            os.getenv("MULTI_FORMAT_INFER_TABLE_STRUCTURE", "false"),
         ),
-        default=True,
+        default=False,
     )
     hi_res_model_name = str(
         _first_defined(
@@ -117,17 +117,17 @@ def _resolve_multi_format_accuracy_options(
         _first_defined(
             create_values.get("multi_format_enable_generative_ocr", ""),
             runtime.get("multi_format_enable_generative_ocr"),
-            os.getenv("MULTI_FORMAT_ENABLE_GENERATIVE_OCR", "true"),
+            os.getenv("MULTI_FORMAT_ENABLE_GENERATIVE_OCR", "false"),
         ),
-        default=True,
+        default=False,
     )
     enable_table_to_html = _to_bool(
         _first_defined(
             create_values.get("multi_format_enable_table_to_html", ""),
             runtime.get("multi_format_enable_table_to_html"),
-            os.getenv("MULTI_FORMAT_ENABLE_TABLE_TO_HTML", "true"),
+            os.getenv("MULTI_FORMAT_ENABLE_TABLE_TO_HTML", "false"),
         ),
-        default=True,
+        default=False,
     )
     enable_table_description = _to_bool(
         _first_defined(
@@ -156,8 +156,6 @@ def _resolve_multi_format_accuracy_options(
     ).strip()
     if raw_extract_types.lower() == "auto":
         extract_image_block_types: list[str] = []
-        if enable_generative_ocr:
-            extract_image_block_types.extend(["NarrativeText", "Title", "ListItem", "UncategorizedText"])
         if enable_table_to_html or enable_table_description:
             extract_image_block_types.append("Table")
         if enable_image_description:
@@ -189,13 +187,15 @@ def _resolve_multi_format_accuracy_options(
         provider_type = str(
             create_values.get(f"multi_format_{prefix}_provider_type", "")
             or runtime.get(f"multi_format_{prefix}_provider_type")
-            or os.getenv(f"MULTI_FORMAT_{prefix.upper()}_PROVIDER_TYPE", default_provider)
-        ).strip() or default_provider
+            or os.getenv(f"MULTI_FORMAT_{prefix.upper()}_PROVIDER_TYPE", "")
+            or ""
+        ).strip()
         model = str(
             create_values.get(f"multi_format_{prefix}_model", "")
             or runtime.get(f"multi_format_{prefix}_model")
-            or os.getenv(f"MULTI_FORMAT_{prefix.upper()}_MODEL", default_model)
-        ).strip() or default_model
+            or os.getenv(f"MULTI_FORMAT_{prefix.upper()}_MODEL", "")
+            or ""
+        ).strip()
         if enabled and subtype != "twopass_table2html" and (provider_type or model):
             warnings.append(
                 f"multi format {prefix} provider/model are ignored for on-demand workflow templates; subtype '{subtype}' is sent to Unstructured without extra settings."

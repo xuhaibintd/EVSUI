@@ -23,6 +23,10 @@ CREATE_READY_TIMEOUT_SECONDS = 120
 CREATE_READY_POLL_INTERVAL_SECONDS = 2
 
 
+def _split_document_file_hints(raw_value: str) -> list[str]:
+    return [chunk.strip() for chunk in str(raw_value or '').replace('\n', ',').split(',') if chunk.strip()]
+
+
 def _classify_vectorstore_status(status_output) -> tuple[str, str, str]:
     preview = format_preview(status_output, max_chars=None)
     headers, rows = table_from_result(status_output)
@@ -197,9 +201,10 @@ async def handle_upload_and_prepare_create(
     embeddings_model_value = str(form.get("embeddings_model", "")).strip()
     if not embeddings_model_value:
         required_missing.append("embeddings_model")
+    has_document_files = bool(_split_document_file_hints(form.get("document_files", "")))
     has_uploaded_documents = bool(saved or app.state.document_uploads)
-    if not has_uploaded_documents:
-        required_missing.append("uploaded_files")
+    if not (has_uploaded_documents or has_document_files):
+        required_missing.append("document_source")
 
     if required_missing:
         app.state.create_form_values = create_values

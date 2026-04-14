@@ -172,7 +172,9 @@ def is_logged_in(request: Request, app, session_cookie_name: str) -> bool:
     sid = session_id_from_request(request, session_cookie_name)
     if not sid:
         return False
-    return sid in app.state.user_sessions
+    if sid in app.state.user_sessions:
+        return True
+    return bool(current_user(request).strip())
 
 
 def poc_admin_credentials() -> tuple[str, str]:

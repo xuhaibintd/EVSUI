@@ -3,9 +3,9 @@
 @import url("modules/tokens.css?v=20260409-7");
 @import url("modules/base.css?v=20260411-11");
 @import url("modules/layout.css?v=20260411-11");
-@import url("modules/forms-uploads.css?v=20260411-11");
-@import url("modules/create.css?v=20260411-12");
-@import url("modules/connect.css?v=20260411-12");
+@import url("modules/forms-uploads.css?v=20260414-1");
+@import url("modules/create.css?v=20260414-2");
+@import url("modules/connect.css?v=20260414-13");
 @import url("modules/chat.css?v=20260411-11");
 @import url("modules/precision-eval.css?v=20260410-2");
 @import url("modules/responsive.css?v=20260411-11");
@@ -25,6 +25,39 @@
 #section-create .basic-layout .field {
   min-width: 0;
 }
+
+#section-create .multi-format-route-select-grid {
+  display: grid !important;
+  grid-template-columns: minmax(18rem, 22rem) minmax(0, 1fr) !important;
+  gap: 1rem !important;
+  align-items: start !important;
+}
+
+#section-create .multi-format-route-select-column {
+  min-width: 0;
+  max-width: 22rem;
+}
+
+#section-create .multi-format-route-select-column > .field {
+  width: 100%;
+  max-width: 100%;
+}
+
+#section-create .multi-format-route-overview {
+  min-width: 0;
+  width: 100%;
+}
+
+@media (max-width: 900px) {
+  #section-create .multi-format-route-select-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  #section-create .multi-format-route-select-column {
+    max-width: 100%;
+  }
+}
+
 
 @media (max-width: 1380px) {
   #section-create .basic-layout {
@@ -634,6 +667,39 @@ button.ghost,
   background: #ffffff;
   color: #1a1a1a !important;
   box-shadow: 0 1px 2px rgba(60, 64, 67, 0.08);
+}
+
+button.monitor-btn-health,
+button.ghost.monitor-btn-health {
+  border-color: #2d7d57 !important;
+  background: linear-gradient(180deg, #34a56f 0%, #257a52 100%) !important;
+  color: #ffffff !important;
+  box-shadow: 0 6px 16px rgba(37, 122, 82, 0.24) !important;
+}
+
+button.monitor-btn-list,
+button.ghost.monitor-btn-list {
+  border-color: #2e5fb1 !important;
+  background: linear-gradient(180deg, #4a8dff 0%, #2f67da 100%) !important;
+  color: #ffffff !important;
+  box-shadow: 0 6px 16px rgba(47, 103, 218, 0.24) !important;
+}
+
+button.monitor-btn-health:hover:not(:disabled),
+button.ghost.monitor-btn-health:hover:not(:disabled) {
+  background: linear-gradient(180deg, #3aae76 0%, #287f56 100%) !important;
+}
+
+button.monitor-btn-list:hover:not(:disabled),
+button.ghost.monitor-btn-list:hover:not(:disabled) {
+  background: linear-gradient(180deg, #5897ff 0%, #356fe3 100%) !important;
+}
+
+button.monitor-btn-health:disabled,
+button.ghost.monitor-btn-health:disabled,
+button.monitor-btn-list:disabled,
+button.ghost.monitor-btn-list:disabled {
+  opacity: 0.78;
 }
 
 .top-op-line {

@@ -57,12 +57,14 @@
     const panels = scope.querySelectorAll("[data-vs-destroy-panel]");
     panels.forEach((panel) => {
       const triggerButton = panel.querySelector("[data-destroy-btn]");
+      const destroyForm = triggerButton ? triggerButton.closest("form") : null;
       const modal = panel.querySelector("[data-destroy-confirm]");
       const modalName = panel.querySelector("[data-confirm-vs-name]");
       const selectedName = panel.querySelector("[data-destroy-selected-name]");
+      const feedback = panel.querySelector("[data-destroy-feedback]");
       const cancelButtons = panel.querySelectorAll("[data-confirm-cancel]");
       const okButton = panel.querySelector("[data-confirm-ok]");
-      if (!(triggerButton instanceof HTMLButtonElement) || !(modal instanceof HTMLElement)) {
+      if (!(triggerButton instanceof HTMLButtonElement) || !(destroyForm instanceof HTMLFormElement) || !(modal instanceof HTMLElement)) {
         return;
       }
       if (triggerButton.dataset.confirmBound === "1") {
@@ -75,10 +77,12 @@
         document.body.classList.remove("confirm-open");
       };
 
+      const currentVsName = () => (selectedName && selectedName.textContent ? selectedName.textContent : "").trim() || "(none)";
+
       const openModal = () => {
-        const currentName = (selectedName && selectedName.textContent ? selectedName.textContent : "").trim() || "(none)";
+        const name = currentVsName();
         if (modalName) {
-          modalName.textContent = currentName;
+          modalName.textContent = name;
         }
         modal.hidden = false;
         document.body.classList.add("confirm-open");
@@ -102,11 +106,63 @@
 
       if (okButton instanceof HTMLButtonElement) {
         okButton.addEventListener("click", () => {
+          const name = currentVsName();
           closeModal();
+          if (feedback instanceof HTMLElement) {
+            feedback.textContent = `Deleting '${name}'...`;
+            feedback.classList.remove("ok", "warn", "err");
+            feedback.classList.add("neutral");
+          }
+          if (typeof destroyForm.requestSubmit === "function") {
+            destroyForm.requestSubmit(triggerButton);
+            return;
+          }
           triggerButton.dataset.confirmArmed = "1";
           setTimeout(() => triggerButton.click(), 0);
         });
       }
+
+      destroyForm.addEventListener("htmx:afterRequest", (event) => {
+        const source = event.detail && event.detail.elt;
+        if (source !== destroyForm) {
+          return;
+        }
+        if (event.detail && event.detail.successful) {
+          return;
+        }
+        if (feedback instanceof HTMLElement) {
+          const xhr = event.detail && event.detail.xhr;
+          const status = xhr && typeof xhr.status === "number" ? xhr.status : 0;
+          const suffix = status ? ` (HTTP ${status})` : "";
+          feedback.textContent = `Delete request failed for '${currentVsName()}'.${suffix}`;
+          feedback.classList.remove("ok", "neutral");
+          feedback.classList.add("err");
+        }
+      });
+
+      destroyForm.addEventListener("htmx:sendError", (event) => {
+        const source = event.detail && event.detail.elt;
+        if (source !== destroyForm) {
+          return;
+        }
+        if (feedback instanceof HTMLElement) {
+          feedback.textContent = `Delete request could not be sent for '${currentVsName()}'.`;
+          feedback.classList.remove("ok", "neutral");
+          feedback.classList.add("err");
+        }
+      });
+
+      destroyForm.addEventListener("htmx:timeout", (event) => {
+        const source = event.detail && event.detail.elt;
+        if (source !== destroyForm) {
+          return;
+        }
+        if (feedback instanceof HTMLElement) {
+          feedback.textContent = `Delete request timed out for '${currentVsName()}'.`;
+          feedback.classList.remove("ok", "neutral");
+          feedback.classList.add("err");
+        }
+      });
 
       panel.addEventListener("keydown", (event) => {
         if (event.key === "Escape" && !modal.hidden) {

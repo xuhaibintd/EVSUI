@@ -19,6 +19,7 @@ from app.services.precision_eval import (
     build_precision_eval_report,
     resolve_precision_eval_path,
 )
+from app.services.create_config import default_create_values
 from app.teradata_runtime import (
     TERADATA_IMPORT_ERROR,
     VSManager,
@@ -639,7 +640,7 @@ async def evs_destroy_selected(request: Request, vs_name: str = Form(default="")
         vs_manager=VSManager,
         execute_sql_fn=execute_sql,
         teradata_import_error=TERADATA_IMPORT_ERROR,
-        render_connect_panel=_render_connect_panel,
+        render_connect_panel=lambda req: _render_connect_panel(req, request.app),
         append_connect_step=_append_connect_step,
     )
 

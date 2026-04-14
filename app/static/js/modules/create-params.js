@@ -57,6 +57,88 @@
     });
   }
 
+  function normalizeProviderLabel(value) {
+    const current = (value || "").trim().toLowerCase();
+    if (!current) {
+      return "";
+    }
+    if (current === "openai") {
+      return "OpenAI";
+    }
+    if (current === "vertexai") {
+      return "Vertex AI";
+    }
+    if (current === "bedrock") {
+      return "Bedrock";
+    }
+    if (current === "anthropic") {
+      return "Anthropic";
+    }
+    return "";
+  }
+
+  function bindProviderModelFilters(scope = document) {
+    const forms = scope.querySelectorAll("#section-create form[hx-post='/ui/create/upload']");
+    forms.forEach((form) => {
+      const providers = form.querySelectorAll("select[data-provider-model-key]");
+      if (!providers.length) {
+        return;
+      }
+      if (form.dataset.providerModelBound === "1") {
+        return;
+      }
+      form.dataset.providerModelBound = "1";
+
+      const syncPair = (providerSelect) => {
+        if (!(providerSelect instanceof HTMLSelectElement)) {
+          return;
+        }
+        const key = (providerSelect.dataset.providerModelKey || "").trim();
+        if (!key) {
+          return;
+        }
+        const modelSelect = form.querySelector(`select[data-provider-model-target='${key}']`);
+        if (!(modelSelect instanceof HTMLSelectElement)) {
+          return;
+        }
+        const originalMarkup = modelSelect.dataset.providerModelOptions || modelSelect.innerHTML;
+        modelSelect.dataset.providerModelOptions = originalMarkup;
+
+        const wantedLabel = normalizeProviderLabel(providerSelect.value);
+        const previousValue = modelSelect.value;
+        const scratch = document.createElement("select");
+        scratch.innerHTML = originalMarkup;
+        modelSelect.innerHTML = "";
+
+        Array.from(scratch.children).forEach((child) => {
+          if (child instanceof HTMLOptionElement) {
+            modelSelect.appendChild(child.cloneNode(true));
+            return;
+          }
+          if (!(child instanceof HTMLOptGroupElement)) {
+            return;
+          }
+          if (wantedLabel && child.label !== wantedLabel) {
+            return;
+          }
+          modelSelect.appendChild(child.cloneNode(true));
+        });
+
+        const hasPreviousValue = Array.from(modelSelect.options).some((option) => option.value === previousValue);
+        if (hasPreviousValue) {
+          modelSelect.value = previousValue;
+        } else {
+          modelSelect.value = "";
+        }
+      };
+
+      providers.forEach((providerSelect) => {
+        providerSelect.addEventListener("change", () => syncPair(providerSelect));
+        syncPair(providerSelect);
+      });
+    });
+  }
+
   function bindPartitionRouteParams(scope = document) {
     const forms = scope.querySelectorAll("#section-create form[hx-post='/ui/create/upload']");
     forms.forEach((form) => {
@@ -187,10 +269,12 @@
   app.bindAlgorithmParams = bindAlgorithmParams;
   app.bindDocPipelineParams = bindDocPipelineParams;
   app.bindPartitionRouteParams = bindPartitionRouteParams;
+  app.bindProviderModelFilters = bindProviderModelFilters;
   app.bindEnrichmentParams = bindEnrichmentParams;
 
   app.registerBinder(bindAlgorithmParams);
   app.registerBinder(bindDocPipelineParams);
   app.registerBinder(bindPartitionRouteParams);
+  app.registerBinder(bindProviderModelFilters);
   app.registerBinder(bindEnrichmentParams);
 })(window);

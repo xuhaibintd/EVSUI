@@ -3,6 +3,17 @@
 
   const app = global.EVSUIApp;
 
+  function renderPendingUploadPreview(previewPanel, files) {
+    const items = files
+      .map((file) => `<li><div class="file-main"><strong>${app.escapeHtml(file.name || "unnamed")}</strong><span>${Number(file.size || 0)} bytes</span></div></li>`)
+      .join("");
+    previewPanel.innerHTML = `
+      <p class="uploaded-files-title">Uploading files (${files.length})</p>
+      <p class="muted">Upload in progress...</p>
+      <ul class="file-list small limit-3">${items}</ul>
+    `;
+  }
+
   async function uploadSelectedDocuments(fileInput, previewPanel) {
     const files = Array.from(fileInput.files || []);
     if (!files.length) {
@@ -15,7 +26,7 @@
       form.dispatchEvent(new CustomEvent("evsui:upload-state-changed"));
     }
 
-    previewPanel.innerHTML = `<p class="muted">Uploading ${files.length} file(s)...</p>`;
+    renderPendingUploadPreview(previewPanel, files);
 
     const formData = new FormData();
     files.forEach((file) => formData.append("files", file, file.name));
@@ -27,9 +38,8 @@
         credentials: "same-origin",
       });
       const html = await response.text();
-      previewPanel.innerHTML = html;
-
       if (response.ok) {
+        previewPanel.innerHTML = html || `<p class="uploaded-files-title">Uploaded files (${files.length})</p>`;
         fileInput.value = "";
         const shell = fileInput.closest("[data-file-shell]");
         const nameNode = shell ? shell.querySelector("[data-file-name]") : null;
@@ -40,6 +50,8 @@
         if (form instanceof HTMLFormElement) {
           form.dispatchEvent(new CustomEvent("evsui:uploaded-files-updated"));
         }
+      } else {
+        previewPanel.innerHTML = html || `<p class="status err">Upload failed: HTTP ${response.status}</p>`;
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -128,15 +140,33 @@
     const docPipelineMode = createForm.querySelector("[name='doc_pipeline_mode']");
     const embeddingsModel = createForm.querySelector("[name='embeddings_model']");
     const objectNames = createForm.querySelector("[name='object_names']");
+    const documentFiles = createForm.querySelector("[name='document_files']");
     const uploadInput = createForm.querySelector("input[type='file'][name='files']");
     const uploadedPreview = createForm.querySelector("[data-selected-doc-paths]");
     const createResult = document.querySelector("#create-result");
 
     const getUploadedCount = () => {
-      const node = createForm.querySelector("[data-uploaded-count]");
-      const raw = node instanceof HTMLElement ? node.dataset.uploadedCount || "0" : "0";
+      const fallbackNode = createForm.querySelector("[data-uploaded-count]");
+      const raw = createForm.dataset.uploadedCount || (fallbackNode instanceof HTMLElement ? fallbackNode.dataset.uploadedCount || "0" : "0");
       const count = Number.parseInt(raw, 10);
       return Number.isFinite(count) ? count : 0;
+    };
+
+    const getSelectedFileCount = () => {
+      if (!(uploadInput instanceof HTMLInputElement) || !uploadInput.files) {
+        return 0;
+      }
+      return Array.from(uploadInput.files).filter((file) => file && file.name).length;
+    };
+
+    const getDocumentFileCount = () => {
+      if (!(documentFiles instanceof HTMLInputElement) && !(documentFiles instanceof HTMLTextAreaElement)) {
+        return 0;
+      }
+      return String(documentFiles.value || "")
+        .split(/[\n,]/)
+        .map((item) => item.trim())
+        .filter(Boolean).length;
     };
 
     const clearValidity = (field) => {
@@ -170,14 +200,28 @@
       delete createResult.dataset.clientValidationMessage;
     };
 
+    const clearSubmitProgress = () => {
+      const submitButton = createForm.querySelector("[data-progress-button]");
+      if (!(submitButton instanceof HTMLButtonElement)) {
+        return;
+      }
+      if (typeof app.setProgressButtonState === "function") {
+        app.setProgressButtonState(submitButton, false);
+      }
+    };
+
     const syncConditionalRules = () => {
       clearValidity(vectorStoreName);
       clearValidity(docPipelineMode);
       clearValidity(embeddingsModel);
       clearValidity(objectNames);
+      clearValidity(documentFiles);
       clearValidity(uploadInput);
 
       const uploadedCount = getUploadedCount();
+      const selectedFileCount = getSelectedFileCount();
+      const documentFileCount = getDocumentFileCount();
+      createForm.dataset.uploadedCount = String(uploadedCount);
       if (embeddingsModel instanceof HTMLSelectElement) {
         embeddingsModel.required = true;
         if (!embeddingsModel.value.trim()) {
@@ -187,7 +231,8 @@
       if (uploadInput instanceof HTMLInputElement) {
         uploadInput.required = false;
       }
-      createForm.dataset.uploadMissing = uploadedCount === 0 ? "1" : "0";
+      createForm.dataset.uploadMissing =
+        uploadedCount === 0 && selectedFileCount === 0 && documentFileCount === 0 ? "1" : "0";
       if (objectNames instanceof HTMLInputElement) {
         objectNames.required = false;
       }
@@ -196,7 +241,7 @@
       }
     };
 
-    [vectorStoreName, docPipelineMode, embeddingsModel, objectNames, uploadInput].forEach((field) => {
+    [vectorStoreName, docPipelineMode, embeddingsModel, objectNames, documentFiles, uploadInput].forEach((field) => {
       if (
         field instanceof HTMLInputElement ||
         field instanceof HTMLSelectElement ||
@@ -207,30 +252,34 @@
       }
     });
 
-    const validateBeforeSubmit = () => {
+    const getValidationError = () => {
       syncConditionalRules();
       if (isUploadInProgress()) {
-        renderValidationMessage("Documents are still uploading. Please wait.");
-        return false;
+        return { kind: "message", text: "Documents are still uploading. Please wait." };
       }
       if (createForm.dataset.uploadMissing === "1") {
-        renderValidationMessage("Uploaded files is required.");
-        return false;
+        return { kind: "message", text: "Upload at least one document before creating the vector store." };
       }
       if (!createForm.checkValidity()) {
-        const firstInvalid = createForm.querySelector(":invalid");
-        if (
-          firstInvalid instanceof HTMLInputElement ||
-          firstInvalid instanceof HTMLSelectElement ||
-          firstInvalid instanceof HTMLTextAreaElement
-        ) {
-          renderValidationMessage(firstInvalid.validationMessage || "Please complete the required fields.");
-        }
-        createForm.reportValidity();
+        return { kind: "native" };
+      }
+      return null;
+    };
+
+    const validateBeforeSubmit = () => {
+      const error = getValidationError();
+      if (!error) {
+        clearValidationMessage();
+        return true;
+      }
+      clearSubmitProgress();
+      if (error.kind === "message") {
+        renderValidationMessage(error.text);
         return false;
       }
       clearValidationMessage();
-      return true;
+      createForm.reportValidity();
+      return false;
     };
 
     createForm.addEventListener(
@@ -257,7 +306,13 @@
     createForm.addEventListener("evsui:upload-state-changed", syncConditionalRules);
     if (uploadedPreview instanceof HTMLElement && uploadedPreview.dataset.validationObserverBound !== "1") {
       uploadedPreview.dataset.validationObserverBound = "1";
-      const observer = new MutationObserver(() => syncConditionalRules());
+      const observer = new MutationObserver(() => {
+        const node = uploadedPreview.querySelector("[data-uploaded-count]");
+        if (node instanceof HTMLElement) {
+          createForm.dataset.uploadedCount = node.dataset.uploadedCount || "0";
+        }
+        syncConditionalRules();
+      });
       observer.observe(uploadedPreview, { childList: true, subtree: true, attributes: true });
     }
 
@@ -315,3 +370,4 @@
   app.registerBinder(enforceCreateInputLength);
   app.registerBinder(bindCreateValidation);
 })(window);
+

@@ -37,14 +37,22 @@
   overflow: auto;
 }
 
+.connect-entry {
+  display: grid;
+  gap: 0.55rem;
+  align-content: start;
+  align-self: start;
+  min-height: 0;
+  height: auto;
+  overflow: visible;
+}
+
 .connect-fields {
   display: grid;
   gap: 0.55rem;
   grid-auto-rows: max-content;
   align-content: start;
   min-height: 0;
-  height: 100%;
-  overflow: auto;
 }
 
 .connect-userpass-row {
@@ -500,6 +508,14 @@
   justify-content: flex-start;
 }
 
+.connect-reset-form {
+  margin: 0;
+}
+
+.connect-reset-form .progress-btn {
+  width: 100%;
+}
+
 .connect-progress {
   display: none;
   align-items: center;
@@ -537,6 +553,51 @@
 
 .connect-shell.is-submitting .connect-submit-loading {
   display: inline;
+}
+
+.connect-actions > button:disabled {
+  cursor: not-allowed;
+  pointer-events: none;
+  box-shadow: none;
+  filter: none;
+}
+
+.connect-actions > .connect-submit-btn:disabled {
+  opacity: 0.52;
+}
+
+.connect-actions > .ghost.progress-btn:disabled {
+  opacity: 1;
+  border-color: #d0d7de;
+  background: #f6f8fa;
+  color: #98a2b3 !important;
+}
+
+.monitor-btn-health {
+  border-color: #2d7d57 !important;
+  background: linear-gradient(180deg, #34a56f 0%, #257a52 100%) !important;
+  color: #ffffff !important;
+  box-shadow: 0 6px 16px rgba(37, 122, 82, 0.24);
+}
+
+.monitor-btn-health:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+.monitor-btn-list {
+  border-color: #2e5fb1 !important;
+  background: linear-gradient(180deg, #4a8dff 0%, #2f67da 100%) !important;
+  color: #ffffff !important;
+  box-shadow: 0 6px 16px rgba(47, 103, 218, 0.24);
+}
+
+.monitor-btn-list:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+.monitor-btn-health:disabled,
+.monitor-btn-list:disabled {
+  opacity: 0.72;
 }
 
 .connect-progress-spinner {

@@ -80,6 +80,7 @@
   background: rgba(8, 22, 49, 0.9);
 }
 
+
 .doc-pipeline-title {
   margin: 0 0 0.42rem;
   color: #dce9ff;
@@ -423,13 +424,81 @@
 }
 
 .multi-format-route-select-grid {
-  display: grid;
-  grid-template-columns: minmax(14rem, 20rem);
-  gap: 0.65rem;
-  justify-content: start;
+  display: grid !important;
+  grid-template-columns: minmax(18rem, 22rem) minmax(0, 1fr) !important;
+  gap: 1rem !important;
+  align-items: start !important;
+  width: 100%;
 }
 
-.multi-format-partitioner-grid,
+.multi-format-route-select-column {
+  min-width: 0;
+  width: 100%;
+  max-width: 22rem;
+}
+
+.multi-format-route-select-column > .field {
+  width: 100%;
+  max-width: 100%;
+}
+
+.multi-format-route-overview {
+  min-width: 0;
+  width: 100%;
+  gap: 0.65rem;
+  align-self: start !important;
+  align-content: start;
+  margin-top: 0 !important;
+  padding-top: 0 !important;
+}
+
+.multi-format-route-overview > :first-child {
+  margin-top: 0 !important;
+}
+
+.multi-format-route-card {
+  margin-top: 0 !important;
+}
+
+.multi-format-route-card {
+  border: 1px solid #e0e3e7;
+  border-radius: 12px;
+  padding: 0.8rem 0.9rem;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(247, 249, 252, 0.98) 100%);
+  box-shadow: 0 1px 2px rgba(60, 64, 67, 0.08);
+  display: grid;
+  gap: 0.38rem;
+}
+
+.multi-format-route-card h5 {
+  margin: 0;
+  color: #202124;
+  font-size: 0.92rem;
+}
+
+.multi-format-route-card p,
+.multi-format-route-card ul {
+  margin: 0;
+  color: #5f6368;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.multi-format-route-card ul {
+  padding-left: 1rem;
+}
+
+.multi-format-route-card li + li {
+  margin-top: 0.15rem;
+}
+
+.multi-format-partitioner-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.65rem 0.85rem;
+  align-items: end;
+}
+
 .multi-format-bookrag-route-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -557,7 +626,26 @@
 }
 
 @media (max-width: 900px) {
-  .multi-format-route-select-grid,
+  .multi-format-route-select-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .multi-format-route-select-column,
+  .multi-format-route-overview {
+    min-width: 0;
+    max-width: 100%;
+    width: 100%;
+  }
+
+  .multi-format-route-select-column {
+    max-width: 100%;
+  }
+
+  .multi-format-route-select-column > .field {
+    max-width: 100%;
+    width: 100%;
+  }
+
   .multi-format-partitioner-grid,
   .multi-format-chunk-grid,
   .multi-format-bookrag-route-grid,

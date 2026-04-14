@@ -1,6 +1,9 @@
-<div class="connect-grid" data-step1-connected="{% if evs.connected %}true{% else %}false{% endif %}">
-  <form class="stack connect-shell connect-fields" hx-post="/ui/evs/connect" hx-target="#section-connect-content" hx-swap="innerHTML" hx-encoding="multipart/form-data" enctype="multipart/form-data" hx-indicator="#connect-progress">
-    <fieldset class="connect-group">
+{% set _connected_raw = evs.connected %}
+{% set is_connected = _connected_raw is sameas true or (_connected_raw|string|lower in ['1', 'true', 'yes', 'on']) %}
+<div class="connect-grid" data-step1-connected="{% if is_connected %}true{% else %}false{% endif %}">
+  <div class="connect-entry">
+    <form id="evs-connect-form" class="stack connect-shell connect-fields" hx-post="/ui/evs/connect" hx-target="#section-connect-content" hx-swap="innerHTML" hx-encoding="multipart/form-data" enctype="multipart/form-data" hx-indicator="#connect-progress">
+      <fieldset class="connect-group">
       <legend>Connection</legend>
     <label class="field">
       <span>Host</span>
@@ -52,28 +55,32 @@
       </label>
     </div>
 
+      </fieldset>
+    </form>
+
     <div class="stack-inline connect-actions">
-      <button type="submit" class="connect-submit-btn progress-btn" data-progress-button>
+      <button type="submit" form="evs-connect-form" class="connect-submit-btn progress-btn" data-progress-button {% if is_connected %}disabled aria-disabled="true"{% else %}aria-disabled="false"{% endif %}>
         <span class="connect-submit-label progress-btn-label">Connect</span>
         <span class="connect-submit-loading progress-btn-loading">
           <span class="progress-btn-spinner" aria-hidden="true"></span>
           <span>Connecting...</span>
         </span>
       </button>
-      <button type="button" class="ghost progress-btn" data-progress-button hx-post="/ui/evs/reset" hx-trigger="click" hx-target="#section-connect-content" hx-swap="innerHTML">
-        <span class="progress-btn-label">Disconnect</span>
-        <span class="progress-btn-loading">
-          <span class="progress-btn-spinner" aria-hidden="true"></span>
-          <span>Disconnecting...</span>
-        </span>
-      </button>
+      <form id="evs-reset-form" class="connect-reset-form" hx-post="/ui/evs/reset" hx-target="#section-connect-content" hx-swap="innerHTML">
+        <button type="submit" class="ghost progress-btn" data-progress-button {% if not is_connected %}disabled aria-disabled="true"{% else %}aria-disabled="false"{% endif %}>
+          <span class="progress-btn-label">Disconnect</span>
+          <span class="progress-btn-loading">
+            <span class="progress-btn-spinner" aria-hidden="true"></span>
+            <span>Disconnecting...</span>
+          </span>
+        </button>
+      </form>
     </div>
     <div id="connect-progress" class="connect-progress" role="status" aria-live="polite">
       <span class="connect-progress-spinner" aria-hidden="true"></span>
       <span>Connecting and authenticating, please wait...</span>
     </div>
-    </fieldset>
-  </form>
+  </div>
 
   <aside class="connect-monitor">
     <fieldset class="connect-monitor-group">
@@ -82,22 +89,23 @@
       <div class="monitor-actions">
         <button
           type="button"
-          class="ghost monitor-btn progress-btn"
+          class="ghost monitor-btn progress-btn monitor-btn-health"
+          style="border-color:#2d7d57;background:linear-gradient(180deg,#34a56f 0%,#257a52 100%);color:#ffffff;-webkit-text-fill-color:#ffffff;box-shadow:0 6px 16px rgba(37,122,82,0.24);"
           data-progress-button
           hx-post="/ui/evs/health"
           hx-target="#section-connect-content"
           hx-swap="innerHTML"
-          {% if not evs.connected %}disabled{% endif %}
+          {% if not is_connected %}disabled aria-disabled="true"{% else %}aria-disabled="false"{% endif %}
         >
-          <span class="progress-btn-label">Vector Store Health check</span>
+          <span class="progress-btn-label" style="color:inherit;">Vector Store Health check</span>
           <span class="progress-btn-loading">
             <span class="progress-btn-spinner" aria-hidden="true"></span>
             <span>Running...</span>
           </span>
         </button>
       </div>
-      <div class="monitor-status monitor-status-list monitor-status-health {% if not evs.connected %}warn{% elif evs.connected and evs.health_rows %}ok{% elif evs.connected and evs.health_preview and ('error:' in evs.health_preview|lower or 'failed' in evs.health_preview|lower) %}err{% else %}info{% endif %}">
-        {% if evs.connected and evs.health_rows %}
+      <div class="monitor-status monitor-status-list monitor-status-health {% if not is_connected %}warn{% elif is_connected and evs.health_rows %}ok{% elif is_connected and evs.health_preview and ('error:' in evs.health_preview|lower or 'failed' in evs.health_preview|lower) %}err{% else %}info{% endif %}">
+        {% if is_connected and evs.health_rows %}
         <div class="monitor-table-wrap monitor-table-wrap-health">
           <table class="monitor-table">
             <thead>
@@ -118,9 +126,9 @@
             </tbody>
           </table>
         </div>
-        {% elif evs.connected and evs.health_preview -%}
+        {% elif is_connected and evs.health_preview -%}
         <pre class="monitor-fallback-text">{{ evs.health_preview }}</pre>
-        {%- elif evs.connected -%}
+        {%- elif is_connected -%}
         Connected. Click Vector Store Health check.
         {%- else -%}
         Not connected. Click Connect in Step 1 first.
@@ -132,21 +140,22 @@
       <div class="monitor-actions">
         <button
           type="button"
-          class="ghost monitor-btn progress-btn"
+          class="ghost monitor-btn progress-btn monitor-btn-list"
+          style="border-color:#2e5fb1;background:linear-gradient(180deg,#4a8dff 0%,#2f67da 100%);color:#ffffff;-webkit-text-fill-color:#ffffff;box-shadow:0 6px 16px rgba(47,103,218,0.24);"
           data-progress-button
           hx-post="/ui/evs/list"
           hx-target="#section-connect-content"
           hx-swap="innerHTML"
-          {% if not evs.connected %}disabled{% endif %}
+          {% if not is_connected %}disabled aria-disabled="true"{% else %}aria-disabled="false"{% endif %}
         >
-          <span class="progress-btn-label">Get Vector Store List</span>
+          <span class="progress-btn-label" style="color:inherit;">Get Vector Store List</span>
           <span class="progress-btn-loading">
             <span class="progress-btn-spinner" aria-hidden="true"></span>
             <span>Running...</span>
           </span>
         </button>
       </div>
-      <div class="monitor-status monitor-status-list monitor-status-list-main {% if not evs.connected %}warn{% elif evs.connected and evs.list_rows %}ok{% elif evs.connected and evs.list_preview and ('error:' in evs.list_preview|lower or 'failed' in evs.list_preview|lower) %}err{% else %}info{% endif %}">
+      <div class="monitor-status monitor-status-list monitor-status-list-main {% if not is_connected %}warn{% elif is_connected and evs.list_rows %}ok{% elif is_connected and evs.list_preview and ('error:' in evs.list_preview|lower or 'failed' in evs.list_preview|lower) %}err{% else %}info{% endif %}">
         {% set list_visible_rows = 5 %}
         {% set selectable = true %}
         {% set connected_empty_text = "Connected. Click Get Vector Store List." %}
@@ -168,7 +177,7 @@
             class="monitor-btn progress-btn"
             data-progress-button
             data-destroy-btn
-            {% if not evs.connected or not evs.selected_vs_name %}disabled{% endif %}
+            {% if not is_connected or not evs.selected_vs_name %}disabled aria-disabled="true"{% else %}aria-disabled="false"{% endif %}
           >
             <span class="progress-btn-label">Delete</span>
             <span class="progress-btn-loading">

@@ -249,6 +249,7 @@ _CSV_FIELDS = {
 }
 _FORCE_LIST_CSV_FIELDS = {"data_columns"}
 CORE_CREATE_FIELDS = {
+    "document_files",
     "chunk_size",
     "optimized_chunking",
     "header_height",

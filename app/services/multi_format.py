@@ -83,33 +83,30 @@ FILE_BASED_CREATE_KEYS_TO_REMOVE = {
 
 
 UNSTRUCTURED_CHUNK_COLUMNS: list[tuple[str, str]] = [
-    ("id", 'VARCHAR(64) NOT NULL'),
-    ("record_id", "VARCHAR(64)"),
-    ("element_id", "VARCHAR(64)"),
     ("text", "VARCHAR(32000) CHARACTER SET UNICODE"),
     ("type", "VARCHAR(50)"),
-    ("last_modified", "VARCHAR(50)"),
-    ("file_directory", "VARCHAR(500)"),
     ("filename", "VARCHAR(255)"),
+    ("element_id", "VARCHAR(64)"),
+    ("id", 'VARCHAR(64) NOT NULL'),
+    ("table_id", "VARCHAR(128)"),
+    ("chunk_index", "INTEGER"),
+    ("is_continuation", "BYTEINT"),
+    ("num_carried_over_header_rows", "INTEGER"),
+    ("partitioner_type", "VARCHAR(100)"),
+    ("image_description", "VARCHAR(32000) CHARACTER SET UNICODE"),
+    ("table_description", "VARCHAR(32000) CHARACTER SET UNICODE"),
+    ("generative_ocr", "VARCHAR(32000) CHARACTER SET UNICODE"),
+    ("table_to_html", "VARCHAR(32000) CHARACTER SET UNICODE"),
     ("filetype", "VARCHAR(50)"),
-    ("record_locator", "VARCHAR(1000)"),
-    ("date_created", "VARCHAR(50)"),
-    ("date_modified", "VARCHAR(50)"),
     ("date_processed", "VARCHAR(50)"),
-    ("permissions_data", "VARCHAR(1000)"),
-    ("filesize_bytes", "INTEGER"),
-    ("parent_id", "VARCHAR(64)"),
 ]
 
 
 def _build_unstructured_table_ddl(
     qualified_table: str,
 ) -> str:
-    column_lines: list[str] = ['  "id" VARCHAR(64) NOT NULL', '  PRIMARY KEY ("id")']
-    for name, col_type in UNSTRUCTURED_CHUNK_COLUMNS:
-        if name == "id":
-            continue
-        column_lines.append(f'  "{name}" {col_type}')
+    column_lines = [f'  "{name}" {col_type}' for name, col_type in UNSTRUCTURED_CHUNK_COLUMNS]
+    column_lines.append('  PRIMARY KEY ("id")')
     ddl_body = ",\n".join(column_lines)
     return f"""
 CREATE SET TABLE {qualified_table} (
@@ -185,6 +182,12 @@ def _first_defined(*values: Any) -> Any:
             continue
         return value
     return None
+
+
+def _format_chunk_row_id(row_sequence: int | None) -> str:
+    if row_sequence is None or row_sequence <= 0:
+        return uuid.uuid4().hex
+    return f"{row_sequence:012d}"
 
 
 def _resolve_bookrag_image_partition_options(create_values: dict[str, str]) -> tuple[dict[str, Any], list[str], dict[str, Any]]:
@@ -776,6 +779,7 @@ def _partition_excel_chunks(
     sheet_names: list[str] = []
     logical_row_count = 0
 
+    chunk_sequence = 0
     for sheet_name, rows in sheet_rows:
         sheet_names.append(sheet_name)
         use_headers = _should_use_excel_headers(rows)
@@ -823,6 +827,7 @@ def _partition_excel_chunks(
                 if segment_total > 1:
                     element_metadata["segment_index"] = segment_index
                     element_metadata["segment_total"] = segment_total
+                chunk_sequence += 1
                 row = _element_to_chunk_row(
                     {
                         "id": element_id,
@@ -833,6 +838,7 @@ def _partition_excel_chunks(
                     },
                     src=src,
                     content_type=content_type,
+                    row_sequence=chunk_sequence,
                 )
                 if row:
                     table_rows.append(row)
@@ -850,7 +856,13 @@ def _partition_excel_chunks(
     return table_rows, raw_elements, request_parameters
 
 
-def _element_to_chunk_row(element: dict[str, Any], src: Path, content_type: str) -> dict[str, Any] | None:
+def _element_to_chunk_row(
+    element: dict[str, Any],
+    src: Path,
+    content_type: str,
+    *,
+    row_sequence: int | None = None,
+) -> dict[str, Any] | None:
     metadata = element.get("metadata")
     if not isinstance(metadata, dict):
         metadata = {}
@@ -858,28 +870,27 @@ def _element_to_chunk_row(element: dict[str, Any], src: Path, content_type: str)
     if not text:
         return None
 
-    row_id = uuid.uuid4().hex
+    row_id = _format_chunk_row_id(row_sequence)
     element_id = _as_text(element.get("element_id") or element.get("id"), max_len=64)
-    record_id = _as_text(metadata.get("record_id") or element_id or row_id, max_len=64)
     filetype = _as_text(metadata.get("filetype"), max_len=50) or _as_text(content_type, max_len=50)
 
     row = {
-        "id": row_id,
-        "record_id": record_id,
-        "element_id": element_id,
         "text": text,
         "type": _as_text(element.get("type"), max_len=50),
-        "last_modified": _as_text(metadata.get("last_modified"), max_len=50),
-        "file_directory": _as_text(metadata.get("file_directory") or str(src.parent), max_len=500),
         "filename": _as_text(metadata.get("filename") or src.name, max_len=255),
+        "element_id": element_id,
+        "id": row_id,
+        "table_id": _as_text(metadata.get("table_id"), max_len=128),
+        "chunk_index": _as_int(metadata.get("chunk_index")),
+        "is_continuation": bool(metadata.get("is_continuation")) if metadata.get("is_continuation") is not None else None,
+        "num_carried_over_header_rows": _as_int(metadata.get("num_carried_over_header_rows")),
+        "partitioner_type": _as_text(metadata.get("partitioner_type"), max_len=100),
+        "image_description": _as_text(metadata.get("image_description"), max_len=32000),
+        "table_description": _as_text(metadata.get("table_description"), max_len=32000),
+        "generative_ocr": _as_text(metadata.get("generative_ocr"), max_len=32000),
+        "table_to_html": _as_text(metadata.get("table_to_html") or metadata.get("text_as_html"), max_len=32000),
         "filetype": filetype,
-        "record_locator": _as_text(metadata.get("record_locator") or metadata.get("url") or metadata.get("source"), max_len=1000),
-        "date_created": _as_text(metadata.get("date_created"), max_len=50),
-        "date_modified": _as_text(metadata.get("date_modified"), max_len=50),
         "date_processed": _now_ts(),
-        "permissions_data": _as_text(metadata.get("permissions_data") or metadata.get("permissions"), max_len=1000),
-        "filesize_bytes": _as_int(metadata.get("filesize_bytes") or metadata.get("file_size") or src.stat().st_size),
-        "parent_id": _as_text(metadata.get("parent_id"), max_len=64),
     }
     return row
 
@@ -932,10 +943,12 @@ def _partition_document_chunks(
         raise RuntimeError(f"Unstructured partition failed. status={getattr(resp, 'status_code', '?')}")
     elements = getattr(resp, "elements", None) or []
     rows: list[dict[str, Any]] = []
+    chunk_sequence = 0
     for element in elements:
         if not isinstance(element, dict):
             continue
-        row = _element_to_chunk_row(element, src=src, content_type=content_type)
+        chunk_sequence += 1
+        row = _element_to_chunk_row(element, src=src, content_type=content_type, row_sequence=chunk_sequence)
         if row:
             rows.append(row)
     return rows, elements, partition_parameters
@@ -1472,6 +1485,7 @@ def apply_multi_format_pipeline(
     workflow_names_seen: list[str] = []
     last_workflow_name = ""
     last_job_submitted_at: float | None = None
+    chunk_sequence = 0
     for path_hint in document_files:
         resolved = resolve_path_hint(path_hint)
         src = Path(resolved)
@@ -1529,7 +1543,8 @@ def apply_multi_format_pipeline(
         for element in raw_elements:
             if not isinstance(element, dict):
                 continue
-            row = _element_to_chunk_row(element, src=src, content_type=content_type)
+            chunk_sequence += 1
+            row = _element_to_chunk_row(element, src=src, content_type=content_type, row_sequence=chunk_sequence)
             if row:
                 rows.append(row)
 

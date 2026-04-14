@@ -134,6 +134,9 @@
     };
 
     document.body.addEventListener("htmx:beforeRequest", (event) => {
+      if (event.defaultPrevented) {
+        return;
+      }
       const button = resolveButton(event);
       if (button) {
         setProgressState(button, true);
@@ -175,6 +178,7 @@
     });
   }
 
+  app.setProgressButtonState = setProgressState;
   app.registerHtmxProgressButtons = registerHtmxProgressButtons;
   app.registerHtmxAfterSwap = registerHtmxAfterSwap;
 })(window);
