@@ -95,7 +95,6 @@ def _resolve_multi_format_accuracy_options(
         _first_defined(
             create_values.get("multi_format_infer_table_structure", ""),
             runtime.get("multi_format_infer_table_structure"),
-            runtime.get("infer_table_structure"),
             os.getenv("MULTI_FORMAT_INFER_TABLE_STRUCTURE", "false"),
         ),
         default=False,
@@ -104,7 +103,6 @@ def _resolve_multi_format_accuracy_options(
         _first_defined(
             create_values.get("multi_format_hi_res_model_name", ""),
             runtime.get("multi_format_hi_res_model_name"),
-            runtime.get("hi_res_model_name"),
             os.getenv("MULTI_FORMAT_HI_RES_MODEL_NAME", ""),
         )
         or ""
@@ -113,7 +111,6 @@ def _resolve_multi_format_accuracy_options(
         _first_defined(
             create_values.get("multi_format_vlm_provider", ""),
             runtime.get("multi_format_vlm_provider"),
-            runtime.get("vlm_provider"),
             os.getenv("MULTI_FORMAT_VLM_PROVIDER", ""),
         )
         or ""
@@ -122,7 +119,6 @@ def _resolve_multi_format_accuracy_options(
         _first_defined(
             create_values.get("multi_format_vlm_model", ""),
             runtime.get("multi_format_vlm_model"),
-            runtime.get("vlm_model"),
             os.getenv("MULTI_FORMAT_VLM_MODEL", ""),
         )
         or ""
@@ -131,7 +127,6 @@ def _resolve_multi_format_accuracy_options(
         _first_defined(
             create_values.get("multi_format_vlm_provider_api_key", ""),
             runtime.get("multi_format_vlm_provider_api_key"),
-            runtime.get("vlm_provider_api_key"),
             os.getenv("MULTI_FORMAT_VLM_PROVIDER_API_KEY", ""),
         )
         or ""
@@ -429,6 +424,21 @@ def build_bookrag_workflow_partition_node(
     infer_table_structure = bool(image_partition_parameters.get("infer_table_structure"))
     requested_strategy = (partition_strategy or "auto").strip().lower() or "auto"
     unique_element_ids = bool(image_partition_parameters.get("unique_element_ids", True))
+    vlm_provider = str(image_partition_parameters.get("vlm_provider") or "").strip()
+    vlm_model = str(image_partition_parameters.get("vlm_model") or "").strip()
+    vlm_provider_api_key = str(image_partition_parameters.get("vlm_provider_api_key") or "").strip()
+    inferred_vlm_provider = _infer_provider_from_model_name(vlm_model)
+    if inferred_vlm_provider:
+        if not vlm_provider:
+            vlm_provider = inferred_vlm_provider
+            warnings.append(
+                f"bookrag VLM provider inferred as '{vlm_provider}' from model '{vlm_model}'."
+            )
+        elif vlm_provider.lower() != inferred_vlm_provider:
+            warnings.append(
+                f"bookrag VLM provider '{vlm_provider}' does not match model '{vlm_model}'; overriding provider to '{inferred_vlm_provider}'."
+            )
+            vlm_provider = inferred_vlm_provider
 
     if requested_strategy == "auto":
         if languages:
@@ -451,6 +461,12 @@ def build_bookrag_workflow_partition_node(
             "is_dynamic": True,
             "allow_fast": True,
         }
+        if vlm_provider:
+            settings["provider"] = vlm_provider
+        if vlm_model:
+            settings["model"] = vlm_model
+        if vlm_provider_api_key:
+            settings["provider_api_key"] = vlm_provider_api_key
         workflow_node = {
             "name": "Partitioner",
             "type": "partition",
@@ -468,6 +484,12 @@ def build_bookrag_workflow_partition_node(
         }
         if infer_table_structure:
             settings["infer_table_structure"] = True
+        if vlm_provider:
+            settings["provider"] = vlm_provider
+        if vlm_model:
+            settings["model"] = vlm_model
+        if vlm_provider_api_key:
+            settings["provider_api_key"] = vlm_provider_api_key
         workflow_node = {
             "name": "Partitioner",
             "type": "partition",

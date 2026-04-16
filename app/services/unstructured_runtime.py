@@ -9,6 +9,7 @@ UNSTRUCTURED_CONFIG_FILE_DEFAULT = Path(__file__).resolve().parents[1] / "config
 UNSTRUCTURED_WORKFLOW_API_URL_DEFAULT = "https://platform.unstructuredapp.io/api/v1"
 UNSTRUCTURED_WORKFLOW_POLL_SECONDS_DEFAULT = 900
 UNSTRUCTURED_WORKFLOW_POLL_INTERVAL_DEFAULT = 2
+UNSTRUCTURED_REQUEST_TIMEOUT_MS_DEFAULT = 120000
 UNSTRUCTURED_TERADATA_FLUSH_WAIT_SECONDS_DEFAULT = 20
 UNSTRUCTURED_TERADATA_FLUSH_WAIT_INTERVAL_DEFAULT = 2
 UNSTRUCTURED_DEBUG_DIR_DEFAULT = Path(__file__).resolve().parents[2] / "uploads" / "multi_format_stage"
@@ -108,6 +109,18 @@ def _load_unstructured_runtime_config() -> tuple[str, str]:
     if not api_url:
         api_url = UNSTRUCTURED_WORKFLOW_API_URL_DEFAULT
     return api_key, api_url
+
+
+def _resolve_unstructured_request_timeout_ms() -> int:
+    runtime = _load_unstructured_runtime_settings()
+    return _to_bounded_int(
+        runtime.get("request_timeout_ms")
+        or runtime.get("unstructured_request_timeout_ms")
+        or os.getenv("UNSTRUCTURED_REQUEST_TIMEOUT_MS"),
+        default=UNSTRUCTURED_REQUEST_TIMEOUT_MS_DEFAULT,
+        minimum=1000,
+        maximum=3600000,
+    )
 
 
 def _resolve_bookrag_workflow_poll_config() -> tuple[int, int]:

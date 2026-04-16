@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from app.services.doc_modes.common import DOC_PIPELINE_UI_DEFAULTS
 from app.services import multi_format
@@ -308,6 +309,141 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
         self.assertTrue(any('ocr_languages' in warning for warning in warnings))
         self.assertTrue(any('extract_image_block_types' in warning for warning in warnings))
         self.assertTrue(any('infer_table_structure' in warning for warning in warnings))
+
+    def test_bookrag_auto_partition_accepts_vlm_provider_settings(self) -> None:
+        partition_node, _request_parameters, warnings = multi_format._build_bookrag_workflow_partition_node(
+            src=Path('sample.pdf'),
+            partition_strategy='auto',
+            languages=[],
+            image_partition_parameters={
+                'vlm_provider': 'openai',
+                'vlm_model': 'gpt-4o',
+                'vlm_provider_api_key': 'secret-key',
+                'unique_element_ids': True,
+            },
+        )
+
+        self.assertEqual(warnings, [])
+        self.assertEqual(partition_node['subtype'], 'vlm')
+        self.assertEqual(partition_node['settings']['strategy'], 'auto')
+        self.assertEqual(partition_node['settings']['provider'], 'openai')
+        self.assertEqual(partition_node['settings']['model'], 'gpt-4o')
+        self.assertEqual(partition_node['settings']['provider_api_key'], 'secret-key')
+
+    def test_bookrag_image_partition_options_read_bookrag_overrides(self) -> None:
+        options, warnings, summary = multi_format._resolve_bookrag_image_partition_options(
+            self._create_values(
+                multi_format_bookrag_extract_image_block_types='Image,Table',
+                multi_format_bookrag_infer_table_structure='true',
+                multi_format_bookrag_hi_res_model_name='layout-v2',
+                multi_format_bookrag_vlm_provider='openai',
+                multi_format_bookrag_vlm_model='gpt-4o',
+                multi_format_bookrag_vlm_provider_api_key='secret-key',
+                multi_format_bookrag_coordinates='false',
+            )
+        )
+
+        self.assertEqual(warnings, [])
+        self.assertEqual(options['extract_image_block_types'], ['Image', 'Table'])
+        self.assertTrue(options['infer_table_structure'])
+        self.assertEqual(options['hi_res_model_name'], 'layout-v2')
+        self.assertEqual(options['vlm_provider'], 'openai')
+        self.assertEqual(options['vlm_model'], 'gpt-4o')
+        self.assertEqual(options['vlm_provider_api_key'], 'secret-key')
+        self.assertFalse(options['coordinates'])
+        self.assertEqual(summary['vlm_provider'], 'openai')
+        self.assertEqual(summary['vlm_model'], 'gpt-4o')
+        self.assertTrue(summary['vlm_provider_api_key_configured'])
+
+    def test_multi_format_definition_ignores_bookrag_namespaced_inputs(self) -> None:
+        create_values = self._create_values(
+            multi_format_strategy='auto',
+            multi_format_bookrag_vlm_provider='openai',
+            multi_format_bookrag_vlm_model='gpt-4o',
+            multi_format_bookrag_enable_image_description='true',
+        )
+        request_parameters, warnings, processing_profile = multi_format._build_multi_format_workflow_definition(
+            create_values=create_values,
+            src=Path('sample.pdf'),
+            partition_strategy='auto',
+            languages=['eng'],
+            chunk_size=600,
+            chunk_overlap=80,
+            include_orig_elements=False,
+            overlap_all=True,
+        )
+
+        self.assertEqual(warnings, [])
+        self.assertEqual(
+            [node['name'] for node in request_parameters['workflow_nodes']],
+            ['Partitioner', 'Chunker'],
+        )
+        partition_node = request_parameters['workflow_nodes'][0]
+        self.assertNotIn('provider', partition_node['settings'])
+        self.assertNotIn('model', partition_node['settings'])
+        self.assertEqual(processing_profile, 'partition:vlm:auto,chunk:chunk_by_character')
+
+    def test_bookrag_image_partition_options_ignore_multi_format_inputs(self) -> None:
+        options, warnings, summary = multi_format._resolve_bookrag_image_partition_options(
+            self._create_values(
+                multi_format_extract_image_block_types='Image,Table',
+                multi_format_infer_table_structure='true',
+                multi_format_hi_res_model_name='layout-v2',
+                multi_format_vlm_provider='openai',
+                multi_format_vlm_model='gpt-4o',
+                multi_format_vlm_provider_api_key='secret-key',
+            )
+        )
+
+        self.assertEqual(options['extract_image_block_types'], ['Image', 'Table'])
+        self.assertFalse(options['infer_table_structure'])
+        self.assertNotIn('hi_res_model_name', options)
+        self.assertIsNone(options['vlm_provider'])
+        self.assertIsNone(options['vlm_model'])
+        self.assertIsNone(options['vlm_provider_api_key'])
+        self.assertTrue(options['coordinates'])
+        self.assertEqual(warnings, [])
+        self.assertIsNone(summary['hi_res_model_name'])
+        self.assertIsNone(summary['vlm_provider'])
+        self.assertIsNone(summary['vlm_model'])
+        self.assertFalse(summary['vlm_provider_api_key_configured'])
+
+    def test_generic_runtime_defaults_do_not_cross_between_modes(self) -> None:
+        shared_runtime = {
+            'infer_table_structure': 'true',
+            'hi_res_model_name': 'shared-layout',
+            'vlm_provider': 'openai',
+            'vlm_model': 'gpt-4o',
+            'vlm_provider_api_key': 'shared-secret',
+            'extract_image_block_types': 'Image,Table',
+            'unique_element_ids': 'false',
+        }
+        with mock.patch('app.services.multi_format._load_unstructured_runtime_settings', return_value=shared_runtime):
+            bookrag_options, bookrag_warnings, _summary = multi_format._resolve_bookrag_image_partition_options(self._create_values())
+            request_parameters, workflow_warnings, _profile = multi_format._build_multi_format_workflow_definition(
+                create_values=self._create_values(multi_format_strategy='hi_res'),
+                src=Path('sample.pdf'),
+                partition_strategy='hi_res',
+                languages=['eng'],
+                chunk_size=600,
+                chunk_overlap=80,
+                include_orig_elements=False,
+                overlap_all=True,
+            )
+
+        self.assertEqual(workflow_warnings, [])
+        partition_node = request_parameters['workflow_nodes'][0]
+        self.assertNotIn('infer_table_structure', partition_node['settings'])
+        self.assertNotIn('hi_res_model_name', partition_node['settings'])
+        self.assertNotIn('provider', partition_node['settings'])
+        self.assertNotIn('model', partition_node['settings'])
+        self.assertEqual(bookrag_options['extract_image_block_types'], ['Image', 'Table'])
+        self.assertFalse(bookrag_options['infer_table_structure'])
+        self.assertTrue(bookrag_options['unique_element_ids'])
+        self.assertIsNone(bookrag_options['vlm_provider'])
+        self.assertIsNone(bookrag_options['vlm_model'])
+        self.assertIsNone(bookrag_options['vlm_provider_api_key'])
+        self.assertEqual(bookrag_warnings, [])
 
     def test_chunk_rows_use_sequence_ids_and_map_selected_metadata(self) -> None:
         row = multi_format._element_to_chunk_row(

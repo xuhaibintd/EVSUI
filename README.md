@@ -18,7 +18,7 @@ Teradata Vector Store is a `FastAPI + Jinja2 + HTMX` three-step interface for co
 - Full `VectorStore.create(...)` parameter form
 - Built-in parameter sets for `VECTORDISTANCE / KMEANS / HNSW`
 - `Multi Format` mode uses Unstructured Workflow Endpoint on-demand jobs, creates a Teradata table first, and writes processed chunk rows into `<Vector Store Name>_unstructured`.
-- `Multi-Format BookRAG` mode skips `VectorStore.create()` and uses a reusable Unstructured Workflow Endpoint definition to collect raw elements into dedicated Teradata tables for traceability.
+- `Multi-Format BookRAG` mode skips `VectorStore.create()` and uses Unstructured Workflow Endpoint on-demand jobs with inline `job_nodes` to collect raw elements into dedicated Teradata tables for traceability.
 
 3. Step 3: Retrieval Chat
 - Supports `VectorStore.ask` and `VectorStore.similarity_search`
@@ -75,10 +75,30 @@ Official references:
 - Intended for one local file at a time, with limited chunking.
 - Conceptual chain: `Local file -> Partitioner(strategy=...) -> optional chunking_strategy`
 
+### Official Invocation Paths
+
+1. **Partition Endpoint (legacy)**
+- Typical call shape: `POST https://api.unstructuredapp.io/general/v0/general`
+- Typical request shape: multipart form with `files` plus partition parameters such as `strategy` and `output_format`
+- Official position: legacy, local-file only, one file at a time, limited chunking, intended for rapid prototyping
+
+2. **Workflow on-demand job**
+- Typical call shape: `POST https://platform.unstructuredapp.io/api/v1/jobs/`
+- Typical request shape: multipart form with `request_data` and `input_files`
+- `request_data` can define a temporary workflow using inline `job_nodes`, or reference a template
+- Official position: recommended Workflow Operations path for local-file job runs; the workflow exists only for that job run
+
+3. **Long-lived workflow + run**
+- Define reusable workflow: `POST https://platform.unstructuredapp.io/api/v1/workflows`
+- Run reusable workflow: `POST https://platform.unstructuredapp.io/api/v1/workflows/{workflow_id}/run`
+- Typical request shape: define persistent `workflow_nodes` once, then submit `input_files` when running it
+- Official position: use when you need a named workflow resource that can be listed, updated, and reused by `workflow_id`
+
 ### Current EVSUI Mapping
 
 1. **Unstructured** (`doc_pipeline_mode=multi_format`)
 - Uses the **Workflow Endpoint**.
+- Current transport path: `local file -> POST /jobs -> inline job_nodes`
 - Implemented chain: `Partitioner -> optional Enrichment nodes -> Chunker`
 - Current workflow chunker options in EVSUI:
   - `chunk_by_character`
@@ -88,8 +108,10 @@ Official references:
 
 2. **Unstructured BookRAG** (`doc_pipeline_mode=multi_format_bookrag`)
 - Uses the **Workflow Endpoint**.
+- Current transport path: `local file -> POST /jobs -> inline job_nodes`
 - Current implemented chain: `Partitioner -> optional Enrichment nodes`
 - Current app behavior stores raw workflow output in Teradata BookRAG tables.
+- Current app behavior submits an on-demand job with inline `job_nodes`; it does **not** currently create/reuse a named Workflow and does **not** run by `workflow_id`.
 - Current BookRAG flow does **not** add a Workflow `Chunker` node.
 - Do not describe the current BookRAG implementation as `by_title` chunking unless the code actually adds a Workflow chunk node.
 
@@ -147,6 +169,8 @@ These are **application defaults**, not official Unstructured defaults:
 - When updating `multi_format`, think in **Workflow Endpoint** terms only.
 - Do not reintroduce Partition Endpoint-only concepts such as `chunking_strategy=basic` into the current `multi_format` workflow path.
 - If documentation, UI labels, or tests mention `by_title`, `basic`, or other chunk labels, make sure they match the actual chain in code.
+- When documenting Unstructured integration, distinguish API entrypoints from DAG node types: a Workflow that starts with a `Partitioner` node is still not the legacy Partition Endpoint.
+- Do not describe current BookRAG execution as a reusable named Workflow unless the code actually creates/reuses a Workflow resource and runs jobs by `workflow_id` or `/workflows/{workflow_id}/run`.
 - If BookRAG later adds a real Workflow `Chunker` node, update this README and tests in the same change.
 
 ## Multi Format Config

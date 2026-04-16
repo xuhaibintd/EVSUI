@@ -9,10 +9,14 @@ from typing import Any
 import httpx
 
 
-def create_unstructured_client(*, api_key: str, api_url: str):
+def create_unstructured_client(*, api_key: str, api_url: str, timeout_ms: int | None = None):
     from unstructured_client import UnstructuredClient
 
-    return UnstructuredClient(api_key_auth=api_key, server_url=api_url.rstrip("/"))
+    return UnstructuredClient(
+        api_key_auth=api_key,
+        server_url=api_url.rstrip("/"),
+        timeout_ms=timeout_ms,
+    )
 
 
 def create_unstructured_on_demand_job(

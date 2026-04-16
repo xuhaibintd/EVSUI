@@ -499,6 +499,10 @@
   align-items: end;
 }
 
+.multi-format-partitioner-grid-bookrag {
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+}
+
 .multi-format-bookrag-route-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

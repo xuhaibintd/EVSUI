@@ -30,6 +30,7 @@ from app.services.unstructured_runtime import (
     _load_unstructured_runtime_settings,
     _parse_langs,
     _resolve_bookrag_workflow_poll_config,
+    _resolve_unstructured_request_timeout_ms,
     _resolve_multi_format_workflow_poll_config,
     _resolve_partition_strategy,
 )
@@ -198,7 +199,6 @@ def _resolve_bookrag_image_partition_options(create_values: dict[str, str]) -> t
         _first_defined(
             create_values.get("multi_format_bookrag_extract_image_block_types", ""),
             runtime.get("bookrag_extract_image_block_types"),
-            runtime.get("extract_image_block_types"),
             os.getenv("BOOKRAG_EXTRACT_IMAGE_BLOCK_TYPES", ""),
         )
         or ""
@@ -213,7 +213,6 @@ def _resolve_bookrag_image_partition_options(create_values: dict[str, str]) -> t
         _first_defined(
             create_values.get("multi_format_bookrag_infer_table_structure", ""),
             runtime.get("bookrag_infer_table_structure"),
-            runtime.get("infer_table_structure"),
             os.getenv("BOOKRAG_INFER_TABLE_STRUCTURE", ""),
         )
         or ""
@@ -231,16 +230,39 @@ def _resolve_bookrag_image_partition_options(create_values: dict[str, str]) -> t
     unique_element_ids = _to_bool(
         _first_defined(
             runtime.get("bookrag_unique_element_ids"),
-            runtime.get("unique_element_ids"),
             os.getenv("BOOKRAG_UNIQUE_ELEMENT_IDS", "true"),
         ),
         default=True,
     )
     hi_res_model_name = str(
         _first_defined(
+            create_values.get("multi_format_bookrag_hi_res_model_name", ""),
             runtime.get("bookrag_hi_res_model_name"),
-            runtime.get("hi_res_model_name"),
             os.getenv("BOOKRAG_HI_RES_MODEL_NAME", ""),
+        )
+        or ""
+    ).strip()
+    vlm_provider = str(
+        _first_defined(
+            create_values.get("multi_format_bookrag_vlm_provider", ""),
+            runtime.get("bookrag_vlm_provider"),
+            os.getenv("BOOKRAG_VLM_PROVIDER", ""),
+        )
+        or ""
+    ).strip()
+    vlm_model = str(
+        _first_defined(
+            create_values.get("multi_format_bookrag_vlm_model", ""),
+            runtime.get("bookrag_vlm_model"),
+            os.getenv("BOOKRAG_VLM_MODEL", ""),
+        )
+        or ""
+    ).strip()
+    vlm_provider_api_key = str(
+        _first_defined(
+            create_values.get("multi_format_bookrag_vlm_provider_api_key", ""),
+            runtime.get("bookrag_vlm_provider_api_key"),
+            os.getenv("BOOKRAG_VLM_PROVIDER_API_KEY", ""),
         )
         or ""
     ).strip()
@@ -249,6 +271,9 @@ def _resolve_bookrag_image_partition_options(create_values: dict[str, str]) -> t
         "coordinates": coordinates,
         "unique_element_ids": unique_element_ids,
         "infer_table_structure": infer_table_structure,
+        "vlm_provider": vlm_provider or None,
+        "vlm_model": vlm_model or None,
+        "vlm_provider_api_key": vlm_provider_api_key or None,
     }
     if extract_image_block_types:
         extra["extract_image_block_types"] = extract_image_block_types
@@ -264,6 +289,9 @@ def _resolve_bookrag_image_partition_options(create_values: dict[str, str]) -> t
         "unique_element_ids": unique_element_ids,
         "hi_res_model_name": hi_res_model_name or None,
         "infer_table_structure": infer_table_structure,
+        "vlm_provider": vlm_provider or None,
+        "vlm_model": vlm_model or None,
+        "vlm_provider_api_key_configured": bool(vlm_provider_api_key),
     }
     return extra, warnings, summary
 
@@ -1204,7 +1232,8 @@ def _apply_bookrag_tree_pipeline(
         bookrag_chunk_overlap = max(0, bookrag_chunk_size // 10)
 
     api_key, api_url = _load_unstructured_runtime_config()
-    client = _create_unstructured_client(api_key=api_key, api_url=api_url)
+    request_timeout_ms = _resolve_unstructured_request_timeout_ms()
+    client = _create_unstructured_client(api_key=api_key, api_url=api_url, timeout_ms=request_timeout_ms)
     debug_dir = _prepare_unstructured_debug_dir(vector_store_name)
     raw_stage_dir = _prepare_bookrag_raw_stage_dir(vector_store_name)
     partition_warnings: list[str] = []
@@ -1468,7 +1497,8 @@ def apply_multi_format_pipeline(
     )
 
     api_key, api_url = _load_unstructured_runtime_config()
-    client = _create_unstructured_client(api_key=api_key, api_url=api_url)
+    request_timeout_ms = _resolve_unstructured_request_timeout_ms()
+    client = _create_unstructured_client(api_key=api_key, api_url=api_url, timeout_ms=request_timeout_ms)
     runtime_settings = _load_unstructured_runtime_settings()
     timeout_seconds, poll_interval_seconds = _resolve_multi_format_workflow_poll_config()
     debug_dir = _prepare_unstructured_debug_dir(vector_store_name)

@@ -141,40 +141,56 @@
 
   function bindPartitionRouteParams(scope = document) {
     const forms = scope.querySelectorAll("#section-create form[hx-post='/ui/create/upload']");
+    const bindings = [
+      {
+        selectName: "multi_format_strategy",
+        fieldSelector: "[data-partition-routes]",
+        datasetKey: "partitionRouteBound",
+        routeAccessor: (field) => field.dataset.partitionRoutes || "",
+      },
+      {
+        selectName: "multi_format_bookrag_strategy",
+        fieldSelector: "[data-bookrag-partition-routes]",
+        datasetKey: "bookragPartitionRouteBound",
+        routeAccessor: (field) => field.dataset.bookragPartitionRoutes || "",
+      },
+    ];
+
     forms.forEach((form) => {
-      const routeSelect = form.querySelector("select[name='multi_format_strategy']");
-      const fields = form.querySelectorAll("[data-partition-routes]");
-      if (!(routeSelect instanceof HTMLSelectElement) || !fields.length) {
-        return;
-      }
-      if (routeSelect.dataset.partitionRouteBound === "1") {
-        return;
-      }
-      routeSelect.dataset.partitionRouteBound = "1";
+      bindings.forEach(({ selectName, fieldSelector, datasetKey, routeAccessor }) => {
+        const routeSelect = form.querySelector(`select[name='${selectName}']`);
+        const fields = form.querySelectorAll(fieldSelector);
+        if (!(routeSelect instanceof HTMLSelectElement) || !fields.length) {
+          return;
+        }
+        if (routeSelect.dataset[datasetKey] === "1") {
+          return;
+        }
+        routeSelect.dataset[datasetKey] = "1";
 
-      const syncByRoute = () => {
-        const current = (routeSelect.value || "").trim().toLowerCase() || "auto";
-        const locked = form.classList.contains("disabled-block");
-        fields.forEach((field) => {
-          if (!(field instanceof HTMLElement)) {
-            return;
-          }
-          const allowed = (field.dataset.partitionRoutes || "")
-            .split(/\s+/)
-            .map((item) => item.trim().toLowerCase())
-            .filter(Boolean);
-          const show = !allowed.length || allowed.includes(current);
-          field.classList.toggle("partition-route-hidden", !show);
-          field.hidden = !show;
-          const controls = field.querySelectorAll("input, select, textarea");
-          controls.forEach((control) => {
-            control.disabled = !show || locked;
+        const syncByRoute = () => {
+          const current = (routeSelect.value || "").trim().toLowerCase() || "auto";
+          const locked = form.classList.contains("disabled-block");
+          fields.forEach((field) => {
+            if (!(field instanceof HTMLElement)) {
+              return;
+            }
+            const allowed = (routeAccessor(field) || "")
+              .split(/\s+/)
+              .map((item) => item.trim().toLowerCase())
+              .filter(Boolean);
+            const show = !allowed.length || allowed.includes(current);
+            field.classList.toggle("partition-route-hidden", !show);
+            field.hidden = !show;
+            field.querySelectorAll("input, select, textarea").forEach((control) => {
+              control.disabled = !show || locked;
+            });
           });
-        });
-      };
+        };
 
-      routeSelect.addEventListener("change", syncByRoute);
-      syncByRoute();
+        routeSelect.addEventListener("change", syncByRoute);
+        syncByRoute();
+      });
     });
   }
 
