@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -263,10 +265,14 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
             multi_format_bookrag_enable_table_to_html='true',
             multi_format_bookrag_enable_table_description='true',
             multi_format_bookrag_enable_generative_ocr='true',
+            multi_format_bookrag_enable_ner='true',
             multi_format_bookrag_image_description_subtype='openai_image_description',
             multi_format_bookrag_table_to_html_subtype='openai_table2html',
             multi_format_bookrag_table_description_subtype='openai_table_description',
             multi_format_bookrag_generative_ocr_subtype='openai_ocr',
+            multi_format_bookrag_ner_subtype='openai_ner',
+            multi_format_bookrag_ner_provider_type='openai',
+            multi_format_bookrag_ner_model='gpt-4o-mini',
         )
         workflow_name, workflow_nodes, request_parameters, warnings, processing_profile = multi_format._build_bookrag_reusable_workflow_definition(
             create_values=create_values,
@@ -284,11 +290,15 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
         self.assertEqual(request_parameters['workflow_name'], 'BookRAG_Raw_Prod')
         self.assertEqual(
             [node['name'] for node in workflow_nodes],
-            ['Partitioner', 'Image Description', 'Table to HTML', 'Table Description', 'Generative OCR'],
+            ['Partitioner', 'Image Description', 'Table to HTML', 'Table Description', 'Generative OCR', 'Named Entity Recognition'],
         )
         self.assertEqual(workflow_nodes[0]['settings']['strategy'], 'hi_res')
+        self.assertEqual(workflow_nodes[-1]['subtype'], 'openai_ner')
+        self.assertEqual(workflow_nodes[-1]['settings']['provider_type'], 'openai')
+        self.assertEqual(workflow_nodes[-1]['settings']['model'], 'gpt-4o-mini')
         self.assertIn('image_description', processing_profile)
         self.assertIn('generative_ocr', processing_profile)
+        self.assertIn('ner:openai_ner', processing_profile)
 
     def test_bookrag_auto_partition_warns_on_ignored_inputs(self) -> None:
         partition_node, request_parameters, warnings = multi_format._build_bookrag_workflow_partition_node(
@@ -329,6 +339,26 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
         self.assertEqual(partition_node['settings']['provider'], 'openai')
         self.assertEqual(partition_node['settings']['model'], 'gpt-4o')
         self.assertEqual(partition_node['settings']['provider_api_key'], 'secret-key')
+
+    def test_bookrag_ner_model_mismatch_drops_explicit_model(self) -> None:
+        create_values = self._create_values(
+            multi_format_bookrag_enable_ner='true',
+            multi_format_bookrag_ner_subtype='openai_ner',
+            multi_format_bookrag_ner_model='claude-sonnet-4-20250514',
+        )
+        _workflow_name, workflow_nodes, _request_parameters, warnings, _processing_profile = multi_format._build_bookrag_reusable_workflow_definition(
+            create_values=create_values,
+            partition_strategy='vlm',
+            languages=[],
+            image_partition_parameters={'unique_element_ids': True},
+        )
+
+        ner_node = workflow_nodes[-1]
+        self.assertEqual(ner_node['name'], 'Named Entity Recognition')
+        self.assertEqual(ner_node['subtype'], 'openai_ner')
+        self.assertEqual(ner_node['settings']['provider_type'], 'openai')
+        self.assertNotIn('model', ner_node['settings'])
+        self.assertTrue(any('does not match subtype' in warning for warning in warnings))
 
     def test_bookrag_image_partition_options_read_bookrag_overrides(self) -> None:
         options, warnings, summary = multi_format._resolve_bookrag_image_partition_options(
@@ -486,6 +516,105 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
         self.assertNotIn('record_id', row)
         self.assertNotIn('parent_id', row)
 
+
+
+    def test_bookrag_pipeline_persists_tree_outputs(self) -> None:
+        create_values = self._create_values()
+        raw_payload = [
+            {
+                'type': 'Title',
+                'element_id': 'title-1',
+                'text': 'Section Overview',
+                'metadata': {
+                    'page_number': 1,
+                    'category_depth': 2,
+                    'parent_id': 'section-1',
+                },
+            },
+            {
+                'type': 'NarrativeText',
+                'element_id': 'text-1',
+                'text': 'This is the body text.',
+                'metadata': {
+                    'page_number': 1,
+                    'category_depth': 2,
+                    'parent_id': 'section-1',
+                },
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            src = tmp_path / 'sample.txt'
+            src.write_text('demo', encoding='utf-8')
+            raw_stage_dir = tmp_path / 'raw_stage'
+            csv_stage_dir = tmp_path / 'csv_stage'
+            debug_dir = tmp_path / 'debug'
+
+            captured: dict[str, object] = {}
+
+            def _persist_documents(*, rows, **kwargs):
+                captured['document_rows'] = rows
+                return len(rows)
+
+            def _persist_raw(*, rows, **kwargs):
+                captured['raw_rows'] = rows
+                return len(rows)
+
+            def _persist_blocks(*, blocks, **kwargs):
+                captured['blocks'] = blocks
+                return len(blocks)
+
+            def _persist_nodes(*, nodes, **kwargs):
+                captured['nodes'] = nodes
+                return len(nodes)
+
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(mock.patch('app.services.multi_format.prepare_bookrag_document_table', return_value=[]))
+                stack.enter_context(mock.patch('app.services.multi_format.prepare_bookrag_block_table', return_value=[]))
+                stack.enter_context(mock.patch('app.services.multi_format.prepare_bookrag_node_table', return_value=[]))
+                stack.enter_context(mock.patch('app.services.multi_format.prepare_bookrag_raw_table', return_value=[]))
+                stack.enter_context(mock.patch('app.services.multi_format._load_unstructured_runtime_config', return_value=('key', 'https://example.invalid')))
+                stack.enter_context(mock.patch('app.services.multi_format._resolve_unstructured_request_timeout_ms', return_value=120000))
+                stack.enter_context(mock.patch('app.services.multi_format._create_unstructured_client', return_value=object()))
+                stack.enter_context(mock.patch('app.services.multi_format._prepare_unstructured_debug_dir', return_value=debug_dir))
+                stack.enter_context(mock.patch('app.services.multi_format._prepare_bookrag_raw_stage_dir', return_value=raw_stage_dir))
+                stack.enter_context(mock.patch('app.services.multi_format._prepare_bookrag_csv_stage_dir', return_value=csv_stage_dir))
+                stack.enter_context(mock.patch('app.services.multi_format._resolve_bookrag_workflow_poll_config', return_value=(30, 1)))
+                stack.enter_context(mock.patch('app.services.multi_format._enforce_unstructured_job_submission_spacing', side_effect=lambda value: value))
+                stack.enter_context(mock.patch('app.services.multi_format._build_bookrag_reusable_workflow_definition', return_value=('BookRAG_Test', [{'name': 'Partitioner'}], {'workflow_name': 'BookRAG_Test', 'workflow_nodes': [{'name': 'Partitioner'}]}, [], 'partition:vlm:vlm')))
+                stack.enter_context(mock.patch('app.services.multi_format._run_unstructured_workflow_job_for_file', return_value=(raw_payload, raw_payload, {'workflow_name': 'BookRAG_Test'}, 'job-1', 'workflow-1', 'BookRAG_Test')))
+                stack.enter_context(mock.patch('app.services.multi_format._write_unstructured_debug_file', return_value=''))
+                stack.enter_context(mock.patch('app.services.multi_format.persist_bookrag_documents', side_effect=_persist_documents))
+                stack.enter_context(mock.patch('app.services.multi_format.persist_bookrag_raw_rows', side_effect=_persist_raw))
+                stack.enter_context(mock.patch('app.services.multi_format.persist_bookrag_blocks', side_effect=_persist_blocks))
+                stack.enter_context(mock.patch('app.services.multi_format.persist_bookrag_nodes', side_effect=_persist_nodes))
+                stack.enter_context(mock.patch('app.services.multi_format._count_teradata_rows', return_value=len(raw_payload)))
+                patched_payload, summary = multi_format._apply_bookrag_tree_pipeline(
+                    exec_payload={'document_files': [str(src)]},
+                    create_values=create_values,
+                    vector_store_name='demo',
+                    execute_sql_fn=mock.Mock(),
+                    resolve_path_hint=lambda value: value,
+                    effective_schema_name='demo_schema',
+                    document_files=[str(src)],
+                    partition_strategy='vlm',
+                    ocr_languages=['jpn'],
+                    target_warnings=[],
+                )
+
+        self.assertEqual(summary['workflow_mode'], 'bookrag on-demand jobs tree tables only')
+        self.assertEqual(summary['raw_element_count'], 2)
+        self.assertEqual(summary['block_count'], 2)
+        self.assertEqual(summary['node_count'], 3)
+        self.assertEqual(summary['bookrag_chunking_strategy'], 'disabled_for_tree_debug')
+        self.assertEqual(patched_payload['object_names'], 'demo_schema.demo_bk_bnode')
+        self.assertEqual(len(captured['document_rows']), 1)
+        self.assertEqual(len(captured['raw_rows']), 2)
+        self.assertEqual(len(captured['blocks']), 2)
+        self.assertEqual(len(captured['nodes']), 3)
+        self.assertEqual(summary['bookrag_csv_stage_dir'], str(csv_stage_dir))
+        self.assertEqual(summary['bookrag_csv_stage_files'], [])
 
 
 if __name__ == '__main__':

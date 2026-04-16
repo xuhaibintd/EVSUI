@@ -582,6 +582,14 @@ def build_bookrag_reusable_workflow_definition(
         ),
         default=False,
     )
+    enable_ner = _to_bool(
+        _first_defined(
+            create_values.get("multi_format_bookrag_enable_ner", ""),
+            runtime.get("bookrag_enable_ner"),
+            os.getenv("BOOKRAG_ENABLE_NER", "false"),
+        ),
+        default=False,
+    )
 
     image_subtype = str(
         _first_defined(
@@ -615,6 +623,30 @@ def build_bookrag_reusable_workflow_definition(
         )
         or "openai_ocr"
     ).strip() or "openai_ocr"
+    ner_subtype = str(
+        _first_defined(
+            create_values.get("multi_format_bookrag_ner_subtype", ""),
+            runtime.get("bookrag_ner_subtype"),
+            os.getenv("BOOKRAG_NER_SUBTYPE", "openai_ner"),
+        )
+        or "openai_ner"
+    ).strip() or "openai_ner"
+    ner_provider_type = str(
+        _first_defined(
+            create_values.get("multi_format_bookrag_ner_provider_type", ""),
+            runtime.get("bookrag_ner_provider_type"),
+            os.getenv("BOOKRAG_NER_PROVIDER_TYPE", ""),
+        )
+        or ""
+    ).strip()
+    ner_model = str(
+        _first_defined(
+            create_values.get("multi_format_bookrag_ner_model", ""),
+            runtime.get("bookrag_ner_model"),
+            os.getenv("BOOKRAG_NER_MODEL", ""),
+        )
+        or ""
+    ).strip()
 
     partition_node, _, partition_warnings = build_bookrag_workflow_partition_node(
         src=Path("bookrag_document"),
@@ -623,6 +655,22 @@ def build_bookrag_reusable_workflow_definition(
         image_partition_parameters=image_partition_parameters,
     )
     warnings.extend(partition_warnings)
+
+    subtype_provider_map = {"openai_ner": "openai", "anthropic_ner": "anthropic"}
+    expected_ner_provider = subtype_provider_map.get(ner_subtype, "")
+    inferred_ner_provider = _infer_provider_from_model_name(ner_model)
+    if expected_ner_provider and ner_provider_type and ner_provider_type.lower() != expected_ner_provider:
+        warnings.append(
+            f"bookrag NER provider_type '{ner_provider_type}' does not match subtype '{ner_subtype}'; overriding provider_type to '{expected_ner_provider}'."
+        )
+        ner_provider_type = expected_ner_provider
+    elif expected_ner_provider and not ner_provider_type:
+        ner_provider_type = expected_ner_provider
+    if ner_model and inferred_ner_provider and expected_ner_provider and inferred_ner_provider != expected_ner_provider:
+        warnings.append(
+            f"bookrag NER model '{ner_model}' does not match subtype '{ner_subtype}'; omitting explicit model setting."
+        )
+        ner_model = ""
 
     workflow_nodes: list[dict[str, Any]] = [partition_node]
     partition_strategy_label = partition_node['settings'].get('strategy', 'auto')
@@ -660,6 +708,19 @@ def build_bookrag_reusable_workflow_definition(
             "settings": {},
         })
         profile_parts.append("generative_ocr")
+    if enable_ner:
+        ner_settings: dict[str, Any] = {}
+        if ner_provider_type:
+            ner_settings["provider_type"] = ner_provider_type
+        if ner_model:
+            ner_settings["model"] = ner_model
+        workflow_nodes.append({
+            "name": "Named Entity Recognition",
+            "type": "prompter",
+            "subtype": ner_subtype,
+            "settings": ner_settings,
+        })
+        profile_parts.append(f"ner:{ner_subtype}")
 
     request_parameters = {
         "workflow_type": "custom",

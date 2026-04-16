@@ -57,6 +57,8 @@ BOOKRAG_RAW_COLUMNS: list[tuple[str, str]] = [
     ("category_depth", "INTEGER"),
     ("text", "VARCHAR(32000) CHARACTER SET UNICODE"),
     ("text_as_html", "VARCHAR(32000) CHARACTER SET UNICODE"),
+    ("image_caption", "VARCHAR(4000) CHARACTER SET UNICODE"),
+    ("image_context", "VARCHAR(32000) CHARACTER SET UNICODE"),
     ("doc_id", "VARCHAR(64)"),
 ]
 
@@ -212,6 +214,16 @@ def prepare_bookrag_block_table(
 ) -> list[str]:
     warnings: list[str] = []
     warnings.extend(_ensure_table(schema_name, table_targets["blocks"], BOOKRAG_BLOCK_COLUMNS, execute_sql_fn))
+    return warnings
+
+
+def prepare_bookrag_node_table(
+    schema_name: str | None,
+    table_targets: dict[str, str],
+    execute_sql_fn: ExecuteSqlFn | None,
+) -> list[str]:
+    warnings: list[str] = []
+    warnings.extend(_ensure_table(schema_name, table_targets["nodes"], BOOKRAG_NODE_COLUMNS, execute_sql_fn))
     return warnings
 
 

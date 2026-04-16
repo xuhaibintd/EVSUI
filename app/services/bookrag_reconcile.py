@@ -1,12 +1,15 @@
 ﻿from __future__ import annotations
 
 import copy
+import logging
 import re
 import uuid
 from pathlib import Path
 from typing import Any
 
 from pypdf import PdfReader
+
+_PYPDF_LOGGER = logging.getLogger("pypdf")
 
 _TABLE_CAPTION_RE = re.compile(r"^\s*(?:Table|TABLE|\u8868)\b", re.IGNORECASE)
 _FIGURE_CAPTION_RE = re.compile(r"^\s*(?:Fig(?:ure)?|FIG(?:URE)?|\u56f3)\b", re.IGNORECASE)
@@ -24,6 +27,23 @@ _FIGURE_FRAGMENT_TYPES = {"Image", "UncategorizedText", "Title"}
 _HARD_BREAK_TYPES = {"Header", "Footer", "Table", "FigureCaption"}
 
 
+def _extract_pdf_page_text(page: Any) -> str:
+    previous_level = _PYPDF_LOGGER.level
+    previous_propagate = _PYPDF_LOGGER.propagate
+    try:
+        # Some PDFs trigger pypdf cmap fallback logs such as UniJIS-UTF16-H.
+        # We only use this pass as an optional reconciliation hint, so suppress noisy
+        # logger output and degrade to partial/empty text when extraction is limited.
+        _PYPDF_LOGGER.setLevel(logging.CRITICAL)
+        _PYPDF_LOGGER.propagate = False
+        return page.extract_text() or ""
+    except Exception:
+        return ""
+    finally:
+        _PYPDF_LOGGER.setLevel(previous_level)
+        _PYPDF_LOGGER.propagate = previous_propagate
+
+
 def _load_pdf_page_lines(src: str | Path | None) -> dict[int, list[str]]:
     if src is None:
         return {}
@@ -36,7 +56,7 @@ def _load_pdf_page_lines(src: str | Path | None) -> dict[int, list[str]]:
         return {}
     page_lines: dict[int, list[str]] = {}
     for index, page in enumerate(reader.pages, start=1):
-        text = page.extract_text() or ""
+        text = _extract_pdf_page_text(page)
         lines = [line.strip() for line in text.splitlines() if line and line.strip()]
         page_lines[index] = lines
     return page_lines

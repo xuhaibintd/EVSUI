@@ -176,6 +176,7 @@ def _build_multi_format_field_map() -> dict[str, dict[str, object]]:
     bookrag_partition_hi_res_attrs = {"data-bookrag-partition-routes": "hi_res"}
     bookrag_partition_vlm_attrs = {"data-bookrag-partition-routes": "auto vlm"}
     bookrag_enrichment_route_attrs = {"data-bookrag-partition-routes": "auto hi_res"}
+    bookrag_ner_model_groups = [group for group in enrichment_model_groups if group["label"] in {"Anthropic", "OpenAI"}]
     chunk_title_attrs = {"data-chunk-strategies": "chunk_by_title"}
     chunk_similarity_attrs = {"data-chunk-strategies": "chunk_by_similarity"}
     chunk_sequential_attrs = {"data-chunk-strategies": "chunk_by_character chunk_by_title chunk_by_page"}
@@ -709,6 +710,18 @@ def _build_multi_format_field_map() -> dict[str, dict[str, object]]:
             ],
             wrapper_class="field doc-field-short",
         ),
+        "multi_format_bookrag_enable_ner": _select_field(
+            "multi_format_bookrag_enable_ner",
+            "Enabled",
+            "multi_format_bookrag_enable_ner",
+            help_text="Runs named entity recognition on parsed content.",
+            input_attrs={"data-enrichment-toggle": "bookrag_ner"},
+            options=[
+                {"value": "true", "label": "true"},
+                {"value": "false", "label": "false"},
+            ],
+            wrapper_class="field doc-field-short",
+        ),
         "multi_format_bookrag_generative_ocr_subtype": _select_field(
             "multi_format_bookrag_generative_ocr_subtype",
             "Subtype",
@@ -758,6 +771,37 @@ def _build_multi_format_field_map() -> dict[str, dict[str, object]]:
                 {"value": "vertexai_image_description", "label": "vertexai_image_description"},
             ],
             wrapper_class="field doc-field-long",
+        ),
+        "multi_format_bookrag_ner_subtype": _select_field(
+            "multi_format_bookrag_ner_subtype",
+            "Subtype",
+            "multi_format_bookrag_ner_subtype",
+            options=[
+                {"value": "openai_ner", "label": "openai_ner"},
+                {"value": "anthropic_ner", "label": "anthropic_ner"},
+            ],
+            wrapper_class="field doc-field-long",
+        ),
+        "multi_format_bookrag_ner_provider_type": _select_field(
+            "multi_format_bookrag_ner_provider_type",
+            "Provider",
+            "multi_format_bookrag_ner_provider_type",
+            input_attrs={"data-provider-model-key": "bookrag_ner"},
+            options=[
+                {"value": "", "label": "(infer from subtype/model)"},
+                {"value": "anthropic", "label": "Anthropic"},
+                {"value": "openai", "label": "OpenAI"},
+            ],
+            wrapper_class="field doc-field-medium",
+        ),
+        "multi_format_bookrag_ner_model": _select_field(
+            "multi_format_bookrag_ner_model",
+            "Model",
+            "multi_format_bookrag_ner_model",
+            input_attrs={"data-provider-model-target": "bookrag_ner"},
+            options=[{"value": "", "label": "(platform default)"}],
+            option_groups=bookrag_ner_model_groups,
+            wrapper_class="field doc-field-xxl",
         ),
         "multi_format_bookrag_chunk_size": {
             "name": "multi_format_bookrag_chunk_size",
@@ -875,5 +919,9 @@ def build_multi_format_bookrag_ui_fields() -> list[dict[str, object]]:
         "multi_format_bookrag_table_description_subtype",
         "multi_format_bookrag_enable_image_description",
         "multi_format_bookrag_image_description_subtype",
+        "multi_format_bookrag_enable_ner",
+        "multi_format_bookrag_ner_subtype",
+        "multi_format_bookrag_ner_provider_type",
+        "multi_format_bookrag_ner_model",
         "multi_format_bookrag_coordinates",
     )

@@ -81,7 +81,7 @@
   <div class="multi-format-section stack">
     <div class="multi-format-section-head">
       <h4>3. Enrichment Nodes</h4>
-      <p class="multi-format-section-copy">Each enrichment node currently uses subtype-only configuration for Unstructured on-demand workflows.</p>
+      <p class="multi-format-section-copy">NER supports explicit provider/model selection. The other enrichment nodes currently use subtype-only configuration for Unstructured on-demand workflows.</p>
     </div>
     <div class="multi-format-enrichment-stack">
       <article class="multi-format-enrichment-card" data-enrichment-card="bookrag_generative_ocr" data-bookrag-partition-routes="auto hi_res">
@@ -148,6 +148,25 @@
           </div>
           <div class="multi-format-enrichment-config" data-enrichment-panel-for="bookrag_table_to_html">
             {{ fields.render_field(mf.map['multi_format_bookrag_table_to_html_subtype'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+          </div>
+        </div>
+      </article>
+
+      <article class="multi-format-enrichment-card" data-enrichment-card="bookrag_ner">
+        <div class="multi-format-enrichment-head">
+          <div>
+            <h5>Named Entity Recognition</h5>
+            <p>Generate `metadata.entities` and relationships in the raw Unstructured JSON output.</p>
+          </div>
+        </div>
+        <div class="multi-format-enrichment-row">
+          <div class="multi-format-enrichment-toggle-grid">
+            {{ fields.render_field(mf.map['multi_format_bookrag_enable_ner'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+          </div>
+          <div class="multi-format-enrichment-config" data-enrichment-panel-for="bookrag_ner">
+            {{ fields.render_field(mf.map['multi_format_bookrag_ner_subtype'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+            {{ fields.render_field(mf.map['multi_format_bookrag_ner_provider_type'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
+            {{ fields.render_field(mf.map['multi_format_bookrag_ner_model'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
           </div>
         </div>
       </article>

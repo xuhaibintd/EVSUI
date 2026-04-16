@@ -18,6 +18,7 @@ from app.services.teradata_sql import (
     _teradata_table_exists,
 )
 from app.services.unstructured_runtime import (
+    BOOKRAG_CSV_STAGE_DIR_DEFAULT,
     BOOKRAG_PDF_IMAGE_EXTENSIONS,
     BOOKRAG_RAW_STAGE_DIR_DEFAULT,
     EXCEL_EXTENSIONS,
@@ -35,11 +36,21 @@ from app.services.unstructured_runtime import (
     _resolve_partition_strategy,
 )
 
-from app.services.bookrag_schema import build_bookrag_table_targets, prepare_bookrag_document_table, prepare_bookrag_raw_table
+from app.services.bookrag_reconcile import reconcile_unstructured_elements
+from app.services.bookrag_schema import (
+    build_bookrag_table_targets,
+    prepare_bookrag_block_table,
+    prepare_bookrag_document_table,
+    prepare_bookrag_node_table,
+    prepare_bookrag_raw_table,
+)
+from app.services.bookrag_tree import build_bookrag_nodes, elements_to_bookrag_blocks
 from app.services.bookrag_storage import (
     build_bookrag_document_row,
     build_bookrag_raw_rows,
     load_bookrag_raw_stage_file,
+    persist_bookrag_blocks,
+    persist_bookrag_nodes,
     persist_bookrag_documents,
     persist_bookrag_raw_rows,
     write_bookrag_raw_stage_file,
@@ -502,6 +513,14 @@ def _prepare_bookrag_raw_stage_dir(vector_store_name: str) -> Path:
     raw_stage_dir = BOOKRAG_RAW_STAGE_DIR_DEFAULT / f"{vs_name}_{run_id}"
     raw_stage_dir.mkdir(parents=True, exist_ok=True)
     return raw_stage_dir
+
+
+def _prepare_bookrag_csv_stage_dir(vector_store_name: str) -> Path:
+    vs_name = _sanitize_teradata_identifier(vector_store_name, fallback="bookrag")
+    run_id = time.strftime("%Y%m%d_%H%M%S")
+    csv_stage_dir = BOOKRAG_CSV_STAGE_DIR_DEFAULT / f"{vs_name}_{run_id}"
+    csv_stage_dir.mkdir(parents=True, exist_ok=True)
+    return csv_stage_dir
 
 
 def _write_unstructured_debug_file(
@@ -1216,37 +1235,47 @@ def _apply_bookrag_tree_pipeline(
             execute_sql_fn=execute_sql_fn,
         )
     )
+    target_warnings.extend(
+        prepare_bookrag_block_table(
+            schema_name=effective_schema_name,
+            table_targets=bookrag_tables,
+            execute_sql_fn=execute_sql_fn,
+        )
+    )
+    target_warnings.extend(
+        prepare_bookrag_node_table(
+            schema_name=effective_schema_name,
+            table_targets=bookrag_tables,
+            execute_sql_fn=execute_sql_fn,
+        )
+    )
     image_partition_parameters, image_partition_warnings, image_partition_summary = _resolve_bookrag_image_partition_options(create_values)
     target_warnings.extend(image_partition_warnings)
 
-    bookrag_chunk_size = _to_int(create_values.get("multi_format_bookrag_chunk_size", "1200"), default=1200, minimum=100, maximum=32000)
-    bookrag_chunk_overlap = _to_int(create_values.get("multi_format_bookrag_chunk_overlap", "120"), default=120, minimum=0, maximum=4000)
-    bookrag_new_after = _to_int(create_values.get("multi_format_bookrag_new_after_n_chars", str(min(bookrag_chunk_size, 1000))), default=min(bookrag_chunk_size, 1000), minimum=100, maximum=32000)
-    bookrag_combine_under = _to_int(create_values.get("multi_format_bookrag_combine_under_n_chars", str(min(bookrag_chunk_size, 600))), default=min(bookrag_chunk_size, 600), minimum=0, maximum=32000)
-    bookrag_multipage_sections = _to_bool(create_values.get("multi_format_bookrag_multipage_sections", "true"), default=True)
-    if bookrag_new_after > bookrag_chunk_size:
-        bookrag_new_after = bookrag_chunk_size
-    if bookrag_combine_under > bookrag_chunk_size:
-        bookrag_combine_under = bookrag_chunk_size
-    if bookrag_chunk_overlap >= bookrag_chunk_size:
-        bookrag_chunk_overlap = max(0, bookrag_chunk_size // 10)
 
     api_key, api_url = _load_unstructured_runtime_config()
     request_timeout_ms = _resolve_unstructured_request_timeout_ms()
     client = _create_unstructured_client(api_key=api_key, api_url=api_url, timeout_ms=request_timeout_ms)
     debug_dir = _prepare_unstructured_debug_dir(vector_store_name)
     raw_stage_dir = _prepare_bookrag_raw_stage_dir(vector_store_name)
+    csv_stage_dir = _prepare_bookrag_csv_stage_dir(vector_store_name)
     partition_warnings: list[str] = []
     debug_files: list[str] = []
     raw_stage_files: list[str] = []
     job_ids: list[str] = []
     document_insert_stats: dict[str, int] = {}
     raw_insert_stats: dict[str, int] = {}
+    block_insert_stats: dict[str, int] = {}
+    node_insert_stats: dict[str, int] = {}
     inserted_rows = 0
     raw_element_count = 0
+    block_count = 0
+    node_count = 0
     document_count = 0
     document_rows: list[dict[str, Any]] = []
     all_raw_rows: list[dict[str, Any]] = []
+    all_blocks: list[dict[str, Any]] = []
+    all_nodes: list[dict[str, Any]] = []
 
     qualified_tables = {
         name: (f"{effective_schema_name}.{table_name}" if effective_schema_name else table_name)
@@ -1296,28 +1325,35 @@ def _apply_bookrag_tree_pipeline(
         )
         raw_stage_files.append(str(raw_stage_file))
         staged_raw_elements = load_bookrag_raw_stage_file(raw_stage_file)
-        document_rows.append(
-            build_bookrag_document_row(
-                doc_id=doc_id,
-                vector_store_name=vector_store_name,
-                workflow_id=workflow_id,
-                workflow_name=workflow_name_for_job or workflow_name,
-                job_id=job_id,
-                processing_profile=processing_profile,
-                filename=src.name,
-                source_file=str(raw_stage_file),
-                filetype=mimetypes.guess_type(src.name)[0] or src.suffix.lower().lstrip("."),
-                filesize_bytes=src.stat().st_size,
-            )
+        reconciled_elements = reconcile_unstructured_elements(staged_raw_elements, src=src)
+        filetype = mimetypes.guess_type(src.name)[0] or src.suffix.lower().lstrip(".")
+        document_row = build_bookrag_document_row(
+            doc_id=doc_id,
+            vector_store_name=vector_store_name,
+            workflow_id=workflow_id,
+            workflow_name=workflow_name_for_job or workflow_name,
+            job_id=job_id,
+            processing_profile=processing_profile,
+            filename=src.name,
+            source_file=str(raw_stage_file),
+            filetype=filetype,
+            filesize_bytes=src.stat().st_size,
         )
         raw_rows = build_bookrag_raw_rows(
             doc_id=doc_id,
             elements=staged_raw_elements,
         )
+        blocks = elements_to_bookrag_blocks(
+            doc_id=doc_id,
+            src=src,
+            content_type=filetype,
+            raw_elements=reconciled_elements,
+        )
+        nodes = build_bookrag_nodes(document_row, blocks)
         debug_file = _write_unstructured_debug_file(
             debug_dir,
             src,
-            staged_raw_elements,
+            reconciled_elements,
             [],
             file_request_parameters,
             extra_payload={
@@ -1330,6 +1366,11 @@ def _apply_bookrag_tree_pipeline(
                     workflow_kind="bookrag",
                 ),
                 "bookrag_image_partition_parameters": image_partition_summary,
+                "workflow_nodes": workflow_nodes,
+                "raw_element_count_before_reconcile": len(staged_raw_elements),
+                "raw_element_count_after_reconcile": len(reconciled_elements),
+                "block_count": len(blocks),
+                "node_count": len(nodes),
             },
         )
         if debug_file:
@@ -1337,15 +1378,22 @@ def _apply_bookrag_tree_pipeline(
         if not raw_rows:
             partition_warnings.append(f"No BookRAG raw elements extracted from file: {src.name}")
             continue
+
+        document_rows.append(document_row)
         all_raw_rows.extend(raw_rows)
+        all_blocks.extend(blocks)
+        all_nodes.extend(nodes)
         document_count += 1
         raw_element_count += len(raw_rows)
+        block_count += len(blocks)
+        node_count += len(nodes)
 
     inserted_rows += persist_bookrag_documents(
         schema_name=effective_schema_name,
         table_targets=bookrag_tables,
         rows=document_rows,
         execute_sql_fn=execute_sql_fn,
+        csv_stage_dir=csv_stage_dir,
         stats=document_insert_stats,
     )
     inserted_rows += persist_bookrag_raw_rows(
@@ -1353,7 +1401,24 @@ def _apply_bookrag_tree_pipeline(
         table_targets=bookrag_tables,
         rows=all_raw_rows,
         execute_sql_fn=execute_sql_fn,
+        csv_stage_dir=csv_stage_dir,
         stats=raw_insert_stats,
+    )
+    inserted_rows += persist_bookrag_blocks(
+        schema_name=effective_schema_name,
+        table_targets=bookrag_tables,
+        blocks=all_blocks,
+        execute_sql_fn=execute_sql_fn,
+        csv_stage_dir=csv_stage_dir,
+        stats=block_insert_stats,
+    )
+    inserted_rows += persist_bookrag_nodes(
+        schema_name=effective_schema_name,
+        table_targets=bookrag_tables,
+        nodes=all_nodes,
+        execute_sql_fn=execute_sql_fn,
+        csv_stage_dir=csv_stage_dir,
+        stats=node_insert_stats,
     )
 
     persisted_raw_count = _count_teradata_rows(
@@ -1370,14 +1435,17 @@ def _apply_bookrag_tree_pipeline(
         )
 
     patched_payload = _strip_file_based_create_params(exec_payload)
-    patched_payload["object_names"] = qualified_tables["raw"]
+    patched_payload["object_names"] = qualified_tables["nodes"]
 
     summary = {
         "table_name": "",
         "documents_table_name": qualified_tables["documents"],
         "raw_table_name": qualified_tables["raw"],
+        "blocks_table_name": qualified_tables["blocks"],
+        "nodes_table_name": qualified_tables["nodes"],
         "raw_element_count": persisted_raw_count,
-        "chunk_count": 0,
+        "block_count": block_count,
+        "node_count": node_count,
         "document_count": document_count,
         "job_id": job_ids[-1] if job_ids else "",
         "job_ids": job_ids,
@@ -1385,31 +1453,27 @@ def _apply_bookrag_tree_pipeline(
         "workflow_name": workflow_names_seen[-1] if workflow_names_seen else workflow_name,
         "destination_id": "",
         "warnings": target_warnings + partition_warnings,
-        "workflow_mode": "bookrag on-demand jobs raw only",
+        "workflow_mode": "bookrag on-demand jobs tree tables only",
         "inserted_rows": inserted_rows,
-        "chunk_size": bookrag_chunk_size,
-        "chunk_overlap": bookrag_chunk_overlap,
         "debug_dir": str(debug_dir) if debug_dir else "",
         "debug_files": debug_files,
         "bookrag_raw_stage_dir": str(raw_stage_dir),
         "bookrag_raw_stage_files": raw_stage_files,
-        "bookrag_csv_stage_dir": "",
-        "bookrag_csv_stage_files": [],
+        "bookrag_csv_stage_dir": str(csv_stage_dir),
+        "bookrag_csv_stage_files": sorted(str(path) for path in csv_stage_dir.glob("*.csv")),
         "effective_partition_strategy": partition_strategy,
         "effective_ocr_languages": ocr_languages,
         "include_orig_elements": False,
         "file_mode": "on-demand-jobs",
-        "bookrag_tables": {"documents": qualified_tables["documents"], "raw": qualified_tables["raw"]},
+        "bookrag_tables": qualified_tables,
         "bookrag_profile": processing_profile,
         "bookrag_document_insert_stats": document_insert_stats,
         "bookrag_raw_insert_stats": raw_insert_stats,
-        "bookrag_chunk_insert_stats": {},
+        "bookrag_block_insert_stats": block_insert_stats,
+        "bookrag_node_insert_stats": node_insert_stats,
         "bookrag_insert_stats": raw_insert_stats,
         "bookrag_image_partition_parameters": image_partition_summary,
-        "bookrag_chunking_strategy": "disabled",
-        "bookrag_new_after_n_chars": bookrag_new_after,
-        "bookrag_combine_under_n_chars": bookrag_combine_under,
-        "bookrag_multipage_sections": bookrag_multipage_sections,
+        "bookrag_chunking_strategy": "disabled_for_tree_debug",
     }
     return patched_payload, summary
 

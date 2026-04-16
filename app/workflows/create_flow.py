@@ -393,7 +393,8 @@ async def handle_upload_and_prepare_create(
     mode_summary: dict | None = None
     mode_error = ""
     try:
-        exec_payload, mode_summary = doc_pipeline_handler.preprocess_create_payload(
+        exec_payload, mode_summary = await asyncio.to_thread(
+            doc_pipeline_handler.preprocess_create_payload,
             exec_payload=exec_payload,
             create_values=create_values,
             vector_store_name=vector_store_name,

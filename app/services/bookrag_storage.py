@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import re
 import uuid
@@ -52,6 +53,33 @@ def _rows_to_pandas_frame(rows: list[dict[str, Any]], columns: list[tuple[str, s
         elif "INTEGER" in normalized:
             frame[name] = pd.array(frame[name], dtype="Int64")
     return frame
+
+
+def _csv_safe_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list, tuple)):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+
+def _write_rows_csv(
+    csv_stage_dir: Path | None,
+    table_name: str,
+    rows: list[dict[str, Any]],
+    columns: list[tuple[str, str]],
+) -> str | None:
+    if csv_stage_dir is None or not rows:
+        return None
+    csv_stage_dir.mkdir(parents=True, exist_ok=True)
+    path = csv_stage_dir / f"{table_name}.csv"
+    column_names = [name for name, _ in columns]
+    with path.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=column_names)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({name: _csv_safe_value(row.get(name)) for name in column_names})
+    return str(path)
 
 
 def _copy_rows_to_sql(
@@ -261,6 +289,8 @@ def build_bookrag_raw_rows(
                 "category_depth": _as_int(metadata.get("category_depth")),
                 "text": _as_text(element.get("text"), max_len=32000),
                 "text_as_html": _as_text(metadata.get("text_as_html"), max_len=32000),
+                "image_caption": _as_text(metadata.get("bookrag_image_caption"), max_len=4000),
+                "image_context": _as_text(metadata.get("bookrag_image_context"), max_len=32000),
                 "doc_id": doc_id,
             }
         )
@@ -281,6 +311,12 @@ def _raw_row_to_element_dict(raw_row: dict[str, Any]) -> dict[str, Any]:
     text_as_html = _as_text(raw_row.get("text_as_html"), max_len=32000)
     if text_as_html:
         metadata["text_as_html"] = text_as_html
+    image_caption = _as_text(raw_row.get("image_caption"), max_len=4000)
+    if image_caption:
+        metadata["bookrag_image_caption"] = image_caption
+    image_context = _as_text(raw_row.get("image_context"), max_len=32000)
+    if image_context:
+        metadata["bookrag_image_context"] = image_context
 
     element: dict[str, Any] = {}
     type_name = _as_text(raw_row.get("type"), max_len=64)
@@ -489,7 +525,11 @@ def _insert_rows(
     csv_stage_dir: Path | None = None,
     stats: dict[str, int] | None = None,
 ) -> int:
-    del csv_stage_dir
+    csv_file = _write_rows_csv(csv_stage_dir, table_name, rows, columns)
+    if stats is not None and csv_file:
+        stats.setdefault("csv_files", [])
+        if csv_file not in stats["csv_files"]:
+            stats["csv_files"].append(csv_file)
     if execute_sql_fn is None:
         raise RuntimeError("teradataml.execute_sql is unavailable.")
     if not rows:
@@ -624,6 +664,26 @@ def persist_bookrag_blocks(
         table_targets["blocks"],
         blocks,
         BOOKRAG_BLOCK_COLUMNS,
+        execute_sql_fn,
+        csv_stage_dir=csv_stage_dir,
+        stats=stats,
+    )
+
+
+def persist_bookrag_nodes(
+    *,
+    schema_name: str | None,
+    table_targets: dict[str, str],
+    nodes: list[dict[str, Any]],
+    execute_sql_fn: ExecuteSqlFn | None,
+    csv_stage_dir: Path | None = None,
+    stats: dict[str, int] | None = None,
+) -> int:
+    return _insert_rows(
+        schema_name,
+        table_targets["nodes"],
+        nodes,
+        BOOKRAG_NODE_COLUMNS,
         execute_sql_fn,
         csv_stage_dir=csv_stage_dir,
         stats=stats,
