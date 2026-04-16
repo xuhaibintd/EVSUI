@@ -209,6 +209,13 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8010
 ```
 
+## BookRAG API Notes
+
+- `GET /api/bookrag/retrieve` with no query parameters returns a dummy connectivity payload.
+- `GET /api/bookrag/retrieve?question=...&vector_store_name=...` runs a real retrieval.
+- `POST /api/bookrag/retrieve` runs a real retrieval from a JSON body with `question` and `vector_store_name`.
+- API access accepts either the normal EVSUI login session cookie or `Authorization: Bearer <token>` / `x-api-key: <token>` when `EVSUI_API_TOKEN` is configured.
+
 Windows PowerShell:
 
 ```powershell

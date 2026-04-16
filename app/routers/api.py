@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hmac
+import os
+from typing import Any
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request
@@ -25,6 +28,94 @@ class BookRAGAnswerRequest(BaseModel):
     top_k: int = 5
     include_entities: bool = True
     include_mapping: bool = True
+
+
+class BookRAGDummyEntity(BaseModel):
+    entity_id: str
+    name: str
+    entity_type: str
+
+
+class BookRAGDummyMapping(BaseModel):
+    entity_id: str
+    node_id: str
+    section_node_id: str
+    source_block_id: str
+    page_start: int | None = None
+    page_end: int | None = None
+
+
+class BookRAGDummyMatch(BaseModel):
+    node_id: str
+    node_type: str
+    title: str
+    content: str
+    path: str
+    page_start: int | None = None
+    page_end: int | None = None
+    source_block_id: str
+
+
+class BookRAGDummyDataResponse(BaseModel):
+    status: str
+    api: str
+    version: str
+    message: str
+    dummy_date: str
+    question_echo: str
+    vector_store_name_echo: str
+    schema_name_echo: str | None = None
+    section_path: str
+    sample_entities: list[BookRAGDummyEntity]
+    sample_mapping: list[BookRAGDummyMapping]
+    sample_match: BookRAGDummyMatch
+
+
+class BookRAGEvidenceResponse(BaseModel):
+    vector_store_name: str
+    schema_name: str | None = None
+    packages: list[dict[str, Any]]
+    package_count: int
+    similarity_row_count: int
+    similarity_headers: list[str]
+    similarity_preview: str
+    evidence_text: str
+
+
+class BookRAGRetrieveResponse(BaseModel):
+    question: str
+    vector_store_name: str
+    schema_name: str | None = None
+    evidence: BookRAGEvidenceResponse
+    dummy_data: BookRAGDummyDataResponse
+    assistant_message: str
+    user_time: str | None = None
+    assistant_time: str | None = None
+
+
+def _external_api_token() -> str:
+    return str(os.getenv("EVSUI_API_TOKEN", "")).strip()
+
+
+def _has_valid_external_api_token(request: Request) -> bool:
+    configured = _external_api_token()
+    if not configured:
+        return False
+
+    bearer = str(request.headers.get("authorization", "")).strip()
+    if bearer.lower().startswith("bearer "):
+        token = bearer[7:].strip()
+        if token and hmac.compare_digest(token, configured):
+            return True
+
+    api_key = str(request.headers.get("x-api-key", "")).strip()
+    return bool(api_key) and hmac.compare_digest(api_key, configured)
+
+
+def _require_api_access(request: Request) -> None:
+    if _is_logged_in(request, request.app) or _has_valid_external_api_token(request):
+        return
+    raise HTTPException(status_code=401, detail="Unauthorized")
 
 def _build_bookrag_dummy_data(*, question: str, vector_store_name: str, schema_name: str | None) -> dict[str, object]:
     return {
@@ -213,20 +304,50 @@ def _build_bookrag_dummy_answer(*, question: str, llm_input: dict[str, object]) 
     }
 
 
-@router.get("/api/bookrag/retrieve")
+@router.get(
+    "/api/bookrag/retrieve",
+    response_model=BookRAGRetrieveResponse,
+    summary="Retrieve BookRAG dummy or evidence payload",
+    description=(
+        "Returns a dummy connectivity payload when called without query parameters. "
+        "When question/vector_store_name inputs are supplied, performs a real retrieval."
+    ),
+)
 async def api_bookrag_retrieve_get(
     request: Request,
-    question: str = "第3四半期決算の要点を確認したい",
-    vector_store_name: str = "dummy_vs",
+    question: str | None = None,
+    vector_store_name: str | None = None,
     schema_name: str | None = None,
+    dummy: str | None = None,
 ):
-    if not _is_logged_in(request, request.app):
-        raise HTTPException(status_code=401, detail="Unauthorized")
-    _activate_session_state(request, request.app)
-
-    question_value = str(question or "").strip() or "第3四半期決算の要点を確認したい"
-    vector_store_value = str(vector_store_name or "").strip() or "dummy_vs"
     schema_value = str(schema_name).strip() or None
+    has_runtime_inputs = any(value is not None for value in (question, vector_store_name, schema_name))
+    if has_runtime_inputs:
+        _require_api_access(request)
+        _activate_session_state(request, request.app)
+        question_value, vector_store_value, evidence = _retrieve_bookrag_evidence_or_raise(
+            question=question,
+            vector_store_name=vector_store_name,
+            schema_name=schema_value,
+        )
+        assistant_message = _build_bookrag_chat_reply(evidence, vector_store_value)
+        return {
+            "question": question_value,
+            "vector_store_name": vector_store_value,
+            "schema_name": schema_value,
+            "evidence": evidence,
+            "dummy_data": _build_bookrag_dummy_data(
+                question=question_value,
+                vector_store_name=vector_store_value,
+                schema_name=schema_value,
+            ),
+            "assistant_message": assistant_message,
+            "user_time": None,
+            "assistant_time": None,
+        }
+
+    question_value = "第3四半期決算の要点を確認したい"
+    vector_store_value = "dummy_vs"
 
     return {
         "question": question_value,
@@ -255,18 +376,44 @@ async def api_bookrag_retrieve_get(
 @router.get("/api/bookrag/answer")
 async def api_bookrag_answer_get(
     request: Request,
-    question: str = "?3??????????????",
-    vector_store_name: str = "dummy_vs",
+    question: str | None = None,
+    vector_store_name: str | None = None,
     schema_name: str | None = None,
     top_k: int = 5,
 ):
-    if not _is_logged_in(request, request.app):
-        raise HTTPException(status_code=401, detail="Unauthorized")
-    _activate_session_state(request, request.app)
-
-    question_value = str(question or "").strip() or "?3??????????????"
-    vector_store_value = str(vector_store_name or "").strip() or "dummy_vs"
     schema_value = str(schema_name).strip() or None
+    has_runtime_inputs = any(value is not None for value in (question, vector_store_name, schema_name))
+    if has_runtime_inputs:
+        _require_api_access(request)
+        _activate_session_state(request, request.app)
+        question_value, vector_store_value, evidence = _retrieve_bookrag_evidence_or_raise(
+            question=question,
+            vector_store_name=vector_store_name,
+            schema_name=schema_value,
+        )
+        llm_input = _build_bookrag_llm_input(
+            question=question_value,
+            evidence=evidence,
+            top_k=top_k,
+            include_entities=True,
+            include_mapping=True,
+        )
+        answer = _build_bookrag_dummy_answer(question=question_value, llm_input=llm_input)
+        return {
+            "question": question_value,
+            "vector_store_name": vector_store_value,
+            "schema_name": schema_value,
+            "top_k": _clamp_top_k(top_k),
+            "evidence": evidence,
+            "llm_input": llm_input,
+            "answer": answer,
+            "assistant_message": answer["text"],
+            "user_time": None,
+            "assistant_time": None,
+        }
+
+    question_value = "?3??????????????"
+    vector_store_value = "dummy_vs"
     dummy_data = _build_bookrag_dummy_data(
         question=question_value,
         vector_store_name=vector_store_value,
@@ -330,10 +477,13 @@ async def api_bookrag_answer_get(
     }
 
 
-@router.post("/api/bookrag/retrieve")
+@router.post(
+    "/api/bookrag/retrieve",
+    response_model=BookRAGRetrieveResponse,
+    summary="Retrieve BookRAG evidence",
+)
 async def api_bookrag_retrieve(request: Request, payload: BookRAGRetrieveRequest):
-    if not _is_logged_in(request, request.app):
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    _require_api_access(request)
     _activate_session_state(request, request.app)
 
     schema_value = str(payload.schema_name).strip() or None
@@ -376,8 +526,7 @@ async def api_bookrag_retrieve(request: Request, payload: BookRAGRetrieveRequest
 
 @router.post("/api/bookrag/answer")
 async def api_bookrag_answer(request: Request, payload: BookRAGAnswerRequest):
-    if not _is_logged_in(request, request.app):
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    _require_api_access(request)
     _activate_session_state(request, request.app)
 
     schema_value = str(payload.schema_name).strip() or None
@@ -426,4 +575,3 @@ async def api_bookrag_answer(request: Request, payload: BookRAGAnswerRequest):
 @router.get("/healthz")
 async def healthz() -> dict[str, str]:
     return {"status": "ok"}
-
