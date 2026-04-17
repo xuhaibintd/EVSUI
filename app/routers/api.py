@@ -117,6 +117,22 @@ def _require_api_access(request: Request) -> None:
         return
     raise HTTPException(status_code=401, detail="Unauthorized")
 
+
+def _build_bookrag_dummy_table_html() -> str:
+    return (
+        "<table>"
+        "<thead><tr><th>観点</th><th>内容</th></tr></thead>"
+        "<tbody>"
+        "<tr><td>業績動向</td><td>経常収益・経常利益・純利益はいずれも前年比約3〜4%増で、前年の30%超成長から明確に減速。</td></tr>"
+        "<tr><td>収益構造</td><td>貸出金利息は減少傾向、役務取引等収益とその他業務収益は増加し、非金利収益の比重が上昇。</td></tr>"
+        "<tr><td>コスト動向</td><td>営業経費は増加傾向で、システム関連費用や人件費の増加が示唆される。</td></tr>"
+        "<tr><td>財政状態</td><td>貸出金と預金は増加、借入金は減少しており、資金基盤は安定し調達構造も改善。</td></tr>"
+        "<tr><td>主要リスク</td><td>信用リスク、貸倒引当金の見積り不確実性、ロシア・ウクライナ情勢、各国通商政策、金融・物価動向。</td></tr>"
+        "</tbody>"
+        "</table>"
+    )
+
+
 def _build_bookrag_dummy_data(*, question: str, vector_store_name: str, schema_name: str | None) -> dict[str, object]:
     return {
         "status": "dummy",
@@ -127,11 +143,13 @@ def _build_bookrag_dummy_data(*, question: str, vector_store_name: str, schema_n
         "question_echo": question,
         "vector_store_name_echo": vector_store_name,
         "schema_name_echo": schema_name,
-        "section_path": "2026年3月期第3四半期決算短信 > 1. 2026年3月期第3四半期の連結業績 > （1）連結経営成績（累計）",
+        "section_path": "2026年3月期第3四半期決算短信 > 総括 > 業績の安定成長と収益構造の変化",
         "sample_entities": [
             {"entity_id": "ent-demo-org", "name": "株式会社三菱UFJフィナンシャル・グループ", "entity_type": "ORGANIZATION"},
             {"entity_id": "ent-demo-period", "name": "2026年3月期第3四半期", "entity_type": "DATE"},
-            {"entity_id": "ent-demo-metric", "name": "親会社株主に帰属する四半期純利益", "entity_type": "FINANCIAL_METRIC"},
+            {"entity_id": "ent-demo-growth", "name": "前年比約3〜4%増", "entity_type": "FINANCIAL_METRIC"},
+            {"entity_id": "ent-demo-noninterest", "name": "非金利収益", "entity_type": "BUSINESS_CATEGORY"},
+            {"entity_id": "ent-demo-risk", "name": "信用リスク", "entity_type": "RISK_FACTOR"},
         ],
         "sample_mapping": [
             {
@@ -151,22 +169,38 @@ def _build_bookrag_dummy_data(*, question: str, vector_store_name: str, schema_n
                 "page_end": 2,
             },
             {
-                "entity_id": "ent-demo-metric",
+                "entity_id": "ent-demo-growth",
                 "node_id": "node-demo-001",
                 "section_node_id": "node-section-001",
                 "source_block_id": "block-demo-001",
                 "page_start": 2,
                 "page_end": 2,
             },
+            {
+                "entity_id": "ent-demo-noninterest",
+                "node_id": "node-demo-001",
+                "section_node_id": "node-section-001",
+                "source_block_id": "block-demo-001",
+                "page_start": 2,
+                "page_end": 3,
+            },
+            {
+                "entity_id": "ent-demo-risk",
+                "node_id": "node-demo-001",
+                "section_node_id": "node-section-001",
+                "source_block_id": "block-demo-001",
+                "page_start": 4,
+                "page_end": 4,
+            },
         ],
         "sample_match": {
             "node_id": "node-demo-001",
             "node_type": "text",
-            "title": "（1）連結経営成績（累計）",
-            "content": "株式会社三菱UFJフィナンシャル・グループの2026年3月期第3四半期累計期間における連結業績の要約を示すダミー本文です。親会社株主に帰属する四半期純利益、経常利益、連結業務純益などの主要指標を格納する想定です。",
-            "path": "2026年3月期第3四半期決算短信 > 1. 2026年3月期第3四半期の連結業績 > （1）連結経営成績（累計）",
+            "title": "総括",
+            "content": '【概要】\n三菱UFJフィナンシャル・グループの2026年3月期第3四半期決算は、増収増益を維持しているものの、前年と比べると成長率は大きく鈍化しており、高成長局面から安定成長局面への移行が見られる。\n\n【業績動向】\n経常収益、経常利益、純利益はいずれも前年比で約3〜4%増加した一方、前年は30%以上の高成長であり、成長スピードは明確に減速している。\n\n【収益構造の変化】\n貸出金利息は減少傾向にあり、役務取引等収益およびその他業務収益が増加している。従来の利ざや中心から、非金利収益の比重が高まる構造変化が進んでいる。\n\n【コスト・財政状態・リスク】\n営業経費は増加傾向で、システム関連費用や人件費の増加が示唆される。貸出金残高と預金は増加し、借入金は減少している。今後の業績は信用リスク、貸倒引当金の見積り不確実性、ロシア・ウクライナ情勢、各国の通商政策、金融・物価動向などのマクロ環境に強く依存する。',
+            "path": "2026年3月期第3四半期決算短信 > 総括 > 業績の安定成長と収益構造の変化",
             "page_start": 2,
-            "page_end": 2,
+            "page_end": 4,
             "source_block_id": "block-demo-001",
         },
     }
@@ -259,10 +293,10 @@ def _build_bookrag_llm_input(
     return {
         "question": question,
         "instructions": [
-            "????????????????????????",
-            "??????????????????????????",
-            "????????????????????????",
-            "???????????????????",
+            "与えられた evidence のみを根拠に回答すること。",
+            "数値の傾向、収益構造、財政状態、リスク要因を優先して整理すること。",
+            "根拠が弱い推測は避け、必要に応じて不確実性を明示すること。",
+            "回答は日本語で簡潔にまとめること。",
         ],
         "evidence": evidence_items,
     }
@@ -285,14 +319,18 @@ def _build_bookrag_dummy_answer(*, question: str, llm_input: dict[str, object]) 
     if evidence_items:
         first = evidence_items[0]
         answer_text = (
-            f"???????????{question}??????"
-            f"????????{first.get('title') or first.get('section_title') or '???????'}????"
-            "???????? llm_input ????? LLM ???????????????"
+            f"質問「{question}」に対するダミー回答です。"
+            "三菱UFJフィナンシャル・グループの2026年3月期第3四半期決算は増収増益を維持していますが、"
+            "前年比成長率は約3〜4%まで鈍化しており、高成長フェーズから安定成長フェーズへの移行が示唆されます。"
+            "収益構造は貸出金利息中心から、役務取引等収益やその他業務収益など非金利収益の比重が高まる方向へ変化しています。"
+            "営業経費の増加、信用リスク、貸倒引当金の見積り不確実性、マクロ環境の変動が今後の主要な注目点です。"
+            f"主な参照セクションは「{first.get('title') or first.get('section_title') or '総括'}」です。"
         )
     else:
         answer_text = (
-            f"???????????{question}?????????? 0 ????"
-            "??????retrieve ??? 0 ???????????????????????"
+            f"質問「{question}」に対するダミー回答です。参照可能な evidence が 0 件のため、"
+            "三菱UFJフィナンシャル・グループの2026年3月期第3四半期決算に関する要約は生成せず、"
+            "接続確認用の空レスポンスのみを返しています。"
         )
 
     return {
@@ -346,7 +384,7 @@ async def api_bookrag_retrieve_get(
             "assistant_time": None,
         }
 
-    question_value = "第3四半期決算の要点を確認したい"
+    question_value = "三菱UFJフィナンシャル・グループの2026年3月期第3四半期決算の要点を確認したい"
     vector_store_value = "dummy_vs"
 
     return {
@@ -412,7 +450,7 @@ async def api_bookrag_answer_get(
             "assistant_time": None,
         }
 
-    question_value = "?3??????????????"
+    question_value = "三菱UFJフィナンシャル・グループの2026年3月期第3四半期決算の要点は？"
     vector_store_value = "dummy_vs"
     dummy_data = _build_bookrag_dummy_data(
         question=question_value,
@@ -443,7 +481,7 @@ async def api_bookrag_answer_get(
                 },
                 "block": {
                     "text": dummy_data["sample_match"]["content"],
-                    "text_as_html": None,
+                    "text_as_html": _build_bookrag_dummy_table_html(),
                     "image_caption": None,
                     "image_context": None,
                 },

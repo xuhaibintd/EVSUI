@@ -43,7 +43,9 @@ class BookRAGApiDummyDataTests(unittest.TestCase):
         self.assertEqual(payload["vector_store_name_echo"], "demo_vs")
         self.assertEqual(payload["schema_name_echo"], "demo_schema")
         self.assertEqual(payload["sample_entities"][0]["entity_type"], "ORGANIZATION")
+        self.assertEqual(payload["sample_entities"][3]["name"], "非金利収益")
         self.assertEqual(payload["sample_mapping"][0]["node_id"], "node-demo-001")
+        self.assertIn("安定成長局面", payload["sample_match"]["content"])
         self.assertEqual(payload["sample_match"]["source_block_id"], "block-demo-001")
 
 
@@ -56,21 +58,21 @@ class BookRAGApiAnswerShapeTests(unittest.TestCase):
                     "score": 0.99,
                     "match": {
                         "node_id": "node-1",
-                        "title": "?1???????????",
-                        "content": "??????????",
-                        "path": "???? > ????",
+                        "title": "総括",
+                        "content": "増収増益だが成長は鈍化。",
+                        "path": "決算短信 > 総括",
                         "page_start": 2,
                         "page_end": 2,
                         "source_block_id": "block-1",
                     },
                     "section": {
-                        "title": "????",
-                        "path": "???? > ????",
+                        "title": "総括",
+                        "path": "決算短信 > 総括",
                         "page_start": 2,
                         "page_end": 2,
                     },
                     "block": {
-                        "text": "??????????",
+                        "text": "増収増益だが成長は鈍化。",
                         "text_as_html": None,
                         "image_caption": None,
                         "image_context": None,
@@ -80,29 +82,29 @@ class BookRAGApiAnswerShapeTests(unittest.TestCase):
         }
 
         payload = _build_bookrag_llm_input(
-            question="?3??????????????",
+            question="決算の要点は？",
             evidence=evidence,
             top_k=5,
             include_entities=True,
             include_mapping=True,
         )
 
-        self.assertEqual(payload["question"], "?3??????????????")
+        self.assertEqual(payload["question"], "決算の要点は？")
         self.assertEqual(len(payload["instructions"]), 4)
         self.assertEqual(len(payload["evidence"]), 1)
-        self.assertEqual(payload["evidence"][0]["title"], "?1???????????")
+        self.assertEqual(payload["evidence"][0]["title"], "総括")
         self.assertEqual(payload["evidence"][0]["pages"], [2, 2])
 
     def test_dummy_answer_contains_citations(self) -> None:
         llm_input = {
-            "question": "?3??????????????",
+            "question": "決算の要点は？",
             "instructions": [],
             "evidence": [
                 {
                     "rank": 1,
-                    "title": "?1???????????",
-                    "section_title": "????",
-                    "path": "???? > ????",
+                    "title": "総括",
+                    "section_title": "総括",
+                    "path": "決算短信 > 総括",
                     "pages": [2, 2],
                     "node_id": "node-1",
                     "source_block_id": "block-1",
@@ -111,14 +113,14 @@ class BookRAGApiAnswerShapeTests(unittest.TestCase):
         }
 
         answer = _build_bookrag_dummy_answer(
-            question="?3??????????????",
+            question="決算の要点は？",
             llm_input=llm_input,
         )
 
         self.assertEqual(answer["mode"], "dummy")
         self.assertTrue(answer["grounded"])
         self.assertEqual(answer["citations"][0]["node_id"], "node-1")
-        self.assertIn("?????", answer["text"])
+        self.assertIn("安定成長フェーズ", answer["text"])
 
 
 def _build_request(*, headers: dict[str, str] | None = None, cookies: dict[str, str] | None = None):
