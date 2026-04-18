@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import Form, Request
 from fastapi.responses import HTMLResponse
 
+from app.services.bookrag_schema import build_bookrag_table_targets
 from app.utils.table_state import (
     apply_list_output_to_state,
     chunk_table_sql_for_vs,
@@ -10,10 +11,37 @@ from app.utils.table_state import (
     find_list_row_for_vs,
     find_vs_row_by_name,
     format_preview,
+    is_bookrag_vs_row,
     is_content_based_vs_row,
     row_value_by_header,
+    sanitize_teradata_identifier,
     table_from_result,
 )
+
+
+def _qualified_identifier(schema_name: str, object_name: str) -> str:
+    if schema_name:
+        return f'"{schema_name}"."{object_name}"'
+    return f'"{object_name}"'
+
+
+def _bookrag_cleanup_targets(headers: list[str], row: list[str] | None, vs_name: str, state: dict) -> tuple[str, list[tuple[str, str, str]]]:
+    schema_from_row = row_value_by_header(headers, row or [], ("database", "schema", "targetdatabase"))
+    schema_hint = schema_from_row or str(state.get("params", {}).get("username", "")).strip()
+    schema_name = sanitize_teradata_identifier(schema_hint, fallback="", allow_empty=True)
+    targets = build_bookrag_table_targets(vs_name)
+    ordered = [
+        ("view", "leaf_nodes", _qualified_identifier(schema_name, targets["leaf_nodes"])),
+        ("table", "entity_relations", _qualified_identifier(schema_name, targets["entity_relations"])),
+        ("table", "entity_links", _qualified_identifier(schema_name, targets["entity_links"])),
+        ("table", "entities", _qualified_identifier(schema_name, targets["entities"])),
+        ("table", "nodes", _qualified_identifier(schema_name, targets["nodes"])),
+        ("table", "blocks", _qualified_identifier(schema_name, targets["blocks"])),
+        ("table", "raw", _qualified_identifier(schema_name, targets["raw"])),
+        ("table", "documents", _qualified_identifier(schema_name, targets["documents"])),
+        ("table", "chunks", _qualified_identifier(schema_name, targets["chunks"])),
+    ]
+    return schema_name, ordered
 
 
 async def handle_destroy_selected(
@@ -32,7 +60,14 @@ async def handle_destroy_selected(
     state["selected_vs_name"] = target_name
     list_headers, selected_row = find_list_row_for_vs(state, target_name)
     should_drop_chunk_table = is_content_based_vs_row(list_headers, selected_row)
+    should_drop_bookrag_tables = is_bookrag_vs_row(list_headers, selected_row)
     chunk_schema_name, chunk_table_name, chunk_table_sql = chunk_table_sql_for_vs(
+        list_headers,
+        selected_row,
+        target_name,
+        state,
+    )
+    bookrag_schema_name, bookrag_cleanup_targets = _bookrag_cleanup_targets(
         list_headers,
         selected_row,
         target_name,
@@ -125,7 +160,45 @@ async def handle_destroy_selected(
             state["last_success"] = ""
             append_connect_step(state, "VectorStore.destroy()", "error", f"Verification failed: {reason}")
         else:
-            if should_drop_chunk_table:
+            cleanup_notes: list[str] = []
+            if should_drop_bookrag_tables:
+                if execute_sql_fn is None:
+                    cleanup_notes.append("BookRAG cleanup skipped: execute_sql unavailable.")
+                    append_connect_step(
+                        state,
+                        "BookRAG cleanup",
+                        "warn",
+                        "Skipped BookRAG object cleanup because execute_sql is unavailable.",
+                    )
+                else:
+                    for object_kind, object_key, qualified_sql in bookrag_cleanup_targets:
+                        drop_sql = f"DROP VIEW {qualified_sql}" if object_kind == "view" else f"DROP TABLE {qualified_sql}"
+                        try:
+                            execute_sql_fn(drop_sql)
+                            append_connect_step(
+                                state,
+                                "BookRAG cleanup",
+                                "ok",
+                                f"Dropped {object_kind} {qualified_sql} ({object_key}).",
+                            )
+                        except Exception as drop_ex:
+                            drop_msg = str(drop_ex).lower()
+                            if "3807" in drop_msg or "does not exist" in drop_msg or "not found" in drop_msg:
+                                append_connect_step(
+                                    state,
+                                    "BookRAG cleanup",
+                                    "warn",
+                                    f"Already absent: {qualified_sql} ({object_key}).",
+                                )
+                            else:
+                                append_connect_step(
+                                    state,
+                                    "BookRAG cleanup",
+                                    "warn",
+                                    f"Failed to drop {qualified_sql} ({object_key}): {drop_ex}",
+                                )
+                                cleanup_notes.append(f"BookRAG cleanup failed for {qualified_sql}: {drop_ex}")
+            elif should_drop_chunk_table:
                 if execute_sql_fn is None:
                     chunk_drop_note = f" Chunk table cleanup skipped: execute_sql unavailable for {chunk_table_sql}."
                     append_connect_step(
@@ -162,14 +235,25 @@ async def handle_destroy_selected(
                                 "warn",
                                 f"Failed to drop chunk table {chunk_table_sql}: {drop_ex}",
                             )
+            cleanup_suffix = f" {' '.join(cleanup_notes)}" if cleanup_notes else ""
             if output_preview and output_preview != "None":
-                state["destroy_preview"] = f"Deleted '{target_name}'. Result: {output_preview}{chunk_drop_note}"
+                state["destroy_preview"] = f"Deleted '{target_name}'. Result: {output_preview}{chunk_drop_note}{cleanup_suffix}"
             else:
-                state["destroy_preview"] = f"Deleted '{target_name}'.{chunk_drop_note}"
+                state["destroy_preview"] = f"Deleted '{target_name}'.{chunk_drop_note}{cleanup_suffix}"
             state["destroy_status"] = "ok"
             state["last_error"] = ""
-            state["last_success"] = f"VectorStore.destroy() completed for '{target_name}'.{chunk_drop_note}"
-            if should_drop_chunk_table:
+            state["last_success"] = f"VectorStore.destroy() completed for '{target_name}'.{chunk_drop_note}{cleanup_suffix}"
+            if should_drop_bookrag_tables:
+                append_connect_step(
+                    state,
+                    "VectorStore.destroy()",
+                    "ok",
+                    (
+                        f"Destroyed vector store '{target_name}'. "
+                        f"BookRAG cleanup target schema='{bookrag_schema_name or '<default>'}'."
+                    ),
+                )
+            elif should_drop_chunk_table:
                 append_connect_step(
                     state,
                     "VectorStore.destroy()",

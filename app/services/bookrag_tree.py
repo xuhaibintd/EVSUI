@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-_TITLE_MARKERS = {"title", "section-header", "sectionheader", "header", "headline"}
+_TITLE_MARKERS = {"title", "section-header", "sectionheader", "headline"}
 _TABLE_MARKERS = ("table",)
 _IMAGE_MARKERS = ("image", "figure", "picture")
 BOOKRAG_SECTION_PROFILE_DEFAULT = "jp"
@@ -22,12 +22,17 @@ _JP_CHAPTER_PATTERNS: list[tuple[re.Pattern[str], int]] = [
     (re.compile(r"^\s*\u7b2c[0-9\u4e00-\u9fff]+\u76ee"), 4),
     (re.compile(r"^\s*\u7b2c[0-9\u4e00-\u9fff]+\u6761"), 4),
 ]
-_JP_NUMERIC_RE = re.compile(r"^\s*([0-9]+(?:[\.\uff0e][0-9]+){0,4})\s+")
+_JP_NUMERIC_RE = re.compile(r"^\s*([0-9]+(?:[\.\uff0e][0-9]+){0,4})(?:[\.\uff0e\u3002]\s*|\s+)(.+?)\s*$")
 _JP_ENUM_HEADING_RE = re.compile(r"^\s*[\(\uff08]\s*([0-9]+)\s*[\)\uff09]\s*(.+?)\s*$")
 _JP_ALPHA_SECTION_RE = re.compile(r"^\s*([A-Za-z\uff21-\uff3a\uff41-\uff5a])[\.\uff0e\u3002]\s*(.+?)\s*$")
 _JP_BRACKET_SECTION_RE = re.compile(r"^\s*\u3010[^\u3011]{1,60}\u3011\s*$")
 _JP_NOTE_RE = re.compile(r"^\s*[\(\uff08]?\s*\u6ce8\s*[0-9A-Za-z\uff10-\uff19]*")
+_MAJOR_SECTION_FAMILIES = {"chapter", "numeric"}
+_GROUP_SECTION_FAMILIES = {"bracket"}
+_ENUM_SECTION_FAMILIES = {"enum"}
 _JP_HEADER_FOOTER_TYPES = {"footer", "header", "page-header", "page-footer"}
+_TABLE_HTML_RE = re.compile(r"<\s*table\b", re.IGNORECASE)
+_HEADING_TAG_RE = re.compile(r"<\s*h([1-6])\b", re.IGNORECASE)
 
 
 def _as_text(value: Any, *, max_len: int | None = None) -> str | None:
@@ -74,12 +79,25 @@ def _has_sentence_punctuation(text: str) -> bool:
     return any(token in text for token in ("\u3002", "\u3001", "\uff0c", ",", ":", "\uff1a", ";", "\uff1b"))
 
 
+def _extract_heading_html_level(text_as_html: str | None) -> int | None:
+    html_text = _as_text(text_as_html, max_len=32000)
+    if not html_text:
+        return None
+    match = _HEADING_TAG_RE.search(html_text)
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except Exception:
+        return None
+
+
 def _jp_looks_like_short_enum_heading(line: str, *, title_like: bool) -> bool:
     match = _JP_ENUM_HEADING_RE.match(line)
     if not match:
         return False
     remainder = match.group(2).strip()
-    if not remainder or len(remainder) > 36:
+    if not remainder or len(remainder) > (120 if title_like else 36):
         return False
     if _JP_NOTE_RE.match(line) or _has_sentence_punctuation(remainder):
         return False
@@ -91,18 +109,66 @@ def _jp_looks_like_alpha_heading(line: str, *, title_like: bool) -> bool:
     if not match:
         return False
     remainder = match.group(2).strip()
-    if not remainder or len(remainder) > 36:
+    if not remainder or len(remainder) > (120 if title_like else 36):
         return False
     if _has_sentence_punctuation(remainder):
         return False
     return title_like or len(remainder) <= 18
 
 
-def _jp_infer_section_level(text: str | None, element_type: str) -> int | None:
+def _jp_section_family(text: str | None, element_type: str, *, heading_level: int | None = None) -> str | None:
     line = _first_nonempty_line(text) or ""
     lowered_type = str(element_type or "").strip().lower()
     title_like = _is_title_like_type(element_type)
     if not line:
+        if heading_level is not None or title_like:
+            return "generic"
+        return None
+    if lowered_type in _JP_HEADER_FOOTER_TYPES and not title_like:
+        return None
+    if _JP_NOTE_RE.match(line):
+        return None
+    if any(pattern.match(line) for pattern, _ in _JP_CHAPTER_PATTERNS):
+        return "chapter"
+    if _JP_NUMERIC_RE.match(line):
+        return "numeric"
+    if _jp_looks_like_short_enum_heading(line, title_like=title_like) or _jp_looks_like_alpha_heading(line, title_like=title_like):
+        return "enum"
+    if _JP_BRACKET_SECTION_RE.match(line):
+        return "bracket"
+    if heading_level is not None or title_like:
+        return "generic"
+    return None
+
+
+def _jp_pattern_section_level(text: str | None, element_type: str, *, heading_level: int | None = None) -> int | None:
+    line = _first_nonempty_line(text) or ""
+    family = _jp_section_family(line, element_type, heading_level=heading_level)
+    if family == "chapter":
+        for pattern, level in _JP_CHAPTER_PATTERNS:
+            if pattern.match(line):
+                return level
+        return 1
+    if family == "numeric":
+        numeric_match = _JP_NUMERIC_RE.match(line)
+        if not numeric_match:
+            return 2
+        marker = numeric_match.group(1).replace("\uff0e", ".")
+        return marker.count(".") + 2
+    if family == "enum":
+        return 3
+    if family == "bracket":
+        return 3
+    return None
+
+
+def _jp_infer_section_level(text: str | None, element_type: str, *, heading_level: int | None = None) -> int | None:
+    line = _first_nonempty_line(text) or ""
+    lowered_type = str(element_type or "").strip().lower()
+    title_like = _is_title_like_type(element_type)
+    if not line:
+        if heading_level is not None:
+            return 2 if heading_level >= 3 else 1
         return 1 if title_like else None
     if lowered_type in _JP_HEADER_FOOTER_TYPES and not title_like:
         return None
@@ -111,27 +177,29 @@ def _jp_infer_section_level(text: str | None, element_type: str) -> int | None:
     for pattern, level in _JP_CHAPTER_PATTERNS:
         if pattern.match(line):
             return level
-    if _JP_BRACKET_SECTION_RE.match(line):
-        return 2 if title_like else 1
     numeric_match = _JP_NUMERIC_RE.match(line)
     if numeric_match:
         marker = numeric_match.group(1).replace("\uff0e", ".")
-        remainder = line[numeric_match.end():].strip()
+        remainder = numeric_match.group(2).strip()
         if len(line) <= 80 and (title_like or (remainder and not _has_sentence_punctuation(remainder) and len(remainder) <= 36)):
             return marker.count(".") + 1
         return None
+    if _jp_looks_like_short_enum_heading(line, title_like=title_like):
+        return 2
     if _jp_looks_like_alpha_heading(line, title_like=title_like):
         return 2
-    if _jp_looks_like_short_enum_heading(line, title_like=title_like):
-        return 4
+    if _JP_BRACKET_SECTION_RE.match(line):
+        return 2
+    if heading_level is not None:
+        return 2 if heading_level >= 3 else 1
     if title_like and len(line) <= 60 and not _has_sentence_punctuation(line):
         return 1
     return None
 
 
-def _infer_section_level(text: str | None, element_type: str, *, profile: str = BOOKRAG_SECTION_PROFILE_DEFAULT) -> int | None:
+def _infer_section_level(text: str | None, element_type: str, *, profile: str = BOOKRAG_SECTION_PROFILE_DEFAULT, heading_level: int | None = None) -> int | None:
     if profile == "jp":
-        return _jp_infer_section_level(text, element_type)
+        return _jp_infer_section_level(text, element_type, heading_level=heading_level)
     raise ValueError(f"Unsupported BookRAG section profile: {profile}")
 
 
@@ -143,12 +211,16 @@ def _classify_block_type(
     profile: str = BOOKRAG_SECTION_PROFILE_DEFAULT,
 ) -> str:
     lowered = str(element_type or "").strip().lower()
-    if any(marker in lowered for marker in _TABLE_MARKERS) or text_as_html:
+    html_text = _as_text(text_as_html, max_len=32000)
+    if any(marker in lowered for marker in _TABLE_MARKERS) or (html_text and _TABLE_HTML_RE.search(html_text)):
         return "table"
     if any(marker in lowered for marker in _IMAGE_MARKERS):
         return "image"
+    heading_level = _extract_heading_html_level(html_text)
+    if _is_title_like_type(element_type) or heading_level is not None:
+        return "section"
     first_line = _first_nonempty_line(text) or ""
-    if _infer_section_level(first_line, element_type, profile=profile) is not None:
+    if _infer_section_level(first_line, element_type, profile=profile, heading_level=heading_level) is not None:
         return "section"
     return "text"
 
@@ -193,13 +265,40 @@ def _block_kind(block: dict[str, Any]) -> str:
     )
 
 
+def _block_section_family(block: dict[str, Any]) -> str | None:
+    if _block_kind(block) != "section":
+        return None
+    return _jp_section_family(
+        _as_text(block.get("text"), max_len=1000),
+        _as_text(block.get("type"), max_len=50) or "Text",
+        heading_level=_as_int(block.get("heading_level")),
+    )
+
+
 def _block_section_level(block: dict[str, Any]) -> int | None:
     if _block_kind(block) != "section":
         return None
-    return _infer_section_level(
+    heading_level = _as_int(block.get("heading_level"))
+    pattern_level = _jp_pattern_section_level(
         _as_text(block.get("text"), max_len=1000),
         _as_text(block.get("type"), max_len=50) or "Text",
+        heading_level=heading_level,
     )
+    if pattern_level is not None:
+        return pattern_level
+    if heading_level is not None and heading_level > 0:
+        return heading_level
+    inferred_level = _infer_section_level(
+        _as_text(block.get("text"), max_len=1000),
+        _as_text(block.get("type"), max_len=50) or "Text",
+        heading_level=heading_level,
+    )
+    if inferred_level is not None:
+        return inferred_level
+    category_depth = _as_int(block.get("category_depth"))
+    if category_depth is not None and category_depth > 0:
+        return category_depth
+    return None
 
 
 def _stable_fallback_block_id(doc_id: str | None, ordinal: int | None, text: str | None) -> str:
@@ -415,6 +514,7 @@ def elements_to_bookrag_blocks(
         block_type = _classify_block_type(element_type, raw_text, text_as_html, profile=profile)
         image_caption = _as_text(metadata.get("bookrag_image_caption"), max_len=_IMAGE_CAPTION_MAX_LEN)
         image_context = _as_text(metadata.get("bookrag_image_context"), max_len=32000)
+        heading_level = _extract_heading_html_level(text_as_html)
         text = image_caption if block_type == "image" and image_caption else raw_text
         if not text and not text_as_html and block_type != "image":
             continue
@@ -423,6 +523,8 @@ def elements_to_bookrag_blocks(
                 "doc_id": doc_id,
                 "element_id": _as_text(element.get("element_id") or element.get("id"), max_len=64),
                 "parent_id": _as_text(metadata.get("parent_id"), max_len=64),
+                "category_depth": _as_int(metadata.get("category_depth")),
+                "heading_level": heading_level,
                 "page_number": _as_int(metadata.get("page_number")),
                 "ordinal": index,
                 "text": text,
@@ -444,6 +546,61 @@ def elements_to_bookrag_blocks(
         if not block.get("text"):
             block["text"] = _as_text(caption or context, max_len=32000)
     return drafts
+
+
+def _stack_last_matching(section_stack: list[dict[str, Any]], families: set[str]) -> dict[str, Any] | None:
+    for node in reversed(section_stack):
+        if str(node.get("_section_family") or "") in families:
+            return node
+    return None
+
+
+def _pop_until_node(section_stack: list[dict[str, Any]], anchor: dict[str, Any] | None) -> None:
+    if anchor is None:
+        section_stack.clear()
+        return
+    while section_stack and section_stack[-1].get("node_id") != anchor.get("node_id"):
+        section_stack.pop()
+
+
+def _resolve_section_parent(
+    root_node: dict[str, Any],
+    section_stack: list[dict[str, Any]],
+    *,
+    family: str,
+    level: int,
+) -> tuple[dict[str, Any], int]:
+    if family in _MAJOR_SECTION_FAMILIES:
+        while section_stack and (
+            str(section_stack[-1].get("_section_family") or "") not in _MAJOR_SECTION_FAMILIES
+            or int(section_stack[-1].get("level") or 0) >= level
+        ):
+            section_stack.pop()
+        parent_node = section_stack[-1] if section_stack else root_node
+        return parent_node, level
+
+    if family in _ENUM_SECTION_FAMILIES:
+        major_anchor = _stack_last_matching(section_stack, _MAJOR_SECTION_FAMILIES)
+        if major_anchor is not None:
+            _pop_until_node(section_stack, major_anchor)
+            return major_anchor, int(major_anchor.get("level") or 0) + 1
+
+    if family in _GROUP_SECTION_FAMILIES:
+        major_anchor = _stack_last_matching(section_stack, _MAJOR_SECTION_FAMILIES)
+        if major_anchor is not None:
+            _pop_until_node(section_stack, major_anchor)
+            return major_anchor, int(major_anchor.get("level") or 0) + 1
+
+    if family == "generic":
+        enum_anchor = _stack_last_matching(section_stack, _ENUM_SECTION_FAMILIES)
+        if enum_anchor is not None:
+            _pop_until_node(section_stack, enum_anchor)
+            return enum_anchor, int(enum_anchor.get("level") or 0) + 1
+
+    while section_stack and int(section_stack[-1].get("level") or 0) >= level:
+        section_stack.pop()
+    parent_node = section_stack[-1] if section_stack else root_node
+    return parent_node, level
 
 
 def build_bookrag_nodes(document_row: dict[str, Any], blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -476,10 +633,9 @@ def build_bookrag_nodes(document_row: dict[str, Any], blocks: list[dict[str, Any
             open_section["page_end"] = max(_as_int(open_section.get("page_end")) or page_number, page_number)
 
         if _block_kind(block) == "section":
-            level = _block_section_level(block) or (int(section_stack[-1].get("level") or 0) + 1 if section_stack else 1)
-            while section_stack and int(section_stack[-1].get("level") or 0) >= level:
-                section_stack.pop()
-            parent_node = section_stack[-1] if section_stack else root_node
+            family = _block_section_family(block) or "generic"
+            base_level = _block_section_level(block) or (int(section_stack[-1].get("level") or 0) + 1 if section_stack else 1)
+            parent_node, level = _resolve_section_parent(root_node, section_stack, family=family, level=base_level)
             title = _block_section_title(block) or f"Section {block.get('ordinal')}"
             parent_path = _as_text(parent_node.get("path"), max_len=2000) or ""
             path_text = title if not parent_path else f"{parent_path} > {title}"
@@ -497,6 +653,7 @@ def build_bookrag_nodes(document_row: dict[str, Any], blocks: list[dict[str, Any
                 "page_end": page_number,
                 "path": _as_text(path_text, max_len=2000),
                 "is_leaf": 0,
+                "_section_family": family,
             }
             nodes.append(section_node)
             section_stack.append(section_node)

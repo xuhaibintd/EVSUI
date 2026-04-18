@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any, Callable
 
 TERADATA_IDENTIFIER_MAX_LEN = 30
+BOOKRAG_VS_DESCRIPTION_MARKER = "unstructured_bookrag_flg"
 
 
 def normalize_header_key(value: str) -> str:
@@ -83,6 +84,28 @@ def is_content_based_vs_row(headers: list[str], row: list[str] | None) -> bool:
         if "content" in low and "based" in low:
             return True
     return False
+
+
+def is_file_based_vs_row(headers: list[str], row: list[str] | None) -> bool:
+    if not row:
+        return False
+    type_value = row_value_by_header(headers, row, ("type", "mode", "storetype", "vectorstoretype"))
+    if type_value:
+        low = type_value.lower()
+        if "file" in low and "based" in low:
+            return True
+    for cell in row:
+        low = str(cell).strip().lower()
+        if "file" in low and "based" in low:
+            return True
+    return False
+
+
+def is_bookrag_vs_row(headers: list[str], row: list[str] | None) -> bool:
+    if not is_file_based_vs_row(headers, row):
+        return False
+    description = row_value_by_header(headers, row or [], ("description", "desc", "comment", "note"))
+    return BOOKRAG_VS_DESCRIPTION_MARKER in description.lower()
 
 
 def base_vector_store_name_for_chunk(raw_name: str) -> str:

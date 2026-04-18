@@ -12,6 +12,7 @@ from app.routers.api import (
     _build_bookrag_dummy_answer,
     _build_bookrag_dummy_data,
     _build_bookrag_llm_input,
+    _build_bookrag_live_answer_or_raise,
     _has_valid_external_api_token,
     api_bookrag_answer_get,
     api_bookrag_retrieve_get,
@@ -146,8 +147,8 @@ class BookRAGApiAccessTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(_has_valid_external_api_token(invalid_request))
 
     async def test_retrieve_get_runs_real_lookup_when_query_params_are_present(self) -> None:
-        request = _build_request(headers={"x-api-key": "secret-token"})
-        evidence = {"packages": [{"rank": 1}], "package_count": 1}
+        request = _build_request(headers={"x-api-key": "secret-token", "x-request-id": "req-123"})
+        evidence = {"vector_store_name": "demo_vs", "packages": [{"rank": 1}], "package_count": 1}
 
         with patch.dict(os.environ, {"EVSUI_API_TOKEN": "secret-token"}, clear=False):
             with patch("app.routers.api._activate_session_state", return_value={}), patch(
@@ -164,7 +165,13 @@ class BookRAGApiAccessTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["question"], "what is new")
         self.assertEqual(payload["vector_store_name"], "demo_vs")
         self.assertEqual(payload["schema_name"], "demo_schema")
-        self.assertEqual(payload["evidence"], evidence)
+        self.assertEqual(payload["meta"]["request_id"], "req-123")
+        self.assertEqual(payload["meta"]["auth_mode"], "api_key")
+        self.assertEqual(payload["evidence"]["package_count"], 1)
+        self.assertEqual(payload["evidence"]["packages_total"], 1)
+        self.assertEqual(payload["evidence"]["top_k_applied"], 5)
+        self.assertEqual(payload["evidence"]["retrieval_source"], "bnode.content")
+        self.assertIsNone(payload["dummy_data"])
         self.assertEqual(payload["assistant_message"], "reply")
 
     async def test_retrieve_get_without_params_still_returns_dummy_payload(self) -> None:
@@ -172,7 +179,9 @@ class BookRAGApiAccessTests(unittest.IsolatedAsyncioTestCase):
         payload = await api_bookrag_retrieve_get(request)
 
         self.assertEqual(payload["vector_store_name"], "dummy_vs")
+        self.assertEqual(payload["meta"]["auth_mode"], "none")
         self.assertEqual(payload["evidence"]["package_count"], 0)
+        self.assertEqual(payload["evidence"]["top_k_applied"], 5)
         self.assertEqual(payload["dummy_data"]["status"], "dummy")
 
     async def test_answer_get_rejects_missing_auth(self) -> None:
@@ -182,6 +191,70 @@ class BookRAGApiAccessTests(unittest.IsolatedAsyncioTestCase):
             await api_bookrag_answer_get(request, question="q", vector_store_name="vs")
 
         self.assertEqual(ctx.exception.status_code, 401)
+        self.assertEqual((ctx.exception.headers or {}).get("WWW-Authenticate"), "Bearer")
+
+    async def test_answer_get_uses_live_model_when_query_params_are_present(self) -> None:
+        request = _build_request(headers={"x-api-key": "secret-token", "x-request-id": "req-456"})
+        evidence = {"vector_store_name": "demo_vs", "packages": [{"rank": 1}], "package_count": 1}
+        live_answer = {"mode": "live", "model": "vectorstore.ask", "grounded": True, "text": "live reply", "citations": []}
+
+        with patch.dict(os.environ, {"EVSUI_API_TOKEN": "secret-token"}, clear=False):
+            with patch("app.routers.api._retrieve_bookrag_evidence_or_raise", return_value=("what is new", "demo_vs", evidence)), patch(
+                "app.routers.api._build_bookrag_live_answer_or_raise",
+                return_value=live_answer,
+            ):
+                payload = await api_bookrag_answer_get(
+                    request,
+                    question="what is new",
+                    vector_store_name="demo_vs",
+                    schema_name="demo_schema",
+                )
+
+        self.assertEqual(payload["meta"]["request_id"], "req-456")
+        self.assertEqual(payload["meta"]["auth_mode"], "api_key")
+        self.assertEqual(payload["answer"]["mode"], "live")
+        self.assertEqual(payload["answer"]["text"], "live reply")
+        self.assertEqual(payload["assistant_message"], "live reply")
+
+
+class BookRAGApiLiveAnswerTests(unittest.TestCase):
+    def test_build_live_answer_calls_vectorstore_ask(self) -> None:
+        llm_input = {
+            "question": "決算の要点は？",
+            "instructions": ["与えられた evidence のみを根拠に回答すること。"],
+            "evidence": [
+                {
+                    "rank": 1,
+                    "title": "総括",
+                    "pages": [2, 2],
+                    "node_id": "node-1",
+                    "source_block_id": "block-1",
+                    "content": "増収増益だが成長は鈍化。",
+                    "path": "決算短信 > 総括",
+                }
+            ],
+        }
+
+        class _VectorStore:
+            def __init__(self, name):
+                self.name = name
+
+            def ask(self, question=None, prompt=None):
+                self.last_question = question
+                self.last_prompt = prompt
+                return {"text": "real grounded answer"}
+
+        with patch("app.routers.api.VectorStore", _VectorStore):
+            answer = _build_bookrag_live_answer_or_raise(
+                question="決算の要点は？",
+                vector_store_name="demo_vs",
+                llm_input=llm_input,
+            )
+
+        self.assertEqual(answer["mode"], "live")
+        self.assertEqual(answer["model"], "vectorstore.ask")
+        self.assertEqual(answer["text"], "real grounded answer")
+        self.assertEqual(answer["citations"][0]["node_id"], "node-1")
 
 
 if __name__ == "__main__":

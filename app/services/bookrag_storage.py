@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from concurrent.futures import ThreadPoolExecutor
 import json
 import re
 import uuid
@@ -13,6 +14,7 @@ from app.services.bookrag_schema import (
     BOOKRAG_DOCUMENT_COLUMNS,
     BOOKRAG_ENTITY_COLUMNS,
     BOOKRAG_ENTITY_LINK_COLUMNS,
+    BOOKRAG_ENTITY_RELATION_COLUMNS,
     BOOKRAG_INSERT_BATCH_MAX_ROWS,
     BOOKRAG_INSERT_BATCH_MAX_SQL_CHARS,
     BOOKRAG_NODE_COLUMNS,
@@ -516,6 +518,17 @@ def _supports_fastload(columns: list[tuple[str, str]]) -> bool:
     return True
 
 
+def _record_csv_future_result(csv_future, stats: dict[str, int] | None) -> None:
+    csv_file = None
+    try:
+        csv_file = csv_future.result()
+    except Exception:
+        if stats is not None:
+            stats["csv_write_failures"] += 1
+    if stats is not None and csv_file and csv_file not in stats["csv_files"]:
+        stats["csv_files"].append(csv_file)
+
+
 def _insert_rows(
     schema_name: str | None,
     table_name: str,
@@ -524,12 +537,9 @@ def _insert_rows(
     execute_sql_fn: ExecuteSqlFn | None,
     csv_stage_dir: Path | None = None,
     stats: dict[str, int] | None = None,
+    csv_executor: ThreadPoolExecutor | None = None,
+    pending_csv_futures: list[Any] | None = None,
 ) -> int:
-    csv_file = _write_rows_csv(csv_stage_dir, table_name, rows, columns)
-    if stats is not None and csv_file:
-        stats.setdefault("csv_files", [])
-        if csv_file not in stats["csv_files"]:
-            stats["csv_files"].append(csv_file)
     if execute_sql_fn is None:
         raise RuntimeError("teradataml.execute_sql is unavailable.")
     if not rows:
@@ -537,6 +547,9 @@ def _insert_rows(
     qualified_table = _qualified_table_sql(schema_name, table_name)
     column_names = [name for name, _ in columns]
     inserted = 0
+    active_csv_executor = csv_executor
+    owned_csv_executor = False
+    csv_future = None
 
     if stats is not None:
         stats.setdefault("fastload_calls", 0)
@@ -551,53 +564,74 @@ def _insert_rows(
         stats.setdefault("batch_rows", 0)
         stats.setdefault("fallback_rows", 0)
         stats.setdefault("fallback_batches", 0)
+        stats.setdefault("csv_files", [])
+        stats.setdefault("csv_write_failures", 0)
+        stats.setdefault("csv_parallel_calls", 0)
 
-    if _supports_fastload(columns):
-        try:
-            inserted += _fastload_rows(schema_name, table_name, rows, columns)
-            if stats is not None:
-                stats["fastload_calls"] += 1
-                stats["fastload_rows"] += len(rows)
-            return inserted
-        except Exception:
-            if stats is not None:
-                stats["fastload_fallbacks"] += 1
-    elif stats is not None:
-        stats["fastload_skipped"] += 1
+    if csv_stage_dir is not None:
+        if active_csv_executor is None:
+            active_csv_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="bookrag-csv")
+            owned_csv_executor = True
+        csv_future = active_csv_executor.submit(_write_rows_csv, csv_stage_dir, table_name, rows, columns)
+        if stats is not None:
+            stats["csv_parallel_calls"] += 1
 
-    if len(rows) > 1:
-        try:
-            inserted += _copy_rows_to_sql(schema_name, table_name, rows, columns)
-            if stats is not None:
-                stats["copy_to_sql_calls"] += 1
-                stats["copy_to_sql_rows"] += len(rows)
-            return inserted
-        except Exception:
-            if stats is not None:
-                stats["copy_to_sql_fallbacks"] += 1
-
-    for batch in _iter_insert_batches(rows, columns):
-        if len(batch) == 1:
-            execute_sql_fn(_single_insert_sql(qualified_table, column_names, batch[0]))
-            inserted += 1
-            if stats is not None:
-                stats["single_row_statements"] += 1
-            continue
-        try:
-            execute_sql_fn(_batch_insert_sql(qualified_table, batch, columns))
-            inserted += len(batch)
-            if stats is not None:
-                stats["batch_statements"] += 1
-                stats["batch_rows"] += len(batch)
-        except Exception:
-            if stats is not None:
-                stats["fallback_batches"] += 1
-                stats["fallback_rows"] += len(batch)
-            for row in batch:
-                execute_sql_fn(_single_insert_sql(qualified_table, column_names, row))
-                inserted += 1
+    try:
+        if _supports_fastload(columns):
+            try:
+                inserted += _fastload_rows(schema_name, table_name, rows, columns)
                 if stats is not None:
-                    stats["single_row_statements"] += 1
+                    stats["fastload_calls"] += 1
+                    stats["fastload_rows"] += len(rows)
+            except Exception:
+                if stats is not None:
+                    stats["fastload_fallbacks"] += 1
+        elif stats is not None:
+            stats["fastload_skipped"] += 1
+
+        if inserted == 0 and len(rows) > 1:
+            try:
+                inserted += _copy_rows_to_sql(schema_name, table_name, rows, columns)
+                if stats is not None:
+                    stats["copy_to_sql_calls"] += 1
+                    stats["copy_to_sql_rows"] += len(rows)
+            except Exception:
+                if stats is not None:
+                    stats["copy_to_sql_fallbacks"] += 1
+
+        if inserted == 0:
+            for batch in _iter_insert_batches(rows, columns):
+                if len(batch) == 1:
+                    execute_sql_fn(_single_insert_sql(qualified_table, column_names, batch[0]))
+                    inserted += 1
+                    if stats is not None:
+                        stats["single_row_statements"] += 1
+                    continue
+                try:
+                    execute_sql_fn(_batch_insert_sql(qualified_table, batch, columns))
+                    inserted += len(batch)
+                    if stats is not None:
+                        stats["batch_statements"] += 1
+                        stats["batch_rows"] += len(batch)
+                except Exception:
+                    if stats is not None:
+                        stats["fallback_batches"] += 1
+                        stats["fallback_rows"] += len(batch)
+                    for row in batch:
+                        execute_sql_fn(_single_insert_sql(qualified_table, column_names, row))
+                        inserted += 1
+                        if stats is not None:
+                            stats["single_row_statements"] += 1
+    finally:
+        if csv_future is not None:
+            if pending_csv_futures is not None and not owned_csv_executor:
+                pending_csv_futures.append(csv_future)
+            else:
+                try:
+                    _record_csv_future_result(csv_future, stats)
+                finally:
+                    if owned_csv_executor and active_csv_executor is not None:
+                        active_csv_executor.shutdown(wait=False)
     return inserted
 
 
@@ -610,6 +644,7 @@ def persist_bookrag_tree(
     nodes: list[dict[str, Any]],
     entities: list[dict[str, Any]],
     entity_links: list[dict[str, Any]],
+    entity_relations: list[dict[str, Any]],
     execute_sql_fn: ExecuteSqlFn | None,
     csv_stage_dir: Path | None = None,
     stats: dict[str, int] | None = None,
@@ -622,6 +657,7 @@ def persist_bookrag_tree(
         nodes=nodes,
         entities=entities,
         entity_links=entity_links,
+        entity_relations=entity_relations,
         execute_sql_fn=execute_sql_fn,
         csv_stage_dir=csv_stage_dir,
         stats=stats,
@@ -637,16 +673,88 @@ def persist_bookrag_dataset(
     nodes: list[dict[str, Any]],
     entities: list[dict[str, Any]],
     entity_links: list[dict[str, Any]],
+    entity_relations: list[dict[str, Any]],
     execute_sql_fn: ExecuteSqlFn | None,
     csv_stage_dir: Path | None = None,
     stats: dict[str, int] | None = None,
 ) -> int:
     inserted = 0
-    inserted += _insert_rows(schema_name, table_targets["documents"], document_rows, BOOKRAG_DOCUMENT_COLUMNS, execute_sql_fn, csv_stage_dir=csv_stage_dir, stats=stats)
-    inserted += _insert_rows(schema_name, table_targets["nodes"], nodes, BOOKRAG_NODE_COLUMNS, execute_sql_fn, csv_stage_dir=csv_stage_dir, stats=stats)
-    inserted += _insert_rows(schema_name, table_targets["entities"], entities, BOOKRAG_ENTITY_COLUMNS, execute_sql_fn, csv_stage_dir=csv_stage_dir, stats=stats)
-    inserted += _insert_rows(schema_name, table_targets["entity_links"], entity_links, BOOKRAG_ENTITY_LINK_COLUMNS, execute_sql_fn, csv_stage_dir=csv_stage_dir, stats=stats)
-    inserted += _insert_rows(schema_name, table_targets["blocks"], blocks, BOOKRAG_BLOCK_COLUMNS, execute_sql_fn, csv_stage_dir=csv_stage_dir, stats=stats)
+    csv_executor: ThreadPoolExecutor | None = None
+    pending_csv_futures: list[Any] = []
+    if csv_stage_dir is not None:
+        csv_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="bookrag-csv")
+    try:
+        inserted += _insert_rows(
+            schema_name,
+            table_targets["documents"],
+            document_rows,
+            BOOKRAG_DOCUMENT_COLUMNS,
+            execute_sql_fn,
+            csv_stage_dir=csv_stage_dir,
+            stats=stats,
+            csv_executor=csv_executor,
+            pending_csv_futures=pending_csv_futures,
+        )
+        inserted += _insert_rows(
+            schema_name,
+            table_targets["nodes"],
+            nodes,
+            BOOKRAG_NODE_COLUMNS,
+            execute_sql_fn,
+            csv_stage_dir=csv_stage_dir,
+            stats=stats,
+            csv_executor=csv_executor,
+            pending_csv_futures=pending_csv_futures,
+        )
+        inserted += _insert_rows(
+            schema_name,
+            table_targets["entities"],
+            entities,
+            BOOKRAG_ENTITY_COLUMNS,
+            execute_sql_fn,
+            csv_stage_dir=csv_stage_dir,
+            stats=stats,
+            csv_executor=csv_executor,
+            pending_csv_futures=pending_csv_futures,
+        )
+        inserted += _insert_rows(
+            schema_name,
+            table_targets["entity_links"],
+            entity_links,
+            BOOKRAG_ENTITY_LINK_COLUMNS,
+            execute_sql_fn,
+            csv_stage_dir=csv_stage_dir,
+            stats=stats,
+            csv_executor=csv_executor,
+            pending_csv_futures=pending_csv_futures,
+        )
+        inserted += _insert_rows(
+            schema_name,
+            table_targets["entity_relations"],
+            entity_relations,
+            BOOKRAG_ENTITY_RELATION_COLUMNS,
+            execute_sql_fn,
+            csv_stage_dir=csv_stage_dir,
+            stats=stats,
+            csv_executor=csv_executor,
+            pending_csv_futures=pending_csv_futures,
+        )
+        inserted += _insert_rows(
+            schema_name,
+            table_targets["blocks"],
+            blocks,
+            BOOKRAG_BLOCK_COLUMNS,
+            execute_sql_fn,
+            csv_stage_dir=csv_stage_dir,
+            stats=stats,
+            csv_executor=csv_executor,
+            pending_csv_futures=pending_csv_futures,
+        )
+    finally:
+        for csv_future in pending_csv_futures:
+            _record_csv_future_result(csv_future, stats)
+        if csv_executor is not None:
+            csv_executor.shutdown(wait=False)
     return inserted
 
 
@@ -684,6 +792,66 @@ def persist_bookrag_nodes(
         table_targets["nodes"],
         nodes,
         BOOKRAG_NODE_COLUMNS,
+        execute_sql_fn,
+        csv_stage_dir=csv_stage_dir,
+        stats=stats,
+    )
+
+
+def persist_bookrag_entities(
+    *,
+    schema_name: str | None,
+    table_targets: dict[str, str],
+    entities: list[dict[str, Any]],
+    execute_sql_fn: ExecuteSqlFn | None,
+    csv_stage_dir: Path | None = None,
+    stats: dict[str, int] | None = None,
+) -> int:
+    return _insert_rows(
+        schema_name,
+        table_targets["entities"],
+        entities,
+        BOOKRAG_ENTITY_COLUMNS,
+        execute_sql_fn,
+        csv_stage_dir=csv_stage_dir,
+        stats=stats,
+    )
+
+
+def persist_bookrag_entity_links(
+    *,
+    schema_name: str | None,
+    table_targets: dict[str, str],
+    entity_links: list[dict[str, Any]],
+    execute_sql_fn: ExecuteSqlFn | None,
+    csv_stage_dir: Path | None = None,
+    stats: dict[str, int] | None = None,
+) -> int:
+    return _insert_rows(
+        schema_name,
+        table_targets["entity_links"],
+        entity_links,
+        BOOKRAG_ENTITY_LINK_COLUMNS,
+        execute_sql_fn,
+        csv_stage_dir=csv_stage_dir,
+        stats=stats,
+    )
+
+
+def persist_bookrag_entity_relations(
+    *,
+    schema_name: str | None,
+    table_targets: dict[str, str],
+    entity_relations: list[dict[str, Any]],
+    execute_sql_fn: ExecuteSqlFn | None,
+    csv_stage_dir: Path | None = None,
+    stats: dict[str, int] | None = None,
+) -> int:
+    return _insert_rows(
+        schema_name,
+        table_targets["entity_relations"],
+        entity_relations,
+        BOOKRAG_ENTITY_RELATION_COLUMNS,
         execute_sql_fn,
         csv_stage_dir=csv_stage_dir,
         stats=stats,

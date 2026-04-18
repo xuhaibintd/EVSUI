@@ -4,7 +4,7 @@ from app.services.multi_format import apply_multi_format_pipeline
 
 MODE = "multi_format_bookrag"
 LABEL = "Multi-Format BookRAG"
-SKIP_VECTORSTORE_CREATE = True
+SKIP_VECTORSTORE_CREATE = False
 
 
 def preprocess_create_payload(**kwargs) -> tuple[dict, dict | None]:
@@ -17,6 +17,32 @@ def preprocess_create_payload(**kwargs) -> tuple[dict, dict | None]:
         resolve_path_hint=kwargs["resolve_path_hint"],
         pipeline_mode=MODE,
     )
+
+
+def append_success_message(message: str, summary: dict | None) -> str:
+    if not summary:
+        return message
+
+    nodes_table_name = str(summary.get("nodes_table_name") or "").strip()
+    node_count = summary.get("node_count")
+    entity_count = summary.get("entity_count")
+    entity_relation_count = summary.get("entity_relation_count")
+    parts = [message]
+    if nodes_table_name:
+        if node_count is not None:
+            parts.append(f"BookRAG nodes source={nodes_table_name} ({node_count} rows).")
+        else:
+            parts.append(f"BookRAG nodes source={nodes_table_name}.")
+    if entity_count is not None or entity_relation_count is not None:
+        detail = []
+        if entity_count is not None:
+            detail.append(f"entities={entity_count}")
+        if entity_relation_count is not None:
+            detail.append(f"relations={entity_relation_count}")
+        if detail:
+            parts.append("BookRAG graph: " + ", ".join(detail) + ".")
+    parts.append("VectorStore.create() uses bnode.content with key_columns=node_id.")
+    return " ".join(parts)
 
 
 def build_skip_create_message(summary: dict | None) -> str:
@@ -57,4 +83,3 @@ def build_skip_create_message(summary: dict | None) -> str:
     if count_parts:
         parts.append("Counts: " + ", ".join(count_parts) + ".")
     return " ".join(parts)
-

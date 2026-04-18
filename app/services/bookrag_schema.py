@@ -121,6 +121,23 @@ BOOKRAG_ENTITY_LINK_COLUMNS: list[tuple[str, str]] = [
     ("section_path", "VARCHAR(2000) CHARACTER SET UNICODE"),
 ]
 
+BOOKRAG_ENTITY_RELATION_COLUMNS: list[tuple[str, str]] = [
+    ("relation_id", 'VARCHAR(64) NOT NULL'),
+    ("doc_id", "VARCHAR(64)"),
+    ("source_block_id", "VARCHAR(64)"),
+    ("source_node_id", "VARCHAR(64)"),
+    ("section_node_id", "VARCHAR(64)"),
+    ("from_entity_id", "VARCHAR(64)"),
+    ("from_entity_text", "VARCHAR(1000) CHARACTER SET UNICODE"),
+    ("relationship", "VARCHAR(100) CHARACTER SET UNICODE"),
+    ("to_entity_id", "VARCHAR(64)"),
+    ("to_entity_text", "VARCHAR(1000) CHARACTER SET UNICODE"),
+    ("page_start", "INTEGER"),
+    ("page_end", "INTEGER"),
+    ("ordinal", "INTEGER"),
+    ("section_path", "VARCHAR(2000) CHARACTER SET UNICODE"),
+]
+
 
 def _sanitize_identifier(raw: str, fallback: str) -> str:
     candidate = re.sub(r"[^0-9A-Za-z_]", "_", str(raw or "").strip())
@@ -156,6 +173,7 @@ def build_bookrag_table_targets(vector_store_name: str) -> dict[str, str]:
         "nodes": _with_suffix(base_name, "bnode"),
         "entities": _with_suffix(base_name, "bent"),
         "entity_links": _with_suffix(base_name, "belnk"),
+        "entity_relations": _with_suffix(base_name, "brel"),
         "leaf_nodes": _with_suffix(base_name, "bleaf"),
     }
 
@@ -204,6 +222,7 @@ def prepare_bookrag_tables(
     warnings.extend(_ensure_table(schema_name, table_targets["nodes"], BOOKRAG_NODE_COLUMNS, execute_sql_fn))
     warnings.extend(_ensure_table(schema_name, table_targets["entities"], BOOKRAG_ENTITY_COLUMNS, execute_sql_fn))
     warnings.extend(_ensure_table(schema_name, table_targets["entity_links"], BOOKRAG_ENTITY_LINK_COLUMNS, execute_sql_fn))
+    warnings.extend(_ensure_table(schema_name, table_targets["entity_relations"], BOOKRAG_ENTITY_RELATION_COLUMNS, execute_sql_fn))
     return warnings
 
 
@@ -224,6 +243,36 @@ def prepare_bookrag_node_table(
 ) -> list[str]:
     warnings: list[str] = []
     warnings.extend(_ensure_table(schema_name, table_targets["nodes"], BOOKRAG_NODE_COLUMNS, execute_sql_fn))
+    return warnings
+
+
+def prepare_bookrag_entity_table(
+    schema_name: str | None,
+    table_targets: dict[str, str],
+    execute_sql_fn: ExecuteSqlFn | None,
+) -> list[str]:
+    warnings: list[str] = []
+    warnings.extend(_ensure_table(schema_name, table_targets["entities"], BOOKRAG_ENTITY_COLUMNS, execute_sql_fn))
+    return warnings
+
+
+def prepare_bookrag_entity_link_table(
+    schema_name: str | None,
+    table_targets: dict[str, str],
+    execute_sql_fn: ExecuteSqlFn | None,
+) -> list[str]:
+    warnings: list[str] = []
+    warnings.extend(_ensure_table(schema_name, table_targets["entity_links"], BOOKRAG_ENTITY_LINK_COLUMNS, execute_sql_fn))
+    return warnings
+
+
+def prepare_bookrag_entity_relation_table(
+    schema_name: str | None,
+    table_targets: dict[str, str],
+    execute_sql_fn: ExecuteSqlFn | None,
+) -> list[str]:
+    warnings: list[str] = []
+    warnings.extend(_ensure_table(schema_name, table_targets["entity_relations"], BOOKRAG_ENTITY_RELATION_COLUMNS, execute_sql_fn))
     return warnings
 
 

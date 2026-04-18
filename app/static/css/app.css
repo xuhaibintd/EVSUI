@@ -706,6 +706,11 @@ button.ghost.monitor-btn-list:disabled {
   border-color: #e0e3e7;
   background: #ffffff;
   color: #1a1a1a !important;
+  line-height: 1.35;
+  max-height: calc(1.35em * 3 + 0.9rem);
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
 }
 
 .top-op-line.ok {

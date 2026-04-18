@@ -37,10 +37,14 @@ from app.services.unstructured_runtime import (
 )
 
 from app.services.bookrag_reconcile import reconcile_unstructured_elements
+from app.services.bookrag_graph import build_bookrag_entities
 from app.services.bookrag_schema import (
     build_bookrag_table_targets,
     prepare_bookrag_block_table,
     prepare_bookrag_document_table,
+    prepare_bookrag_entity_link_table,
+    prepare_bookrag_entity_relation_table,
+    prepare_bookrag_entity_table,
     prepare_bookrag_node_table,
     prepare_bookrag_raw_table,
 )
@@ -50,6 +54,9 @@ from app.services.bookrag_storage import (
     build_bookrag_raw_rows,
     load_bookrag_raw_stage_file,
     persist_bookrag_blocks,
+    persist_bookrag_entities,
+    persist_bookrag_entity_links,
+    persist_bookrag_entity_relations,
     persist_bookrag_nodes,
     persist_bookrag_documents,
     persist_bookrag_raw_rows,
@@ -1249,6 +1256,27 @@ def _apply_bookrag_tree_pipeline(
             execute_sql_fn=execute_sql_fn,
         )
     )
+    target_warnings.extend(
+        prepare_bookrag_entity_table(
+            schema_name=effective_schema_name,
+            table_targets=bookrag_tables,
+            execute_sql_fn=execute_sql_fn,
+        )
+    )
+    target_warnings.extend(
+        prepare_bookrag_entity_link_table(
+            schema_name=effective_schema_name,
+            table_targets=bookrag_tables,
+            execute_sql_fn=execute_sql_fn,
+        )
+    )
+    target_warnings.extend(
+        prepare_bookrag_entity_relation_table(
+            schema_name=effective_schema_name,
+            table_targets=bookrag_tables,
+            execute_sql_fn=execute_sql_fn,
+        )
+    )
     image_partition_parameters, image_partition_warnings, image_partition_summary = _resolve_bookrag_image_partition_options(create_values)
     target_warnings.extend(image_partition_warnings)
 
@@ -1267,15 +1295,24 @@ def _apply_bookrag_tree_pipeline(
     raw_insert_stats: dict[str, int] = {}
     block_insert_stats: dict[str, int] = {}
     node_insert_stats: dict[str, int] = {}
+    entity_insert_stats: dict[str, int] = {}
+    entity_link_insert_stats: dict[str, int] = {}
+    entity_relation_insert_stats: dict[str, int] = {}
     inserted_rows = 0
     raw_element_count = 0
     block_count = 0
     node_count = 0
+    entity_count = 0
+    entity_link_count = 0
+    entity_relation_count = 0
     document_count = 0
     document_rows: list[dict[str, Any]] = []
     all_raw_rows: list[dict[str, Any]] = []
     all_blocks: list[dict[str, Any]] = []
     all_nodes: list[dict[str, Any]] = []
+    all_entities: list[dict[str, Any]] = []
+    all_entity_links: list[dict[str, Any]] = []
+    all_entity_relations: list[dict[str, Any]] = []
 
     qualified_tables = {
         name: (f"{effective_schema_name}.{table_name}" if effective_schema_name else table_name)
@@ -1350,6 +1387,7 @@ def _apply_bookrag_tree_pipeline(
             raw_elements=reconciled_elements,
         )
         nodes = build_bookrag_nodes(document_row, blocks)
+        entities, entity_links, entity_relations = build_bookrag_entities(document_row, reconciled_elements, nodes)
         debug_file = _write_unstructured_debug_file(
             debug_dir,
             src,
@@ -1371,6 +1409,9 @@ def _apply_bookrag_tree_pipeline(
                 "raw_element_count_after_reconcile": len(reconciled_elements),
                 "block_count": len(blocks),
                 "node_count": len(nodes),
+                "entity_count": len(entities),
+                "entity_link_count": len(entity_links),
+                "entity_relation_count": len(entity_relations),
             },
         )
         if debug_file:
@@ -1383,10 +1424,16 @@ def _apply_bookrag_tree_pipeline(
         all_raw_rows.extend(raw_rows)
         all_blocks.extend(blocks)
         all_nodes.extend(nodes)
+        all_entities.extend(entities)
+        all_entity_links.extend(entity_links)
+        all_entity_relations.extend(entity_relations)
         document_count += 1
         raw_element_count += len(raw_rows)
         block_count += len(blocks)
         node_count += len(nodes)
+        entity_count += len(entities)
+        entity_link_count += len(entity_links)
+        entity_relation_count += len(entity_relations)
 
     inserted_rows += persist_bookrag_documents(
         schema_name=effective_schema_name,
@@ -1420,6 +1467,30 @@ def _apply_bookrag_tree_pipeline(
         csv_stage_dir=csv_stage_dir,
         stats=node_insert_stats,
     )
+    inserted_rows += persist_bookrag_entities(
+        schema_name=effective_schema_name,
+        table_targets=bookrag_tables,
+        entities=all_entities,
+        execute_sql_fn=execute_sql_fn,
+        csv_stage_dir=csv_stage_dir,
+        stats=entity_insert_stats,
+    )
+    inserted_rows += persist_bookrag_entity_links(
+        schema_name=effective_schema_name,
+        table_targets=bookrag_tables,
+        entity_links=all_entity_links,
+        execute_sql_fn=execute_sql_fn,
+        csv_stage_dir=csv_stage_dir,
+        stats=entity_link_insert_stats,
+    )
+    inserted_rows += persist_bookrag_entity_relations(
+        schema_name=effective_schema_name,
+        table_targets=bookrag_tables,
+        entity_relations=all_entity_relations,
+        execute_sql_fn=execute_sql_fn,
+        csv_stage_dir=csv_stage_dir,
+        stats=entity_relation_insert_stats,
+    )
 
     persisted_raw_count = _count_teradata_rows(
         schema_name=effective_schema_name,
@@ -1436,6 +1507,17 @@ def _apply_bookrag_tree_pipeline(
 
     patched_payload = _strip_file_based_create_params(exec_payload)
     patched_payload["object_names"] = qualified_tables["nodes"]
+    patched_payload["data_columns"] = ["content"]
+    patched_payload["key_columns"] = ["node_id"]
+    patched_payload.pop("vector_column", None)
+    description_text = str(patched_payload.get("description") or "").strip()
+    description_low = description_text.lower()
+    if "unstructured_bookrag_flg" not in description_low:
+        patched_payload["description"] = (
+            f"{description_text} unstructured_bookrag_flg".strip() if description_text else "unstructured_bookrag_flg"
+        )
+    else:
+        patched_payload["description"] = description_text
 
     summary = {
         "table_name": "",
@@ -1443,9 +1525,19 @@ def _apply_bookrag_tree_pipeline(
         "raw_table_name": qualified_tables["raw"],
         "blocks_table_name": qualified_tables["blocks"],
         "nodes_table_name": qualified_tables["nodes"],
+        "entities_table_name": qualified_tables["entities"],
+        "entity_links_table_name": qualified_tables["entity_links"],
+        "entity_relations_table_name": qualified_tables["entity_relations"],
+        "leaf_nodes_table_name": qualified_tables["leaf_nodes"],
+        "vectorstore_source_object": qualified_tables["nodes"],
+        "vectorstore_data_columns": ["content"],
+        "vectorstore_key_columns": ["node_id"],
         "raw_element_count": persisted_raw_count,
         "block_count": block_count,
         "node_count": node_count,
+        "entity_count": entity_count,
+        "entity_link_count": entity_link_count,
+        "entity_relation_count": entity_relation_count,
         "document_count": document_count,
         "job_id": job_ids[-1] if job_ids else "",
         "job_ids": job_ids,
@@ -1471,6 +1563,9 @@ def _apply_bookrag_tree_pipeline(
         "bookrag_raw_insert_stats": raw_insert_stats,
         "bookrag_block_insert_stats": block_insert_stats,
         "bookrag_node_insert_stats": node_insert_stats,
+        "bookrag_entity_insert_stats": entity_insert_stats,
+        "bookrag_entity_link_insert_stats": entity_link_insert_stats,
+        "bookrag_entity_relation_insert_stats": entity_relation_insert_stats,
         "bookrag_insert_stats": raw_insert_stats,
         "bookrag_image_partition_parameters": image_partition_summary,
         "bookrag_chunking_strategy": "disabled_for_tree_debug",

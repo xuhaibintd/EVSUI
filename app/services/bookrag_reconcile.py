@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import copy
+import json
 import logging
 import re
 import uuid
@@ -177,6 +178,49 @@ def _copy_element(element: dict[str, Any]) -> dict[str, Any]:
     return copy.deepcopy(element)
 
 
+def _merge_entities_metadata(target: dict[str, Any], sources: list[dict[str, Any]]) -> None:
+    items: list[dict[str, Any]] = []
+    relationships: list[dict[str, Any]] = []
+    seen_items: set[str] = set()
+    seen_relationships: set[str] = set()
+
+    for source in sources:
+        metadata = source.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        entities = metadata.get("entities")
+        if not isinstance(entities, dict):
+            continue
+        raw_items = entities.get("items")
+        if isinstance(raw_items, list):
+            for item in raw_items:
+                if not isinstance(item, dict):
+                    continue
+                key = json.dumps(item, ensure_ascii=False, sort_keys=True)
+                if key in seen_items:
+                    continue
+                seen_items.add(key)
+                items.append(copy.deepcopy(item))
+        raw_relationships = entities.get("relationships")
+        if isinstance(raw_relationships, list):
+            for relationship in raw_relationships:
+                if not isinstance(relationship, dict):
+                    continue
+                key = json.dumps(relationship, ensure_ascii=False, sort_keys=True)
+                if key in seen_relationships:
+                    continue
+                seen_relationships.add(key)
+                relationships.append(copy.deepcopy(relationship))
+
+    if not items and not relationships:
+        return
+    metadata = _metadata(target)
+    metadata["entities"] = {
+        "items": items,
+        "relationships": relationships,
+    }
+
+
 def _attach_table_captions(elements: list[dict[str, Any]]) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     index = 0
@@ -203,6 +247,7 @@ def _attach_table_captions(elements: list[dict[str, Any]]) -> list[dict[str, Any
                 )
                 metadata = _metadata(candidate_copy)
                 metadata["bookrag_table_caption"] = current_text
+                _merge_entities_metadata(candidate_copy, [candidate, current])
                 result.append(candidate_copy)
                 index = candidate_index + 1
                 attached = True
@@ -307,6 +352,7 @@ def _merge_table_notes(elements: list[dict[str, Any]], page_lines: dict[int, lis
                 table_copy["text"] = merged_text
                 metadata = _metadata(table_copy)
                 metadata["bookrag_table_note"] = note_text
+                _merge_entities_metadata(table_copy, [current, *fragments])
                 _set_bbox(table_copy, _union_bbox([table_copy, *fragments]))
                 skip.update(note_indices)
         result.append(table_copy)
@@ -316,6 +362,7 @@ def _merge_table_notes(elements: list[dict[str, Any]], page_lines: dict[int, lis
 def _build_merged_image(
     elements: list[dict[str, Any]],
     fragment_indices: list[int],
+    caption: dict[str, Any],
     caption_text: str,
 ) -> dict[str, Any]:
     image_indices = [index for index in fragment_indices if _element_type(elements[index]) == "Image"]
@@ -331,6 +378,7 @@ def _build_merged_image(
         metadata["bookrag_image_context"] = context_text
     metadata["bookrag_merged_image_count"] = len(image_indices)
     merged["text"] = caption_text
+    _merge_entities_metadata(merged, [elements[index] for index in fragment_indices] + [caption])
     _set_bbox(merged, _union_bbox([elements[index] for index in fragment_indices]))
     return merged
 
@@ -375,7 +423,7 @@ def _merge_figure_fragments(elements: list[dict[str, Any]]) -> list[dict[str, An
                 fragment_indices = [previous_index]
         if not fragment_indices:
             continue
-        merged_by_index[fragment_indices[0]] = _build_merged_image(elements, fragment_indices, current_text or "")
+        merged_by_index[fragment_indices[0]] = _build_merged_image(elements, fragment_indices, current, current_text or "")
         consumed.update(fragment_indices)
         consumed.add(index)
 
