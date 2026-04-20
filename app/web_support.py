@@ -25,7 +25,7 @@ from app.services.create_config import (
 )
 from app.services.doc_modes.constants import DOC_PIPELINE_OPTIONS
 from app.services.doc_modes.ui_fields import build_multi_format_bookrag_ui_fields, build_multi_format_ui_fields
-from app.services.precision_eval import build_precision_eval_panel_context
+from app.services.precision_eval import build_precision_eval_panel_context, build_precision_eval_prototype_context
 from app.session_state import (
     activate_session_state,
     current_user,
@@ -546,6 +546,7 @@ def _build_home_context(request: Request, app) -> dict:
         "document_upload_error": "",
         "document_upload_notices": app.state.document_upload_notices,
         "eval_panel": build_precision_eval_panel_context(document_root=DOCUMENT_UPLOAD_DIR, debug_root=DEBUG_UPLOAD_DIR),
+        "precision_eval_prototype": build_precision_eval_prototype_context(),
         "precision_eval_result": None,
         "logged_in": _is_logged_in(request, app),
         "username": username,

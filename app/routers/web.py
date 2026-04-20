@@ -16,6 +16,7 @@ from app.runtime import (
 )
 from app.services.precision_eval import (
     build_precision_eval_panel_context,
+    build_precision_eval_prototype_context,
     build_precision_eval_report,
     resolve_precision_eval_path,
 )
@@ -717,6 +718,7 @@ async def precision_eval_panel(
         "partials/precision_eval_panel.html",
         {
             "eval_panel": build_precision_eval_panel_context(document_root=DOCUMENT_UPLOAD_DIR, debug_root=DEBUG_UPLOAD_DIR, selected_pdf_path=pdf_path, selected_json_path=json_path),
+            "precision_eval_prototype": build_precision_eval_prototype_context(),
             "precision_eval_result": None,
         },
     )

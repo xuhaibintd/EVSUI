@@ -1,103 +1,307 @@
-<div id="precision-eval-panel" class="stack precision-eval-panel">
-  <p class="muted">Independent evaluation module. It reads uploaded PDFs and Unstructured stage JSON files without changing Steps 1-3 state.</p>
-
-  <form
-    id="precision-eval-form"
-    class="stack"
-    hx-post="/ui/eval/run"
-    hx-target="#precision-eval-result"
-    hx-swap="innerHTML"
-  >
-    <section class="param-group">
-      <div class="stack-inline precision-panel-head">
-        <h3 class="precision-panel-title">Precision Evaluation Inputs</h3>
-        <button
-          type="button"
-          class="ghost"
-          hx-get="/ui/eval/panel"
-          hx-include="#precision-eval-form"
-          hx-target="#precision-eval-panel"
-          hx-swap="outerHTML"
-        >Refresh File List</button>
+<div id="precision-eval-panel" class="stack precision-prototype">
+  <section class="precision-hero precision-card">
+    <div class="precision-hero-copy">
+      <p class="eyebrow">Prototype</p>
+      <h2>{{ precision_eval_prototype.summary.title }}</h2>
+      <p class="muted">{{ precision_eval_prototype.summary.subtitle }}</p>
+    </div>
+    <div class="precision-summary-grid">
+      <div class="precision-summary-card">
+        <span>Query Set</span>
+        <strong>{{ precision_eval_prototype.summary.sample_size }}</strong>
       </div>
-      <div class="basic-layout">
-        <div class="stack">
-          <label class="field">
-            <span class="field-label">Uploaded PDF</span>
-            <select name="pdf_path" required>
-              <option value="">(select uploaded PDF)</option>
-              {% for item in eval_panel.pdf_options %}
-              <option value="{{ item.path }}" {% if eval_panel.selected_pdf_path == item.path %}selected{% endif %}>{{ item.name }} | {{ item.relative_path }}</option>
-              {% endfor %}
-            </select>
-          </label>
-          <div class="precision-path-list">
-            <p class="uploaded-files-title">Available PDFs ({{ eval_panel.pdf_options|length }})</p>
-            {% if eval_panel.pdf_options %}
-            <ul class="file-list small">
-              {% for item in eval_panel.pdf_options %}
-              <li>
-                <div class="file-main">
-                  <strong>{{ item.name }}</strong>
-                  <span>{{ item.modified_at }}</span>
-                </div>
-                <code class="precision-path-code">{{ item.path }}</code>
-              </li>
-              {% endfor %}
-            </ul>
-            {% else %}
-            <p class="muted">No uploaded PDFs found under uploads/documents.</p>
-            {% endif %}
-          </div>
-        </div>
+      <div class="precision-summary-card">
+        <span>Retrieval Labels</span>
+        <strong>{{ precision_eval_prototype.summary.judgments }}</strong>
+      </div>
+      <div class="precision-summary-card">
+        <span>Answer Rubrics</span>
+        <strong>{{ precision_eval_prototype.summary.answer_set }}</strong>
+      </div>
+    </div>
+  </section>
 
-        <div class="stack">
-          <label class="field">
-            <span class="field-label">Intermediate JSON</span>
-            <select name="json_path" required>
-              <option value="">(select Unstructured stage JSON)</option>
-              {% for item in eval_panel.json_options %}
-              <option value="{{ item.path }}" {% if eval_panel.selected_json_path == item.path %}selected{% endif %}>{{ item.name }} | {{ item.relative_path }}</option>
-              {% endfor %}
-            </select>
-          </label>
-          <div class="precision-path-list">
-            <p class="uploaded-files-title">Available JSONs ({{ eval_panel.json_options|length }})</p>
-            {% if eval_panel.json_options %}
-            <ul class="file-list small">
-              {% for item in eval_panel.json_options %}
-              <li>
-                <div class="file-main">
-                  <strong>{{ item.name }}</strong>
-                  <span>{{ item.modified_at }}</span>
-                </div>
-                <code class="precision-path-code">{{ item.path }}</code>
-                {% if item.source_file %}
-                <p class="muted precision-source-file">JSON source_file: {{ item.source_file }}{% if not item.source_exists %} (missing on disk){% endif %}</p>
-                {% endif %}
-              </li>
-              {% endfor %}
-            </ul>
-            {% else %}
-            <p class="muted">No Unstructured stage JSON files found under uploads/multi_format_stage.</p>
-            {% endif %}
+  <div class="precision-tab-shell">
+    <input class="precision-tab-input" type="radio" name="precision-tab" id="precision-tab-retrieval" checked>
+    <input class="precision-tab-input" type="radio" name="precision-tab" id="precision-tab-answer">
+
+    <div class="precision-tab-nav">
+      <label class="precision-tab-btn" for="precision-tab-retrieval">Retrieval Accuracy</label>
+      <label class="precision-tab-btn" for="precision-tab-answer">Answer Quality</label>
+    </div>
+
+    <section class="precision-tab-panel precision-panel-retrieval">
+      <div class="precision-kpi-grid">
+        {% for item in precision_eval_prototype.retrieval.kpis %}
+        <article class="precision-kpi-card precision-card">
+          <p class="precision-kpi-label">{{ item.label }}</p>
+          <div class="precision-kpi-main">
+            <strong>{{ item.display }}</strong>
+            <span class="precision-delta {{ item.tone }}">{{ item.delta }}</span>
           </div>
+          <p class="muted">{{ item.description }}</p>
+        </article>
+        {% endfor %}
+      </div>
+
+      <div class="precision-main-grid">
+        <section class="precision-card">
+          <div class="precision-section-head">
+            <div>
+              <p class="eyebrow">Trend</p>
+              <h3>Build-over-Build Retrieval Improvement</h3>
+            </div>
+            <span class="precision-pill">TREC-style IR metrics</span>
+          </div>
+          <div class="precision-chart-shell">
+            <svg class="precision-line-chart" viewBox="{{ precision_eval_prototype.retrieval.trend_chart.viewbox }}" role="img" aria-label="Retrieval metric trend chart">
+              {% for tick in precision_eval_prototype.retrieval.trend_chart.y_ticks %}
+              <line x1="{{ precision_eval_prototype.retrieval.trend_chart.left }}" y1="{{ tick.y }}" x2="{{ precision_eval_prototype.retrieval.trend_chart.right }}" y2="{{ tick.y }}" class="precision-grid-line"></line>
+              <text x="18" y="{{ tick.y + 4 }}" class="precision-axis-label">{{ tick.value }}</text>
+              {% endfor %}
+              {% for tick in precision_eval_prototype.retrieval.trend_chart.x_ticks %}
+              <text x="{{ tick.x }}" y="{{ precision_eval_prototype.retrieval.trend_chart.bottom + 18 }}" text-anchor="middle" class="precision-axis-label">{{ tick.label }}</text>
+              {% endfor %}
+              {% for series in precision_eval_prototype.retrieval.trend_chart.series %}
+              <path d="{{ series.path }}" fill="none" stroke="{{ series.color }}" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></path>
+              {% for point in series.points %}
+              <circle cx="{{ point.cx }}" cy="{{ point.cy }}" r="5.5" fill="{{ series.color }}"></circle>
+              {% endfor %}
+              {% endfor %}
+            </svg>
+          </div>
+          <div class="precision-legend">
+            {% for series in precision_eval_prototype.retrieval.trend_chart.series %}
+            <span><i class="precision-legend-swatch" style="background: {{ series.color }}"></i>{{ series.name }}</span>
+            {% endfor %}
+          </div>
+        </section>
+
+        <div class="precision-side-stack">
+          <section class="precision-card">
+            <div class="precision-section-head compact">
+              <div>
+                <p class="eyebrow">Outcome Mix</p>
+                <h3>Ranked Result Composition</h3>
+              </div>
+            </div>
+            <div class="precision-mix-bar">
+              {% for band in precision_eval_prototype.retrieval.quality_bands %}
+              <span class="precision-mix-segment {{ band.tone }}" style="width: {{ band.width }}">{{ band.ratio_display }}</span>
+              {% endfor %}
+            </div>
+            <div class="precision-simple-list">
+              {% for band in precision_eval_prototype.retrieval.quality_bands %}
+              <div class="precision-simple-row">
+                <div class="precision-simple-main">
+                  <strong>{{ band.label }}</strong>
+                  <span>{{ band.count }} judged docs</span>
+                </div>
+                <strong>{{ band.ratio_display }}</strong>
+              </div>
+              {% endfor %}
+            </div>
+          </section>
+
+          <section class="precision-card">
+            <div class="precision-section-head compact">
+              <div>
+                <p class="eyebrow">Methodology</p>
+                <h3>Retrieval Evaluation Standard</h3>
+              </div>
+            </div>
+            <div class="precision-method-list">
+              {% for item in precision_eval_prototype.retrieval.methodology %}
+              <div class="precision-method-item">
+                <span class="precision-method-index">0{{ loop.index }}</span>
+                <p>{{ item }}</p>
+              </div>
+              {% endfor %}
+            </div>
+          </section>
         </div>
+      </div>
+
+      <div class="precision-bottom-grid">
+        <section class="precision-card">
+          <div class="precision-section-head compact">
+            <div>
+              <p class="eyebrow">Segments</p>
+              <h3>Performance by Document Intent</h3>
+            </div>
+          </div>
+          <div class="precision-segment-table">
+            {% for segment in precision_eval_prototype.retrieval.segments %}
+            <div class="precision-segment-row">
+              <div class="precision-segment-name">
+                <strong>{{ segment.name }}</strong>
+                <span>MRR {{ segment.mrr_display }} ? nDCG {{ segment.ndcg_display }}</span>
+              </div>
+              <div class="precision-meter-block">
+                <span class="precision-meter-label">P@5 {{ segment.precision_display }}</span>
+                <div class="precision-meter-track"><span class="precision-meter-fill precision" style="width: {{ segment.precision_percent }}%"></span></div>
+              </div>
+              <div class="precision-meter-block">
+                <span class="precision-meter-label">R@10 {{ segment.recall_display }}</span>
+                <div class="precision-meter-track"><span class="precision-meter-fill recall" style="width: {{ segment.recall_percent }}%"></span></div>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </section>
+
+        <section class="precision-card">
+          <div class="precision-section-head compact">
+            <div>
+              <p class="eyebrow">Sample Queries</p>
+              <h3>Representative Retrieval Outcomes</h3>
+            </div>
+          </div>
+          <div class="precision-note-list">
+            {% for item in precision_eval_prototype.retrieval.sample_queries %}
+            <article class="precision-note-card">
+              <div class="precision-note-head">
+                <strong>{{ item.query }}</strong>
+                <span class="precision-rank-badge">Rank {{ item.rank }}</span>
+              </div>
+              <p class="muted">Top document: {{ item.top_doc }}</p>
+              <div class="precision-note-metrics">
+                <span>P {{ item.precision_display }}</span>
+                <span>R {{ item.recall_display }}</span>
+              </div>
+              <p>{{ item.note }}</p>
+            </article>
+            {% endfor %}
+          </div>
+        </section>
       </div>
     </section>
 
-    <div class="stack-inline">
-      <button type="submit" class="progress-btn" data-progress-button>
-        <span class="progress-btn-label">Run Evaluation</span>
-        <span class="progress-btn-loading">
-          <span class="progress-btn-spinner" aria-hidden="true"></span>
-          <span>Evaluating...</span>
-        </span>
-      </button>
-    </div>
-  </form>
+    <section class="precision-tab-panel precision-panel-answer">
+      <div class="precision-kpi-grid">
+        {% for item in precision_eval_prototype.answer_quality.kpis %}
+        <article class="precision-kpi-card precision-card">
+          <p class="precision-kpi-label">{{ item.label }}</p>
+          <div class="precision-kpi-main">
+            <strong>{{ item.display }}</strong>
+            <span class="precision-delta {{ item.tone }}">{{ item.delta }}</span>
+          </div>
+          <p class="muted">{{ item.description }}</p>
+        </article>
+        {% endfor %}
+      </div>
 
-  <div id="precision-eval-result">
-    {% include "partials/precision_eval_result.html" %}
+      <div class="precision-main-grid">
+        <section class="precision-card">
+          <div class="precision-section-head">
+            <div>
+              <p class="eyebrow">Rubric Scores</p>
+              <h3>Answer Quality Breakdown</h3>
+            </div>
+            <span class="precision-pill">Evidence-grounded scoring</span>
+          </div>
+          <div class="precision-dimension-list">
+            {% for item in precision_eval_prototype.answer_quality.dimensions %}
+            <div class="precision-dimension-row">
+              <div class="precision-dimension-head">
+                <strong>{{ item.label }}</strong>
+                <span>{{ item.display }}</span>
+              </div>
+              <div class="precision-meter-track large"><span class="precision-meter-fill precision {{ item.tone }}" style="width: {{ item.percent }}%"></span></div>
+              <p class="muted">{{ item.note }}</p>
+            </div>
+            {% endfor %}
+          </div>
+        </section>
+
+        <div class="precision-side-stack">
+          <section class="precision-card">
+            <div class="precision-section-head compact">
+              <div>
+                <p class="eyebrow">Verdict Mix</p>
+                <h3>Rubric Outcome Distribution</h3>
+              </div>
+            </div>
+            <div class="precision-mix-bar">
+              {% for item in precision_eval_prototype.answer_quality.outcomes %}
+              <span class="precision-mix-segment {{ item.tone }}" style="width: {{ item.width }}">{{ item.ratio_display }}</span>
+              {% endfor %}
+            </div>
+            <div class="precision-simple-list">
+              {% for item in precision_eval_prototype.answer_quality.outcomes %}
+              <div class="precision-simple-row">
+                <div class="precision-simple-main">
+                  <strong>{{ item.label }}</strong>
+                  <span>{{ item.count }} judged answers</span>
+                </div>
+                <strong>{{ item.ratio_display }}</strong>
+              </div>
+              {% endfor %}
+            </div>
+          </section>
+
+          <section class="precision-card">
+            <div class="precision-section-head compact">
+              <div>
+                <p class="eyebrow">Methodology</p>
+                <h3>Answer Evaluation Standard</h3>
+              </div>
+            </div>
+            <div class="precision-method-list">
+              {% for item in precision_eval_prototype.answer_quality.methodology %}
+              <div class="precision-method-item">
+                <span class="precision-method-index">0{{ loop.index }}</span>
+                <p>{{ item }}</p>
+              </div>
+              {% endfor %}
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <div class="precision-bottom-grid">
+        <section class="precision-card">
+          <div class="precision-section-head compact">
+            <div>
+              <p class="eyebrow">Score Matrix</p>
+              <h3>Quality by Question Slice</h3>
+            </div>
+          </div>
+          <div class="precision-heatmap-table">
+            <div class="precision-heatmap-header metric">Question Slice</div>
+            <div class="precision-heatmap-header">Correctness</div>
+            <div class="precision-heatmap-header">Groundedness</div>
+            <div class="precision-heatmap-header">Citation</div>
+            <div class="precision-heatmap-header">Completeness</div>
+            {% for row in precision_eval_prototype.answer_quality.heatmap %}
+            <div class="precision-heatmap-label">{{ row.label }}</div>
+            {% for cell in row.cells %}
+            <div class="precision-heatmap-cell {{ cell.tone }}">{{ cell.display }}</div>
+            {% endfor %}
+            {% endfor %}
+          </div>
+        </section>
+
+        <section class="precision-card">
+          <div class="precision-section-head compact">
+            <div>
+              <p class="eyebrow">Judge Notes</p>
+              <h3>Representative Answer Findings</h3>
+            </div>
+          </div>
+          <div class="precision-note-list">
+            {% for item in precision_eval_prototype.answer_quality.sample_answers %}
+            <article class="precision-note-card">
+              <div class="precision-note-head">
+                <strong>{{ item.question }}</strong>
+                <span class="precision-verdict {{ item.tone }}">{{ item.verdict }}</span>
+              </div>
+              <p>{{ item.note }}</p>
+            </article>
+            {% endfor %}
+          </div>
+        </section>
+      </div>
+    </section>
   </div>
 </div>

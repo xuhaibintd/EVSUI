@@ -153,12 +153,42 @@ class BookRAGEvidenceResponse(BaseModel):
     retrieval_source: str | None = None
 
 
+class BookRAGLLMDocumentResponse(BaseModel):
+    doc_id: str | None = None
+    vector_store_name: str | None = None
+    schema_name: str | None = None
+    filename: str | None = None
+    source_file: str | None = None
+    document_type: str | None = None
+    language: str | None = None
+    reporting_period: str | None = None
+
+
+class BookRAGLLMTaskResponse(BaseModel):
+    mode: str
+    output_language: str
+    audience: str | None = None
+    must_cite: bool = True
+    summarize_focus: list[str] = Field(default_factory=list)
+
+
+class BookRAGLLMOutputContractResponse(BaseModel):
+    citation_style: str
+    require_grounding: bool = True
+    allow_inference: bool = False
+    return_json_ready: bool = True
+
+
 class BookRAGLLMEvidenceItemResponse(BaseModel):
     rank: int | None = None
     score: float | None = None
+    evidence_type: str | None = None
     path: str | None = None
+    section_path: str | None = None
     title: str | None = None
     section_title: str | None = None
+    page_start: int | None = None
+    page_end: int | None = None
     pages: list[int | None] = Field(default_factory=list)
     content: str = ""
     table_html: str | None = None
@@ -168,10 +198,15 @@ class BookRAGLLMEvidenceItemResponse(BaseModel):
     source_block_id: str | None = None
     entities: list[dict[str, Any]] = Field(default_factory=list)
     mapping: list[dict[str, Any]] = Field(default_factory=list)
+    why_selected: str | None = None
 
 
 class BookRAGLLMInputResponse(BaseModel):
+    payload_version: str
     question: str
+    document: BookRAGLLMDocumentResponse
+    task: BookRAGLLMTaskResponse
+    output_contract: BookRAGLLMOutputContractResponse
     instructions: list[str] = Field(default_factory=list)
     evidence: list[BookRAGLLMEvidenceItemResponse] = Field(default_factory=list)
 
@@ -440,8 +475,12 @@ def _build_bookrag_llm_input(
     include_entities: bool,
     include_mapping: bool,
 ) -> dict[str, object]:
-    packages = list((evidence or {}).get("packages") or [])
+    payload = dict(evidence or {})
+    packages = list(payload.get("packages") or [])
     limited_packages = packages[:_clamp_top_k(top_k)]
+    first_package = limited_packages[0] if limited_packages else {}
+    first_match = (first_package.get("match") if isinstance(first_package, dict) else {}) or {}
+
     evidence_items: list[dict[str, object]] = []
     for package in limited_packages:
         match = package.get("match") or {}
@@ -449,19 +488,35 @@ def _build_bookrag_llm_input(
         section = package.get("section") or {}
         page_start = match.get("page_start") if match.get("page_start") is not None else section.get("page_start")
         page_end = match.get("page_end") if match.get("page_end") is not None else section.get("page_end")
+        section_path = section.get("path") or match.get("path")
+        content = match.get("content") or block.get("text") or ""
+        if block.get("text_as_html"):
+            evidence_type = "table"
+            why_selected = "Contains structured numeric evidence that can support grounded answer generation."
+        elif block.get("image_caption") or block.get("image_context"):
+            evidence_type = "image"
+            why_selected = "Contains image-derived context relevant to the question."
+        else:
+            evidence_type = match.get("node_type") or block.get("type") or "text"
+            why_selected = "Directly addresses the requested topic in the retrieved section."
         item: dict[str, object] = {
             "rank": package.get("rank"),
             "score": package.get("score"),
-            "path": match.get("path") or section.get("path"),
+            "evidence_type": evidence_type,
+            "path": match.get("path") or section_path,
+            "section_path": section_path,
             "title": match.get("title") or section.get("title"),
             "section_title": section.get("title"),
+            "page_start": page_start,
+            "page_end": page_end,
             "pages": [page_start, page_end],
-            "content": match.get("content") or block.get("text") or "",
+            "content": content,
             "table_html": block.get("text_as_html"),
             "image_caption": block.get("image_caption"),
             "image_context": block.get("image_context"),
             "node_id": match.get("node_id"),
             "source_block_id": match.get("source_block_id"),
+            "why_selected": why_selected,
         }
         if include_entities:
             item["entities"] = package.get("entities") or []
@@ -470,12 +525,42 @@ def _build_bookrag_llm_input(
         evidence_items.append(item)
 
     return {
+        "payload_version": "bookrag-llm-payload-v1",
         "question": question,
+        "document": {
+            "doc_id": payload.get("doc_id") or first_match.get("doc_id"),
+            "vector_store_name": payload.get("vector_store_name"),
+            "schema_name": payload.get("schema_name"),
+            "filename": payload.get("filename"),
+            "source_file": payload.get("source_file"),
+            "document_type": payload.get("document_type") or "bookrag_document",
+            "language": payload.get("language") or "ja",
+            "reporting_period": payload.get("reporting_period"),
+        },
+        "task": {
+            "mode": "grounded_summary",
+            "output_language": "ja",
+            "audience": "external_api",
+            "must_cite": True,
+            "summarize_focus": [
+                "performance",
+                "revenue_structure",
+                "financial_position",
+                "risk_factors",
+            ],
+        },
+        "output_contract": {
+            "citation_style": "rank",
+            "require_grounding": True,
+            "allow_inference": False,
+            "return_json_ready": True,
+        },
         "instructions": [
-            "与えられた evidence のみを根拠に回答すること。",
-            "数値の傾向、収益構造、財政状態、リスク要因を優先して整理すること。",
-            "根拠が弱い推測は避け、必要に応じて不確実性を明示すること。",
-            "回答は日本語で簡潔にまとめること。",
+            "Answer only from the supplied evidence.",
+            "Separate observed facts from inference and do not invent missing support.",
+            "Attach rank-based citations to material conclusions.",
+            "Prioritize performance, revenue structure, financial position, and risk factors.",
+            "Keep the response concise and JSON-ready for external API consumers.",
         ],
         "evidence": evidence_items,
     }
@@ -743,14 +828,22 @@ async def api_bookrag_answer_get(
     )
     dummy_evidence = _normalize_bookrag_evidence(
         evidence={
+            "doc_id": "doc-demo-001",
             "vector_store_name": vector_store_value,
             "schema_name": schema_value,
+            "filename": "summary2512_ja.pdf",
+            "source_file": "uploads/bookrag_raw_stage/bookrag_20260418_173347/summary2512_ja_92516ea5f4594ebaa12d264b92da860e.json",
+            "document_type": "quarterly_earnings_report",
+            "language": "ja",
+            "reporting_period": "2025-04-01 to 2025-12-31",
             "packages": [
                 {
                     "rank": 1,
                     "score": 0.987,
                     "match": {
                         "node_id": dummy_data["sample_match"]["node_id"],
+                        "doc_id": "doc-demo-001",
+                        "node_type": dummy_data["sample_match"]["node_type"],
                         "title": dummy_data["sample_match"]["title"],
                         "content": dummy_data["sample_match"]["content"],
                         "path": dummy_data["sample_match"]["path"],
@@ -765,6 +858,7 @@ async def api_bookrag_answer_get(
                         "page_end": dummy_data["sample_match"]["page_end"],
                     },
                     "block": {
+                        "type": "Table",
                         "text": dummy_data["sample_match"]["content"],
                         "text_as_html": _build_bookrag_dummy_table_html(),
                         "image_caption": None,

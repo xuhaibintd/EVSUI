@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections import Counter, defaultdict
 from datetime import datetime
@@ -181,6 +182,282 @@ def build_precision_eval_panel_context(
         "selected_json_path": str(selected_json_path or "").strip(),
     }
 
+
+
+def build_precision_eval_prototype_context() -> dict[str, Any]:
+    def _pct(value: float) -> int:
+        return int(round(value * 100))
+
+    def _display_pct(value: float) -> str:
+        return f"{_pct(value)}%"
+
+    def _tone(value: float) -> str:
+        if value >= 0.9:
+            return "excellent"
+        if value >= 0.82:
+            return "good"
+        if value >= 0.74:
+            return "watch"
+        return "risk"
+
+    def _line_chart(series_specs: list[tuple[str, str, list[float]]], labels: list[str]) -> dict[str, Any]:
+        width = 720.0
+        height = 260.0
+        left = 56.0
+        right = 18.0
+        top = 18.0
+        bottom = 36.0
+        plot_width = width - left - right
+        plot_height = height - top - bottom
+        y_min = 0.68
+        y_max = 0.95
+
+        def _x(index: int) -> float:
+            if len(labels) == 1:
+                return left + plot_width / 2
+            return left + (plot_width * index / (len(labels) - 1))
+
+        def _y(value: float) -> float:
+            return top + (y_max - value) / (y_max - y_min) * plot_height
+
+        tick_values = [0.70, 0.75, 0.80, 0.85, 0.90, 0.95]
+        y_ticks = [{"value": _display_pct(item), "y": round(_y(item), 1)} for item in tick_values]
+        x_ticks = [{"label": label, "x": round(_x(index), 1)} for index, label in enumerate(labels)]
+
+        series: list[dict[str, Any]] = []
+        for name, color, values in series_specs:
+            points = []
+            for index, value in enumerate(values):
+                points.append({"cx": round(_x(index), 1), "cy": round(_y(value), 1), "value": _display_pct(value)})
+            path_data = " ".join((f"M {point['cx']} {point['cy']}" if idx == 0 else f"L {point['cx']} {point['cy']}") for idx, point in enumerate(points))
+            series.append({"name": name, "color": color, "path": path_data, "points": points})
+
+        return {
+            "viewbox": f"0 0 {int(width)} {int(height)}",
+            "width": int(width),
+            "height": int(height),
+            "left": left,
+            "right": width - right,
+            "top": top,
+            "bottom": height - bottom,
+            "y_ticks": y_ticks,
+            "x_ticks": x_ticks,
+            "series": series,
+        }
+
+    def _radar_chart(metrics: list[tuple[str, float]]) -> dict[str, Any]:
+        size = 320.0
+        center = size / 2
+        radius = 102.0
+        levels = [0.25, 0.5, 0.75, 1.0]
+        axes = []
+        value_points = []
+        for index, (label, value) in enumerate(metrics):
+            angle = (-math.pi / 2) + (2 * math.pi * index / len(metrics))
+            outer_x = center + radius * math.cos(angle)
+            outer_y = center + radius * math.sin(angle)
+            value_x = center + radius * value * math.cos(angle)
+            value_y = center + radius * value * math.sin(angle)
+            label_x = center + (radius + 26) * math.cos(angle)
+            label_y = center + (radius + 26) * math.sin(angle)
+            anchor = "middle"
+            if label_x < center - 12:
+                anchor = "end"
+            elif label_x > center + 12:
+                anchor = "start"
+            axes.append(
+                {
+                    "label": label,
+                    "outer_x": round(outer_x, 1),
+                    "outer_y": round(outer_y, 1),
+                    "label_x": round(label_x, 1),
+                    "label_y": round(label_y, 1),
+                    "anchor": anchor,
+                    "value": _display_pct(value),
+                }
+            )
+            value_points.append(f"{round(value_x, 1)},{round(value_y, 1)}")
+
+        grid_paths = []
+        for level in levels:
+            polygon = []
+            for index in range(len(metrics)):
+                angle = (-math.pi / 2) + (2 * math.pi * index / len(metrics))
+                polygon.append(f"{round(center + radius * level * math.cos(angle), 1)},{round(center + radius * level * math.sin(angle), 1)}")
+            grid_paths.append({"points": " ".join(polygon), "label": _display_pct(level)})
+
+        return {
+            "viewbox": f"0 0 {int(size)} {int(size)}",
+            "center": center,
+            "axes": axes,
+            "grid_paths": grid_paths,
+            "value_polygon": " ".join(value_points),
+        }
+
+    retrieval_series = [
+        ("Precision@5", "#2563eb", [0.72, 0.75, 0.77, 0.80, 0.82, 0.84]),
+        ("Recall@10", "#137333", [0.81, 0.83, 0.84, 0.87, 0.89, 0.91]),
+        ("nDCG@10", "#d97706", [0.74, 0.76, 0.79, 0.81, 0.84, 0.86]),
+    ]
+    trend_labels = [f"B0{index}" for index in range(1, 7)]
+    retrieval_trend_chart = _line_chart(retrieval_series, trend_labels)
+
+    retrieval_segments = [
+        {"name": "Financial Results", "precision": 0.89, "recall": 0.94, "mrr": 0.91, "ndcg": 0.90},
+        {"name": "Governance", "precision": 0.85, "recall": 0.90, "mrr": 0.87, "ndcg": 0.86},
+        {"name": "Risk Disclosure", "precision": 0.80, "recall": 0.88, "mrr": 0.83, "ndcg": 0.82},
+        {"name": "Dividend / IR", "precision": 0.82, "recall": 0.89, "mrr": 0.85, "ndcg": 0.84},
+    ]
+    for item in retrieval_segments:
+        item["precision_display"] = _display_pct(item["precision"])
+        item["recall_display"] = _display_pct(item["recall"])
+        item["precision_percent"] = _pct(item["precision"])
+        item["recall_percent"] = _pct(item["recall"])
+        item["mrr_display"] = f"{item['mrr']:.2f}"
+        item["ndcg_display"] = f"{item['ndcg']:.2f}"
+        item["tone"] = _tone((item["precision"] + item["recall"]) / 2)
+
+    quality_bands = [
+        {"label": "Highly Relevant", "count": 58, "ratio": 0.48, "tone": "band-high"},
+        {"label": "Partially Relevant", "count": 31, "ratio": 0.26, "tone": "band-mid"},
+        {"label": "Irrelevant", "count": 18, "ratio": 0.15, "tone": "band-low"},
+        {"label": "Missed Relevant", "count": 13, "ratio": 0.11, "tone": "band-miss"},
+    ]
+    for item in quality_bands:
+        item["ratio_display"] = _display_pct(item["ratio"])
+        item["width"] = f"{max(_pct(item['ratio']), 12)}%"
+
+    sample_queries = [
+        {
+            "query": "What is the FY2026 dividend outlook?",
+            "top_doc": "IR Summary FY2026 Q3",
+            "precision": 1.00,
+            "recall": 0.92,
+            "rank": 1,
+            "note": "Top hit is exact and all expected evidence appears within rank 5.",
+        },
+        {
+            "query": "List major governance policy revisions.",
+            "top_doc": "Corporate Governance Report",
+            "precision": 0.80,
+            "recall": 0.89,
+            "rank": 2,
+            "note": "One relevant governance appendix appears slightly lower in the ranked list.",
+        },
+        {
+            "query": "Find risk-factor changes after Q2.",
+            "top_doc": "Securities Report Addendum",
+            "precision": 0.60,
+            "recall": 0.83,
+            "rank": 3,
+            "note": "The first hit is relevant, but too many adjacent policy documents are mixed in.",
+        },
+    ]
+    for item in sample_queries:
+        item["precision_display"] = _display_pct(item["precision"])
+        item["recall_display"] = _display_pct(item["recall"])
+        item["precision_percent"] = _pct(item["precision"])
+        item["recall_percent"] = _pct(item["recall"])
+        item["tone"] = _tone((item["precision"] + item["recall"]) / 2)
+
+    answer_kpis = [
+        {"label": "Correctness", "display": "87%", "delta": "+2.8 pts", "description": "Rubric-judged answer correctness against a gold answer set.", "tone": "good"},
+        {"label": "Groundedness", "display": "93%", "delta": "+1.9 pts", "description": "Answer statements supported by retrieved evidence spans.", "tone": "excellent"},
+        {"label": "Citation Precision", "display": "89%", "delta": "+3.6 pts", "description": "Cited documents that actually support the generated answer.", "tone": "good"},
+        {"label": "Completeness", "display": "81%", "delta": "+1.4 pts", "description": "Coverage of expected answer facets from the reference rubric.", "tone": "watch"},
+    ]
+
+    answer_radar_metrics = [("Correctness", 0.87), ("Groundedness", 0.93), ("Citation", 0.89), ("Completeness", 0.81), ("Consistency", 0.85)]
+    answer_radar = _radar_chart(answer_radar_metrics)
+    answer_dimensions = []
+    dimension_notes = {
+        "Correctness": "Matches the expected answer intent and key facts.",
+        "Groundedness": "Claims are explicitly supported by retrieved evidence.",
+        "Citation": "Cited sources actually back the attached claim.",
+        "Completeness": "Covers the expected answer facets from the rubric.",
+        "Consistency": "Avoids contradictions across the final response.",
+    }
+    for label, value in answer_radar_metrics:
+        answer_dimensions.append(
+            {
+                "label": label,
+                "display": _display_pct(value),
+                "percent": _pct(value),
+                "tone": _tone(value),
+                "note": dimension_notes.get(label, ""),
+            }
+        )
+
+    answer_outcomes = [
+        {"label": "Pass", "count": 74, "ratio": 0.62, "tone": "band-high"},
+        {"label": "Minor Issues", "count": 28, "ratio": 0.23, "tone": "band-mid"},
+        {"label": "Major Issues", "count": 12, "ratio": 0.10, "tone": "band-miss"},
+        {"label": "Unsupported", "count": 6, "ratio": 0.05, "tone": "band-low"},
+    ]
+    for item in answer_outcomes:
+        item["ratio_display"] = _display_pct(item["ratio"])
+        item["width"] = f"{max(_pct(item['ratio']), 10)}%"
+
+    answer_heatmap_rows = [
+        ("Dividend Outlook", {"correctness": 0.91, "groundedness": 0.95, "citation": 0.93, "completeness": 0.88}),
+        ("Governance Changes", {"correctness": 0.88, "groundedness": 0.92, "citation": 0.90, "completeness": 0.84}),
+        ("Risk Factors", {"correctness": 0.79, "groundedness": 0.89, "citation": 0.84, "completeness": 0.76}),
+        ("Segment Performance", {"correctness": 0.86, "groundedness": 0.94, "citation": 0.87, "completeness": 0.80}),
+    ]
+    answer_heatmap = []
+    for label, metrics in answer_heatmap_rows:
+        cells = []
+        for metric_name, metric_value in metrics.items():
+            cells.append({"metric": metric_name.title(), "display": _display_pct(metric_value), "tone": _tone(metric_value)})
+        answer_heatmap.append({"label": label, "cells": cells})
+
+    sample_answers = [
+        {"question": "Summarize the announced dividend policy.", "verdict": "Pass", "tone": "excellent", "note": "All claims map to the cited IR summary and no unsupported wording appears."},
+        {"question": "Explain the latest governance revision.", "verdict": "Minor Issue", "tone": "watch", "note": "The answer is correct overall, but one citation points to an older governance appendix."},
+        {"question": "Describe newly disclosed risk factors.", "verdict": "Major Issue", "tone": "risk", "note": "The answer merges two adjacent disclosures and omits one required evidence span."},
+    ]
+
+    return {
+        "summary": {
+            "title": "Precision Evaluation Prototype",
+            "subtitle": "TREC-style retrieval evaluation plus rubric-based RAG answer validation, shown with synthetic benchmark data.",
+            "sample_size": "120 test queries",
+            "judgments": "960 graded retrieval judgments",
+            "answer_set": "120 rubric-scored answers",
+        },
+        "retrieval": {
+            "kpis": [
+                {"label": "Precision@5", "display": "84%", "delta": "+3.1 pts", "tone": "good", "description": "Share of top-5 retrieved documents judged relevant."},
+                {"label": "Recall@10", "display": "91%", "delta": "+2.4 pts", "tone": "excellent", "description": "Relevant documents recovered within the first 10 ranks."},
+                {"label": "MRR", "display": "0.88", "delta": "+0.05", "tone": "good", "description": "Mean reciprocal rank of the first relevant result."},
+                {"label": "nDCG@10", "display": "0.86", "delta": "+0.04", "tone": "good", "description": "Ranking quality with graded relevance weighting."},
+            ],
+            "trend_chart": retrieval_trend_chart,
+            "quality_bands": quality_bands,
+            "segments": retrieval_segments,
+            "sample_queries": sample_queries,
+            "methodology": [
+                "TREC-style offline evaluation with pre-judged query-document pairs.",
+                "Three-level relevance labels: highly relevant, partially relevant, irrelevant.",
+                "Primary metrics: Precision@5, Recall@10, MRR, and nDCG@10.",
+                "Use this view to judge whether the right documents are retrieved, not whether the final answer is perfect.",
+            ],
+        },
+        "answer_quality": {
+            "kpis": answer_kpis,
+            "radar": answer_radar,
+            "dimensions": answer_dimensions,
+            "outcomes": answer_outcomes,
+            "heatmap": answer_heatmap,
+            "sample_answers": sample_answers,
+            "methodology": [
+                "Pointwise rubric evaluation on correctness, groundedness, citation precision, completeness, and consistency.",
+                "Answer claims are checked against the retrieved evidence set, not only against model fluency.",
+                "Citation precision measures whether the cited source truly supports the claim it is attached to.",
+                "Use this view to judge whether retrieval is translated into a reliable final response.",
+            ],
+        },
+    }
 
 def resolve_precision_eval_path(raw_path: str, *, allowed_root: Path, expected_suffixes: set[str]) -> Path:
     raw = str(raw_path or "").strip()
