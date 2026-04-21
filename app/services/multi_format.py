@@ -120,6 +120,38 @@ UNSTRUCTURED_CHUNK_COLUMNS: list[tuple[str, str]] = [
     ("date_processed", "VARCHAR(50)"),
 ]
 
+BOOKRAG_TABLE_TOGGLE_FIELDS: dict[str, str] = {
+    "documents": "multi_format_bookrag_generate_documents",
+    "raw": "multi_format_bookrag_generate_raw",
+    "blocks": "multi_format_bookrag_generate_blocks",
+    "nodes": "multi_format_bookrag_generate_nodes",
+    "entities": "multi_format_bookrag_generate_entities",
+    "entity_links": "multi_format_bookrag_generate_entity_links",
+    "entity_relations": "multi_format_bookrag_generate_entity_relations",
+}
+
+BOOKRAG_TABLE_TOGGLE_DEFAULTS: dict[str, bool] = {
+    "documents": True,
+    "raw": True,
+    "blocks": True,
+    "nodes": True,
+    "entities": False,
+    "entity_links": False,
+    "entity_relations": False,
+}
+
+BOOKRAG_TABLE_TOGGLE_ORDER: tuple[str, ...] = (
+    "documents",
+    "raw",
+    "blocks",
+    "nodes",
+    "entities",
+    "entity_links",
+    "entity_relations",
+)
+
+BOOKRAG_ENTITY_TABLE_KEYS: tuple[str, ...] = ("entities", "entity_links", "entity_relations")
+
 
 def _build_unstructured_table_ddl(
     qualified_table: str,
@@ -132,6 +164,24 @@ CREATE SET TABLE {qualified_table} (
 {ddl_body}
 )
 """
+
+
+def _resolve_bookrag_table_generation_flags(create_values: dict[str, str]) -> dict[str, bool]:
+    flags: dict[str, bool] = {}
+    for table_key in BOOKRAG_TABLE_TOGGLE_ORDER:
+        field_name = BOOKRAG_TABLE_TOGGLE_FIELDS[table_key]
+        default_value = BOOKRAG_TABLE_TOGGLE_DEFAULTS[table_key]
+        flags[table_key] = _to_bool(
+            create_values.get(field_name, "true" if default_value else "false"),
+            default=default_value,
+        )
+    if not any(flags.values()):
+        raise RuntimeError("At least one BookRAG table generation toggle must be enabled.")
+    return flags
+
+
+def _resolve_bookrag_embedding_step_flag(create_values: dict[str, str]) -> bool:
+    return _to_bool(create_values.get("multi_format_bookrag_run_embedding", "false"), default=False)
 
 
 def normalize_document_files_for_create(
@@ -1228,55 +1278,67 @@ def _apply_bookrag_tree_pipeline(
     target_warnings: list[str],
 ) -> tuple[dict, dict]:
     bookrag_tables = build_bookrag_table_targets(vector_store_name)
-    target_warnings.extend(
-        prepare_bookrag_document_table(
-            schema_name=effective_schema_name,
-            table_targets=bookrag_tables,
-            execute_sql_fn=execute_sql_fn,
+    table_generation = _resolve_bookrag_table_generation_flags(create_values)
+    run_embedding_step = _resolve_bookrag_embedding_step_flag(create_values)
+    if run_embedding_step and not table_generation["nodes"]:
+        raise RuntimeError("BookRAG embedding step requires bnode generation to be enabled.")
+    if table_generation["documents"]:
+        target_warnings.extend(
+            prepare_bookrag_document_table(
+                schema_name=effective_schema_name,
+                table_targets=bookrag_tables,
+                execute_sql_fn=execute_sql_fn,
+            )
         )
-    )
-    target_warnings.extend(
-        prepare_bookrag_raw_table(
-            schema_name=effective_schema_name,
-            table_targets=bookrag_tables,
-            execute_sql_fn=execute_sql_fn,
+    if table_generation["raw"]:
+        target_warnings.extend(
+            prepare_bookrag_raw_table(
+                schema_name=effective_schema_name,
+                table_targets=bookrag_tables,
+                execute_sql_fn=execute_sql_fn,
+            )
         )
-    )
-    target_warnings.extend(
-        prepare_bookrag_block_table(
-            schema_name=effective_schema_name,
-            table_targets=bookrag_tables,
-            execute_sql_fn=execute_sql_fn,
+    if table_generation["blocks"]:
+        target_warnings.extend(
+            prepare_bookrag_block_table(
+                schema_name=effective_schema_name,
+                table_targets=bookrag_tables,
+                execute_sql_fn=execute_sql_fn,
+            )
         )
-    )
-    target_warnings.extend(
-        prepare_bookrag_node_table(
-            schema_name=effective_schema_name,
-            table_targets=bookrag_tables,
-            execute_sql_fn=execute_sql_fn,
+    if table_generation["nodes"]:
+        target_warnings.extend(
+            prepare_bookrag_node_table(
+                schema_name=effective_schema_name,
+                table_targets=bookrag_tables,
+                execute_sql_fn=execute_sql_fn,
+            )
         )
-    )
-    target_warnings.extend(
-        prepare_bookrag_entity_table(
-            schema_name=effective_schema_name,
-            table_targets=bookrag_tables,
-            execute_sql_fn=execute_sql_fn,
+    if table_generation["entities"]:
+        target_warnings.extend(
+            prepare_bookrag_entity_table(
+                schema_name=effective_schema_name,
+                table_targets=bookrag_tables,
+                execute_sql_fn=execute_sql_fn,
+            )
         )
-    )
-    target_warnings.extend(
-        prepare_bookrag_entity_link_table(
-            schema_name=effective_schema_name,
-            table_targets=bookrag_tables,
-            execute_sql_fn=execute_sql_fn,
+    if table_generation["entity_links"]:
+        target_warnings.extend(
+            prepare_bookrag_entity_link_table(
+                schema_name=effective_schema_name,
+                table_targets=bookrag_tables,
+                execute_sql_fn=execute_sql_fn,
+            )
         )
-    )
-    target_warnings.extend(
-        prepare_bookrag_entity_relation_table(
-            schema_name=effective_schema_name,
-            table_targets=bookrag_tables,
-            execute_sql_fn=execute_sql_fn,
+    if table_generation["entity_relations"]:
+        target_warnings.extend(
+            prepare_bookrag_entity_relation_table(
+                schema_name=effective_schema_name,
+                table_targets=bookrag_tables,
+                execute_sql_fn=execute_sql_fn,
+            )
         )
-    )
+    selected_entity_tables = any(table_generation[key] for key in BOOKRAG_ENTITY_TABLE_KEYS)
     image_partition_parameters, image_partition_warnings, image_partition_summary = _resolve_bookrag_image_partition_options(create_values)
     target_warnings.extend(image_partition_warnings)
 
@@ -1302,9 +1364,9 @@ def _apply_bookrag_tree_pipeline(
     raw_element_count = 0
     block_count = 0
     node_count = 0
-    entity_count = 0
-    entity_link_count = 0
-    entity_relation_count = 0
+    entity_count: int | None = 0 if selected_entity_tables else None
+    entity_link_count: int | None = 0 if selected_entity_tables else None
+    entity_relation_count: int | None = 0 if selected_entity_tables else None
     document_count = 0
     document_rows: list[dict[str, Any]] = []
     all_raw_rows: list[dict[str, Any]] = []
@@ -1317,6 +1379,11 @@ def _apply_bookrag_tree_pipeline(
     qualified_tables = {
         name: (f"{effective_schema_name}.{table_name}" if effective_schema_name else table_name)
         for name, table_name in bookrag_tables.items()
+    }
+    persisted_bookrag_tables = {
+        name: qualified_tables[name]
+        for name in BOOKRAG_TABLE_TOGGLE_ORDER
+        if table_generation[name]
     }
 
     workflow_name, workflow_nodes, request_parameters, workflow_definition_warnings, processing_profile = _build_bookrag_reusable_workflow_definition(
@@ -1387,7 +1454,11 @@ def _apply_bookrag_tree_pipeline(
             raw_elements=reconciled_elements,
         )
         nodes = build_bookrag_nodes(document_row, blocks)
-        entities, entity_links, entity_relations = build_bookrag_entities(document_row, reconciled_elements, nodes)
+        entities: list[dict[str, Any]] = []
+        entity_links: list[dict[str, Any]] = []
+        entity_relations: list[dict[str, Any]] = []
+        if selected_entity_tables:
+            entities, entity_links, entity_relations = build_bookrag_entities(document_row, reconciled_elements, nodes)
         debug_file = _write_unstructured_debug_file(
             debug_dir,
             src,
@@ -1412,6 +1483,7 @@ def _apply_bookrag_tree_pipeline(
                 "entity_count": len(entities),
                 "entity_link_count": len(entity_links),
                 "entity_relation_count": len(entity_relations),
+                "bookrag_table_generation": table_generation,
             },
         )
         if debug_file:
@@ -1431,85 +1503,101 @@ def _apply_bookrag_tree_pipeline(
         raw_element_count += len(raw_rows)
         block_count += len(blocks)
         node_count += len(nodes)
-        entity_count += len(entities)
-        entity_link_count += len(entity_links)
-        entity_relation_count += len(entity_relations)
+        if selected_entity_tables:
+            entity_count = (entity_count or 0) + len(entities)
+            entity_link_count = (entity_link_count or 0) + len(entity_links)
+            entity_relation_count = (entity_relation_count or 0) + len(entity_relations)
 
-    inserted_rows += persist_bookrag_documents(
-        schema_name=effective_schema_name,
-        table_targets=bookrag_tables,
-        rows=document_rows,
-        execute_sql_fn=execute_sql_fn,
-        csv_stage_dir=csv_stage_dir,
-        stats=document_insert_stats,
-    )
-    inserted_rows += persist_bookrag_raw_rows(
-        schema_name=effective_schema_name,
-        table_targets=bookrag_tables,
-        rows=all_raw_rows,
-        execute_sql_fn=execute_sql_fn,
-        csv_stage_dir=csv_stage_dir,
-        stats=raw_insert_stats,
-    )
-    inserted_rows += persist_bookrag_blocks(
-        schema_name=effective_schema_name,
-        table_targets=bookrag_tables,
-        blocks=all_blocks,
-        execute_sql_fn=execute_sql_fn,
-        csv_stage_dir=csv_stage_dir,
-        stats=block_insert_stats,
-    )
-    inserted_rows += persist_bookrag_nodes(
-        schema_name=effective_schema_name,
-        table_targets=bookrag_tables,
-        nodes=all_nodes,
-        execute_sql_fn=execute_sql_fn,
-        csv_stage_dir=csv_stage_dir,
-        stats=node_insert_stats,
-    )
-    inserted_rows += persist_bookrag_entities(
-        schema_name=effective_schema_name,
-        table_targets=bookrag_tables,
-        entities=all_entities,
-        execute_sql_fn=execute_sql_fn,
-        csv_stage_dir=csv_stage_dir,
-        stats=entity_insert_stats,
-    )
-    inserted_rows += persist_bookrag_entity_links(
-        schema_name=effective_schema_name,
-        table_targets=bookrag_tables,
-        entity_links=all_entity_links,
-        execute_sql_fn=execute_sql_fn,
-        csv_stage_dir=csv_stage_dir,
-        stats=entity_link_insert_stats,
-    )
-    inserted_rows += persist_bookrag_entity_relations(
-        schema_name=effective_schema_name,
-        table_targets=bookrag_tables,
-        entity_relations=all_entity_relations,
-        execute_sql_fn=execute_sql_fn,
-        csv_stage_dir=csv_stage_dir,
-        stats=entity_relation_insert_stats,
-    )
-
-    persisted_raw_count = _count_teradata_rows(
-        schema_name=effective_schema_name,
-        table_name=bookrag_tables["raw"],
-        execute_sql_fn=execute_sql_fn,
-    )
-    if persisted_raw_count is None:
-        persisted_raw_count = raw_element_count
-    if persisted_raw_count <= 0:
-        raise RuntimeError(
-            "bookrag workflow completed but destination raw table has 0 rows. "
-            f"table={qualified_tables['raw']}"
+    if table_generation["documents"]:
+        inserted_rows += persist_bookrag_documents(
+            schema_name=effective_schema_name,
+            table_targets=bookrag_tables,
+            rows=document_rows,
+            execute_sql_fn=execute_sql_fn,
+            csv_stage_dir=csv_stage_dir,
+            stats=document_insert_stats,
+        )
+    if table_generation["raw"]:
+        inserted_rows += persist_bookrag_raw_rows(
+            schema_name=effective_schema_name,
+            table_targets=bookrag_tables,
+            rows=all_raw_rows,
+            execute_sql_fn=execute_sql_fn,
+            csv_stage_dir=csv_stage_dir,
+            stats=raw_insert_stats,
+        )
+    if table_generation["blocks"]:
+        inserted_rows += persist_bookrag_blocks(
+            schema_name=effective_schema_name,
+            table_targets=bookrag_tables,
+            blocks=all_blocks,
+            execute_sql_fn=execute_sql_fn,
+            csv_stage_dir=csv_stage_dir,
+            stats=block_insert_stats,
+        )
+    if table_generation["nodes"]:
+        inserted_rows += persist_bookrag_nodes(
+            schema_name=effective_schema_name,
+            table_targets=bookrag_tables,
+            nodes=all_nodes,
+            execute_sql_fn=execute_sql_fn,
+            csv_stage_dir=csv_stage_dir,
+            stats=node_insert_stats,
+        )
+    if table_generation["entities"]:
+        inserted_rows += persist_bookrag_entities(
+            schema_name=effective_schema_name,
+            table_targets=bookrag_tables,
+            entities=all_entities,
+            execute_sql_fn=execute_sql_fn,
+            csv_stage_dir=csv_stage_dir,
+            stats=entity_insert_stats,
+        )
+    if table_generation["entity_links"]:
+        inserted_rows += persist_bookrag_entity_links(
+            schema_name=effective_schema_name,
+            table_targets=bookrag_tables,
+            entity_links=all_entity_links,
+            execute_sql_fn=execute_sql_fn,
+            csv_stage_dir=csv_stage_dir,
+            stats=entity_link_insert_stats,
+        )
+    if table_generation["entity_relations"]:
+        inserted_rows += persist_bookrag_entity_relations(
+            schema_name=effective_schema_name,
+            table_targets=bookrag_tables,
+            entity_relations=all_entity_relations,
+            execute_sql_fn=execute_sql_fn,
+            csv_stage_dir=csv_stage_dir,
+            stats=entity_relation_insert_stats,
         )
 
+    persisted_table_row_counts: dict[str, int] = {}
+    for table_key in BOOKRAG_TABLE_TOGGLE_ORDER:
+        if not table_generation[table_key]:
+            continue
+        row_count = _count_teradata_rows(
+            schema_name=effective_schema_name,
+            table_name=bookrag_tables[table_key],
+            execute_sql_fn=execute_sql_fn,
+        )
+        if row_count is not None:
+            persisted_table_row_counts[table_key] = row_count
+
+    persisted_raw_count = persisted_table_row_counts.get("raw", raw_element_count)
+    if inserted_rows <= 0:
+        enabled_tables = ", ".join(table_key for table_key in BOOKRAG_TABLE_TOGGLE_ORDER if table_generation[table_key])
+        raise RuntimeError(f"bookrag workflow completed but selected tables received 0 inserted rows. tables={enabled_tables}")
+    if persisted_table_row_counts and max(persisted_table_row_counts.values()) <= 0:
+        enabled_tables = ", ".join(persisted_bookrag_tables.values())
+        raise RuntimeError(f"bookrag workflow completed but selected tables have 0 persisted rows. tables={enabled_tables}")
+
     patched_payload = _strip_file_based_create_params(exec_payload)
-    patched_payload["object_names"] = qualified_tables["nodes"]
-    patched_payload["data_columns"] = ["content"]
-    patched_payload["key_columns"] = ["node_id"]
-    patched_payload.pop("vector_column", None)
+    if table_generation["nodes"]:
+        patched_payload["object_names"] = qualified_tables["nodes"]
+        patched_payload["data_columns"] = ["content"]
+        patched_payload["key_columns"] = ["node_id"]
+        patched_payload.pop("vector_column", None)
     description_text = str(patched_payload.get("description") or "").strip()
     description_low = description_text.lower()
     if "unstructured_bookrag_flg" not in description_low:
@@ -1521,17 +1609,18 @@ def _apply_bookrag_tree_pipeline(
 
     summary = {
         "table_name": "",
-        "documents_table_name": qualified_tables["documents"],
-        "raw_table_name": qualified_tables["raw"],
-        "blocks_table_name": qualified_tables["blocks"],
-        "nodes_table_name": qualified_tables["nodes"],
-        "entities_table_name": qualified_tables["entities"],
-        "entity_links_table_name": qualified_tables["entity_links"],
-        "entity_relations_table_name": qualified_tables["entity_relations"],
-        "leaf_nodes_table_name": qualified_tables["leaf_nodes"],
-        "vectorstore_source_object": qualified_tables["nodes"],
-        "vectorstore_data_columns": ["content"],
-        "vectorstore_key_columns": ["node_id"],
+        "documents_table_name": persisted_bookrag_tables.get("documents", ""),
+        "raw_table_name": persisted_bookrag_tables.get("raw", ""),
+        "blocks_table_name": persisted_bookrag_tables.get("blocks", ""),
+        "nodes_table_name": persisted_bookrag_tables.get("nodes", ""),
+        "entities_table_name": persisted_bookrag_tables.get("entities", ""),
+        "entity_links_table_name": persisted_bookrag_tables.get("entity_links", ""),
+        "entity_relations_table_name": persisted_bookrag_tables.get("entity_relations", ""),
+        "vectorstore_source_object": persisted_bookrag_tables.get("nodes", ""),
+        "vectorstore_data_columns": ["content"] if table_generation["nodes"] else [],
+        "vectorstore_key_columns": ["node_id"] if table_generation["nodes"] else [],
+        "skip_vectorstore_create": not run_embedding_step,
+        "run_embedding_step": run_embedding_step,
         "raw_element_count": persisted_raw_count,
         "block_count": block_count,
         "node_count": node_count,
@@ -1545,7 +1634,7 @@ def _apply_bookrag_tree_pipeline(
         "workflow_name": workflow_names_seen[-1] if workflow_names_seen else workflow_name,
         "destination_id": "",
         "warnings": target_warnings + partition_warnings,
-        "workflow_mode": "bookrag on-demand jobs tree tables only",
+        "workflow_mode": "bookrag on-demand jobs selected tables debug",
         "inserted_rows": inserted_rows,
         "debug_dir": str(debug_dir) if debug_dir else "",
         "debug_files": debug_files,
@@ -1557,7 +1646,9 @@ def _apply_bookrag_tree_pipeline(
         "effective_ocr_languages": ocr_languages,
         "include_orig_elements": False,
         "file_mode": "on-demand-jobs",
-        "bookrag_tables": qualified_tables,
+        "bookrag_tables": persisted_bookrag_tables,
+        "bookrag_table_generation": table_generation,
+        "bookrag_persisted_table_row_counts": persisted_table_row_counts,
         "bookrag_profile": processing_profile,
         "bookrag_document_insert_stats": document_insert_stats,
         "bookrag_raw_insert_stats": raw_insert_stats,

@@ -225,6 +225,12 @@ async def handle_upload_and_prepare_create(
     doc_pipeline_handler = get_doc_pipeline_handler(raw_doc_pipeline_mode)
     doc_pipeline_mode = doc_pipeline_handler.MODE
     create_values["doc_pipeline_mode"] = doc_pipeline_mode
+    should_run_vectorstore_create_fn = getattr(doc_pipeline_handler, "should_run_vectorstore_create", None)
+    should_run_vectorstore_create = (
+        bool(should_run_vectorstore_create_fn(create_values))
+        if callable(should_run_vectorstore_create_fn)
+        else (not bool(getattr(doc_pipeline_handler, "SKIP_VECTORSTORE_CREATE", False)))
+    )
 
     create_payload: dict = {}
     warnings: list[str] = list(upload_notices)
@@ -277,7 +283,7 @@ async def handle_upload_and_prepare_create(
     warnings.extend(path_warnings)
 
     precheck_status_preview = ""
-    if callable(verify_vectorstore_exists_fn):
+    if should_run_vectorstore_create and callable(verify_vectorstore_exists_fn):
         verified_existing_store = False
         existence_check_detail = ""
         existence_check_error = ""
@@ -410,10 +416,12 @@ async def handle_upload_and_prepare_create(
     execution_output_preview = ""
     status_output_preview = ""
 
+    mode_skip_vectorstore_create = bool(mode_summary.get("skip_vectorstore_create")) if mode_summary else (not should_run_vectorstore_create)
+
     if mode_error:
         result_status = "error"
         result_message = f"Step 2 failed during {doc_pipeline_handler.LABEL} preprocessing: {mode_error}"
-    elif doc_pipeline_handler.SKIP_VECTORSTORE_CREATE:
+    elif mode_skip_vectorstore_create:
         result_status = "ok_with_warnings" if warnings else "ok"
         result_message = doc_pipeline_handler.build_skip_create_message(mode_summary)
         execution_output_preview = f"VectorStore.create() skipped intentionally for {doc_pipeline_handler.MODE}."

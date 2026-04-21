@@ -60,6 +60,25 @@ DOC_PIPELINE_UI_DEFAULTS = {
     "multi_format_bookrag_multipage_sections": "true",
     "multi_format_bookrag_coordinates": "true",
     "multi_format_bookrag_extract_image_block_types": "auto",
+    "multi_format_bookrag_generate_documents": "true",
+    "multi_format_bookrag_generate_raw": "true",
+    "multi_format_bookrag_generate_blocks": "true",
+    "multi_format_bookrag_generate_nodes": "true",
+    "multi_format_bookrag_generate_entities": "false",
+    "multi_format_bookrag_generate_entity_links": "false",
+    "multi_format_bookrag_generate_entity_relations": "false",
+    "multi_format_bookrag_run_embedding": "false",
+}
+
+DOC_PIPELINE_CHECKBOX_FIELDS = {
+    "multi_format_bookrag_generate_documents",
+    "multi_format_bookrag_generate_raw",
+    "multi_format_bookrag_generate_blocks",
+    "multi_format_bookrag_generate_nodes",
+    "multi_format_bookrag_generate_entities",
+    "multi_format_bookrag_generate_entity_links",
+    "multi_format_bookrag_generate_entity_relations",
+    "multi_format_bookrag_run_embedding",
 }
 
 DOC_PIPELINE_OPTIONS = [
@@ -79,6 +98,11 @@ def normalize_doc_pipeline_mode(value: str) -> str:
 def collect_doc_pipeline_ui_values(form, *, field_max_len: int) -> dict[str, str]:
     values: dict[str, str] = {}
     for ui_field, default_value in DOC_PIPELINE_UI_DEFAULTS.items():
+        if ui_field in DOC_PIPELINE_CHECKBOX_FIELDS:
+            getlist = getattr(form, "getlist", None)
+            raw_values = getlist(ui_field) if callable(getlist) else ([form.get(ui_field)] if ui_field in form else [])
+            values[ui_field] = "true" if any(str(item).strip().lower() == "true" for item in raw_values) else "false"
+            continue
         ui_raw = str(form.get(ui_field, default_value)).strip()
         values[ui_field] = ui_raw[:field_max_len]
     return values

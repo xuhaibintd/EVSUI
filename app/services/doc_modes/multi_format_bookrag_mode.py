@@ -7,6 +7,10 @@ LABEL = "Multi-Format BookRAG"
 SKIP_VECTORSTORE_CREATE = False
 
 
+def should_run_vectorstore_create(create_values: dict[str, str]) -> bool:
+    return str(create_values.get("multi_format_bookrag_run_embedding", "false")).strip().lower() == "true"
+
+
 def preprocess_create_payload(**kwargs) -> tuple[dict, dict | None]:
     return apply_multi_format_pipeline(
         exec_payload=kwargs["exec_payload"],
@@ -53,12 +57,19 @@ def build_skip_create_message(summary: dict | None) -> str:
     documents_table_name = str(summary.get("documents_table_name") or "").strip()
     blocks_table_name = str(summary.get("blocks_table_name") or "").strip()
     nodes_table_name = str(summary.get("nodes_table_name") or "").strip()
+    entities_table_name = str(summary.get("entities_table_name") or "").strip()
+    entity_links_table_name = str(summary.get("entity_links_table_name") or "").strip()
+    entity_relations_table_name = str(summary.get("entity_relations_table_name") or "").strip()
     raw_element_count = summary.get("raw_element_count")
     document_count = summary.get("document_count")
     block_count = summary.get("block_count")
     node_count = summary.get("node_count")
+    entity_count = summary.get("entity_count")
+    entity_link_count = summary.get("entity_link_count")
+    entity_relation_count = summary.get("entity_relation_count")
 
-    parts = ["Step 2 completed. BookRAG tree tables finished."]
+    run_embedding_step = bool(summary.get("run_embedding_step"))
+    parts = ["Step 2 completed. BookRAG selected tables finished."]
     table_parts: list[str] = []
     if documents_table_name:
         table_parts.append(f"bdoc={documents_table_name}")
@@ -68,6 +79,12 @@ def build_skip_create_message(summary: dict | None) -> str:
         table_parts.append(f"bblk={blocks_table_name}")
     if nodes_table_name:
         table_parts.append(f"bnode={nodes_table_name}")
+    if entities_table_name:
+        table_parts.append(f"bent={entities_table_name}")
+    if entity_links_table_name:
+        table_parts.append(f"belnk={entity_links_table_name}")
+    if entity_relations_table_name:
+        table_parts.append(f"brel={entity_relations_table_name}")
     if table_parts:
         parts.append("Tables: " + ", ".join(table_parts) + ".")
 
@@ -80,6 +97,13 @@ def build_skip_create_message(summary: dict | None) -> str:
         count_parts.append(f"blocks={block_count}")
     if node_count is not None:
         count_parts.append(f"nodes={node_count}")
+    if entity_count is not None:
+        count_parts.append(f"entities={entity_count}")
+    if entity_link_count is not None:
+        count_parts.append(f"entity_links={entity_link_count}")
+    if entity_relation_count is not None:
+        count_parts.append(f"relations={entity_relation_count}")
     if count_parts:
         parts.append("Counts: " + ", ".join(count_parts) + ".")
+    parts.append("Embedding: enabled." if run_embedding_step else "Embedding: skipped.")
     return " ".join(parts)

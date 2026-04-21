@@ -117,12 +117,12 @@
   </section>
   {% endfor %}
 
-  <div class="stack-inline">
+  <div class="stack-inline create-action-row">
     <button
       type="submit"
       name="create_mode"
       value="core"
-      class="progress-btn"
+      class="progress-btn create-primary-btn"
       data-progress-button
       data-progress-show-seconds
       {% if not evs.connected %}disabled{% endif %}
@@ -133,6 +133,94 @@
         <span data-progress-loading-text>Creating...</span>
       </span>
     </button>
+    <div
+      class="bookrag-debug-bar {% if _doc_pipeline_mode != 'multi_format_bookrag' %}doc-mode-hidden{% endif %}"
+      data-doc-mode-for="multi_format_bookrag"
+      {% if _doc_pipeline_mode != 'multi_format_bookrag' %}hidden{% endif %}
+      aria-label="BookRAG table generation toggles"
+    >
+      <span class="bookrag-debug-label">BookRAG Tables</span>
+      <label class="bookrag-debug-toggle">
+        <input
+          type="checkbox"
+          name="multi_format_bookrag_generate_documents"
+          value="true"
+          {% if create_values.get('multi_format_bookrag_generate_documents', 'true') == 'true' %}checked{% endif %}
+          {% if not evs.connected or _doc_pipeline_mode != 'multi_format_bookrag' %}disabled{% endif %}
+        />
+        <span>bdoc</span>
+      </label>
+      <label class="bookrag-debug-toggle">
+        <input
+          type="checkbox"
+          name="multi_format_bookrag_generate_raw"
+          value="true"
+          {% if create_values.get('multi_format_bookrag_generate_raw', 'true') == 'true' %}checked{% endif %}
+          {% if not evs.connected or _doc_pipeline_mode != 'multi_format_bookrag' %}disabled{% endif %}
+        />
+        <span>braw</span>
+      </label>
+      <label class="bookrag-debug-toggle">
+        <input
+          type="checkbox"
+          name="multi_format_bookrag_generate_blocks"
+          value="true"
+          {% if create_values.get('multi_format_bookrag_generate_blocks', 'true') == 'true' %}checked{% endif %}
+          {% if not evs.connected or _doc_pipeline_mode != 'multi_format_bookrag' %}disabled{% endif %}
+        />
+        <span>bblk</span>
+      </label>
+      <label class="bookrag-debug-toggle">
+        <input
+          type="checkbox"
+          name="multi_format_bookrag_generate_nodes"
+          value="true"
+          {% if create_values.get('multi_format_bookrag_generate_nodes', 'true') == 'true' %}checked{% endif %}
+          {% if not evs.connected or _doc_pipeline_mode != 'multi_format_bookrag' %}disabled{% endif %}
+        />
+        <span>bnode</span>
+      </label>
+      <label class="bookrag-debug-toggle">
+        <input
+          type="checkbox"
+          name="multi_format_bookrag_generate_entities"
+          value="true"
+          {% if create_values.get('multi_format_bookrag_generate_entities', 'false') == 'true' %}checked{% endif %}
+          {% if not evs.connected or _doc_pipeline_mode != 'multi_format_bookrag' %}disabled{% endif %}
+        />
+        <span>bent</span>
+      </label>
+      <label class="bookrag-debug-toggle">
+        <input
+          type="checkbox"
+          name="multi_format_bookrag_generate_entity_links"
+          value="true"
+          {% if create_values.get('multi_format_bookrag_generate_entity_links', 'false') == 'true' %}checked{% endif %}
+          {% if not evs.connected or _doc_pipeline_mode != 'multi_format_bookrag' %}disabled{% endif %}
+        />
+        <span>belnk</span>
+      </label>
+      <label class="bookrag-debug-toggle">
+        <input
+          type="checkbox"
+          name="multi_format_bookrag_generate_entity_relations"
+          value="true"
+          {% if create_values.get('multi_format_bookrag_generate_entity_relations', 'false') == 'true' %}checked{% endif %}
+          {% if not evs.connected or _doc_pipeline_mode != 'multi_format_bookrag' %}disabled{% endif %}
+        />
+        <span>brel</span>
+      </label>
+      <label class="bookrag-debug-toggle bookrag-debug-toggle-embed">
+        <input
+          type="checkbox"
+          name="multi_format_bookrag_run_embedding"
+          value="true"
+          {% if create_values.get('multi_format_bookrag_run_embedding', 'false') == 'true' %}checked{% endif %}
+          {% if not evs.connected or _doc_pipeline_mode != 'multi_format_bookrag' %}disabled{% endif %}
+        />
+        <span>embed</span>
+      </label>
+    </div>
   </div>
 </form>
 

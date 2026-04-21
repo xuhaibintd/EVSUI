@@ -622,6 +622,72 @@
   display: none !important;
 }
 
+.bookrag-debug-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.bookrag-debug-bar.doc-mode-hidden,
+.bookrag-debug-bar[hidden] {
+  display: none !important;
+}
+
+.bookrag-debug-label {
+  color: #405a7e;
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.bookrag-debug-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+  padding: 0.34rem 0.58rem;
+  border: 1px solid #c9d7e8;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #22344f;
+  font-size: 0.76rem;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.bookrag-debug-toggle input[type="checkbox"] {
+  margin: 0;
+  accent-color: #3f7df0;
+}
+
+.bookrag-debug-toggle-embed {
+  border-color: #9bbcf4;
+  background: linear-gradient(180deg, #eef5ff 0%, #ffffff 100%);
+}
+
+#section-create .create-action-row {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  column-gap: 0.65rem;
+  row-gap: 0.45rem;
+}
+
+#section-create .create-primary-btn {
+  justify-self: start;
+  align-self: center;
+  flex: none;
+  white-space: nowrap;
+}
+
+#section-create .create-action-row .bookrag-debug-bar {
+  align-self: center;
+  min-width: 0;
+}
+
 @media (max-width: 1400px) {
   .multi-format-partitioner-grid,
   .multi-format-bookrag-route-grid,
@@ -670,5 +736,13 @@
   #section-create .doc-pipeline-panel .doc-pipeline-mode-field {
     width: 100%;
     max-width: 100%;
+  }
+
+  .bookrag-debug-bar {
+    width: 100%;
+  }
+
+  #section-create .create-action-row {
+    grid-template-columns: 1fr;
   }
 }

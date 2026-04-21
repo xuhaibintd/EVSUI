@@ -4,7 +4,7 @@
 @import url("modules/base.css?v=20260411-11");
 @import url("modules/layout.css?v=20260411-11");
 @import url("modules/forms-uploads.css?v=20260414-1");
-@import url("modules/create.css?v=20260416-7");
+@import url("modules/create.css?v=20260421-2");
 @import url("modules/connect.css?v=20260414-13");
 @import url("modules/chat.css?v=20260415-1");
 @import url("modules/precision-eval.css?v=20260420-4");
@@ -874,4 +874,29 @@ label > span,
 .multi-format-enrichment-card .field-note,
 .multi-format-enrichment-card .muted {
   color: #5f6368 !important;
+}
+
+#section-create .create-action-row {
+  display: grid !important;
+  grid-template-columns: max-content minmax(0, 1fr) !important;
+  align-items: center !important;
+  column-gap: 0.65rem;
+  row-gap: 0.45rem;
+}
+
+#section-create .create-primary-btn {
+  justify-self: start;
+  align-self: center;
+  white-space: nowrap;
+}
+
+#section-create .create-action-row .bookrag-debug-bar {
+  align-self: center;
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  #section-create .create-action-row {
+    grid-template-columns: 1fr !important;
+  }
 }
