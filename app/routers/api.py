@@ -54,7 +54,7 @@ class BookRAGDummyMapping(BaseModel):
     entity_id: str
     node_id: str
     section_node_id: str
-    source_block_id: str
+    source_element_id: str
     page_start: int | None = None
     page_end: int | None = None
 
@@ -67,7 +67,7 @@ class BookRAGDummyMatch(BaseModel):
     path: str
     page_start: int | None = None
     page_end: int | None = None
-    source_block_id: str
+    source_element_id: str
 
 
 class BookRAGDummyDataResponse(BaseModel):
@@ -94,7 +94,7 @@ class BookRAGEvidenceMatchResponse(BaseModel):
     path: str | None = None
     page_start: int | None = None
     page_end: int | None = None
-    source_block_id: str | None = None
+    source_element_id: str | None = None
     parent_node_id: str | None = None
     ordinal: int | None = None
 
@@ -195,7 +195,7 @@ class BookRAGLLMEvidenceItemResponse(BaseModel):
     image_caption: str | None = None
     image_context: str | None = None
     node_id: str | None = None
-    source_block_id: str | None = None
+    source_element_id: str | None = None
     entities: list[dict[str, Any]] = Field(default_factory=list)
     mapping: list[dict[str, Any]] = Field(default_factory=list)
     why_selected: str | None = None
@@ -214,7 +214,7 @@ class BookRAGLLMInputResponse(BaseModel):
 class BookRAGAnswerCitationResponse(BaseModel):
     rank: int | None = None
     node_id: str | None = None
-    source_block_id: str | None = None
+    source_element_id: str | None = None
     path: str | None = None
     page_start: int | None = None
     page_end: int | None = None
@@ -352,7 +352,7 @@ def _build_bookrag_dummy_data(*, question: str, vector_store_name: str, schema_n
                 "entity_id": "ent-demo-org",
                 "node_id": "node-demo-001",
                 "section_node_id": "node-section-001",
-                "source_block_id": "block-demo-001",
+                "source_element_id": "block-demo-001",
                 "page_start": 2,
                 "page_end": 2,
             },
@@ -360,7 +360,7 @@ def _build_bookrag_dummy_data(*, question: str, vector_store_name: str, schema_n
                 "entity_id": "ent-demo-period",
                 "node_id": "node-demo-001",
                 "section_node_id": "node-section-001",
-                "source_block_id": "block-demo-001",
+                "source_element_id": "block-demo-001",
                 "page_start": 2,
                 "page_end": 2,
             },
@@ -368,7 +368,7 @@ def _build_bookrag_dummy_data(*, question: str, vector_store_name: str, schema_n
                 "entity_id": "ent-demo-growth",
                 "node_id": "node-demo-001",
                 "section_node_id": "node-section-001",
-                "source_block_id": "block-demo-001",
+                "source_element_id": "block-demo-001",
                 "page_start": 2,
                 "page_end": 2,
             },
@@ -376,7 +376,7 @@ def _build_bookrag_dummy_data(*, question: str, vector_store_name: str, schema_n
                 "entity_id": "ent-demo-noninterest",
                 "node_id": "node-demo-001",
                 "section_node_id": "node-section-001",
-                "source_block_id": "block-demo-001",
+                "source_element_id": "block-demo-001",
                 "page_start": 2,
                 "page_end": 3,
             },
@@ -384,7 +384,7 @@ def _build_bookrag_dummy_data(*, question: str, vector_store_name: str, schema_n
                 "entity_id": "ent-demo-risk",
                 "node_id": "node-demo-001",
                 "section_node_id": "node-section-001",
-                "source_block_id": "block-demo-001",
+                "source_element_id": "block-demo-001",
                 "page_start": 4,
                 "page_end": 4,
             },
@@ -397,7 +397,7 @@ def _build_bookrag_dummy_data(*, question: str, vector_store_name: str, schema_n
             "path": "2026年3月期第3四半期決算短信 > 総括 > 業績の安定成長と収益構造の変化",
             "page_start": 2,
             "page_end": 4,
-            "source_block_id": "block-demo-001",
+            "source_element_id": "block-demo-001",
         },
     }
 
@@ -515,7 +515,7 @@ def _build_bookrag_llm_input(
             "image_caption": block.get("image_caption"),
             "image_context": block.get("image_context"),
             "node_id": match.get("node_id"),
-            "source_block_id": match.get("source_block_id"),
+            "source_element_id": match.get("source_element_id"),
             "why_selected": why_selected,
         }
         if include_entities:
@@ -574,7 +574,7 @@ def _build_bookrag_dummy_answer(*, question: str, llm_input: dict[str, object]) 
         citations.append({
             "rank": item.get("rank"),
             "node_id": item.get("node_id"),
-            "source_block_id": item.get("source_block_id"),
+            "source_element_id": item.get("source_element_id"),
             "path": item.get("path"),
             "page_start": pages[0] if len(pages) > 0 else None,
             "page_end": pages[1] if len(pages) > 1 else None,
@@ -614,7 +614,7 @@ def _build_bookrag_citations_from_llm_input(llm_input: dict[str, object]) -> lis
         citations.append({
             "rank": item.get("rank"),
             "node_id": item.get("node_id"),
-            "source_block_id": item.get("source_block_id"),
+            "source_element_id": item.get("source_element_id"),
             "path": item.get("path"),
             "page_start": pages[0] if len(pages) > 0 else None,
             "page_end": pages[1] if len(pages) > 1 else None,
@@ -849,7 +849,7 @@ async def api_bookrag_answer_get(
                         "path": dummy_data["sample_match"]["path"],
                         "page_start": dummy_data["sample_match"]["page_start"],
                         "page_end": dummy_data["sample_match"]["page_end"],
-                        "source_block_id": dummy_data["sample_match"]["source_block_id"],
+                        "source_element_id": dummy_data["sample_match"]["source_element_id"],
                     },
                     "section": {
                         "title": dummy_data["sample_match"]["title"],

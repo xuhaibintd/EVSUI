@@ -141,6 +141,10 @@ def _nearest_section_node(node: dict[str, Any], node_map: dict[str, dict[str, An
     return None
 
 
+def _node_source_element_id(node: dict[str, Any]) -> str | None:
+    return _as_text(node.get("source_element_id") or node.get("source_block_id"), max_len=64)
+
+
 def _entities_payload(raw_element: dict[str, Any]) -> dict[str, Any]:
     metadata = raw_element.get("metadata")
     if not isinstance(metadata, dict):
@@ -200,14 +204,14 @@ def build_bookrag_entities(
         return [], [], []
 
     node_map = {str(node.get("node_id")): node for node in nodes if node.get("node_id")}
-    nodes_by_source_block: dict[str, list[dict[str, Any]]] = {}
+    nodes_by_source_element: dict[str, list[dict[str, Any]]] = {}
     for node in nodes:
-        source_block_id = _as_text(node.get("source_block_id"), max_len=64)
-        if not source_block_id:
+        source_element_id = _node_source_element_id(node)
+        if not source_element_id:
             continue
-        nodes_by_source_block.setdefault(source_block_id, []).append(node)
-    for source_block_id in nodes_by_source_block:
-        nodes_by_source_block[source_block_id].sort(
+        nodes_by_source_element.setdefault(source_element_id, []).append(node)
+    for source_element_id in nodes_by_source_element:
+        nodes_by_source_element[source_element_id].sort(
             key=lambda row: (_as_int(row.get("ordinal")) or 0, str(row.get("node_id") or ""))
         )
 
@@ -272,10 +276,10 @@ def build_bookrag_entities(
         return entity
 
     for ordinal_raw, raw_element in enumerate(raw_elements, start=1):
-        source_block_id = _as_text(raw_element.get("element_id") or raw_element.get("id"), max_len=64)
+        source_element_id = _as_text(raw_element.get("element_id") or raw_element.get("id"), max_len=64)
         metadata = raw_element.get("metadata") if isinstance(raw_element.get("metadata"), dict) else {}
         page_number = _as_int(metadata.get("page_number"))
-        linked_nodes = list(nodes_by_source_block.get(source_block_id or "") or [])
+        linked_nodes = list(nodes_by_source_element.get(source_element_id or "") or [])
         for item in _entity_items_from_raw_element(raw_element):
             entity_name = _as_text(item.get("entity"), max_len=1000)
             entity_type = _as_text(item.get("type"), max_len=50) or "UNKNOWN"
@@ -325,10 +329,10 @@ def build_bookrag_entities(
         return _as_text(entity.get("entity_id"), max_len=64)
 
     for ordinal_raw, raw_element in enumerate(raw_elements, start=1):
-        source_block_id = _as_text(raw_element.get("element_id") or raw_element.get("id"), max_len=64)
+        source_element_id = _as_text(raw_element.get("element_id") or raw_element.get("id"), max_len=64)
         metadata = raw_element.get("metadata") if isinstance(raw_element.get("metadata"), dict) else {}
         page_number = _as_int(metadata.get("page_number"))
-        linked_nodes = list(nodes_by_source_block.get(source_block_id or "") or [])
+        linked_nodes = list(nodes_by_source_element.get(source_element_id or "") or [])
         primary_node = linked_nodes[0] if linked_nodes else None
         section_node = _nearest_section_node(primary_node, node_map) if primary_node else None
         source_node_id = _as_text(primary_node.get("node_id"), max_len=64) if primary_node else None
@@ -351,7 +355,7 @@ def build_bookrag_entities(
                 {
                     "relation_id": uuid.uuid4().hex,
                     "doc_id": doc_id,
-                    "source_block_id": source_block_id,
+                    "source_element_id": source_element_id,
                     "source_node_id": source_node_id,
                     "section_node_id": section_node_id,
                     "from_entity_id": resolve_or_create_relation_entity(from_entity_text),

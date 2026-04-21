@@ -5,9 +5,10 @@
   <aside class="panel left-menu">
     <p class="eyebrow">Vector Store Navigation</p>
     <button class="menu-item active" type="button" data-section="section-connect">1. Connect &amp; Manage</button>
-    <button class="menu-item {% if not evs.connected %}locked{% endif %}" type="button" data-section="section-create" aria-disabled="{% if not evs.connected %}true{% else %}false{% endif %}" {% if not evs.connected %}disabled{% endif %}>2. Vector Store Creation</button>
-    <button class="menu-item {% if not evs.connected %}locked{% endif %}" type="button" data-section="section-chat" aria-disabled="{% if not evs.connected %}true{% else %}false{% endif %}" {% if not evs.connected %}disabled{% endif %}>3. Vector Store Retrieval</button>
-    <button class="menu-item" type="button" data-section="section-eval">4. Precision Evaluation</button>
+    <button class="menu-item {% if not evs.connected %}disabled locked{% endif %}" type="button" data-section="section-create" aria-disabled="{% if not evs.connected %}true{% else %}false{% endif %}" {% if not evs.connected %}disabled{% endif %}>2. Vector Store Creation</button>
+    <button class="menu-item {% if not evs.connected %}disabled locked{% endif %}" type="button" data-section="section-chat" aria-disabled="{% if not evs.connected %}true{% else %}false{% endif %}" {% if not evs.connected %}disabled{% endif %}>3. Vector Store Retrieval</button>
+    <button class="menu-item {% if not evs.connected %}disabled locked{% endif %}" type="button" data-section="section-eval" aria-disabled="{% if not evs.connected %}true{% else %}false{% endif %}" {% if not evs.connected %}disabled{% endif %}>4. Precision Evaluation</button>
+    <button class="menu-item {% if not evs.connected %}disabled locked{% endif %}" type="button" data-section="section-admin" aria-disabled="{% if not evs.connected %}true{% else %}false{% endif %}" {% if not evs.connected %}disabled{% endif %}>5. Admin Rules</button>
     <p id="menu-hint" class="menu-hint muted"></p>
   </aside>
 
@@ -43,19 +44,32 @@
       <div class="wizard-nav">
         <div class="wizard-actions">
           <button type="button" class="ghost wizard-btn" data-target="section-create">Back</button>
-          <button type="button" class="wizard-btn" data-target="section-eval">Next: Precision Evaluation</button>
+          <button type="button" class="wizard-btn" data-target="section-eval" data-requires-connected="true" {% if not evs.connected %}disabled{% endif %}>Next: Precision Evaluation</button>
           <button type="button" class="ghost wizard-btn" data-target="section-connect">Go to Step 1</button>
         </div>
       </div>
     </article>
 
-    <article class="panel menu-section" id="section-eval" data-step="4">
+    <article class="panel menu-section{% if not evs.connected %} locked{% endif %}" id="section-eval" data-step="4">
       <div class="panel-content">
         {% include "partials/precision_eval_panel.html" %}
       </div>
       <div class="wizard-nav">
         <div class="wizard-actions">
           <button type="button" class="ghost wizard-btn" data-target="section-chat">Back</button>
+          <button type="button" class="wizard-btn" data-target="section-admin" data-requires-connected="true" {% if not evs.connected %}disabled{% endif %}>Next: Admin Rules</button>
+          <button type="button" class="ghost wizard-btn" data-target="section-connect">Go to Step 1</button>
+        </div>
+      </div>
+    </article>
+
+    <article class="panel menu-section{% if not evs.connected %} locked{% endif %}" id="section-admin" data-step="5">
+      <div class="panel-content">
+        {% include "partials/bookrag_admin_panel.html" %}
+      </div>
+      <div class="wizard-nav">
+        <div class="wizard-actions">
+          <button type="button" class="ghost wizard-btn" data-target="section-eval">Back</button>
           <button type="button" class="ghost wizard-btn" data-target="section-connect">Go to Step 1</button>
         </div>
       </div>

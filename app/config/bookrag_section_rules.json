@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "updated_at": "",
+  "profiles": {
+    "jp": {
+      "chapter_patterns": [
+        {
+          "name": "chapter",
+          "pattern": "^\\s*\\u7b2c[0-9\\u4e00-\\u9fff]+\\u7ae0",
+          "level": 1,
+          "family": "chapter",
+          "enabled": true,
+          "priority": 10
+        },
+        {
+          "name": "section",
+          "pattern": "^\\s*\\u7b2c[0-9\\u4e00-\\u9fff]+\\u7bc0",
+          "level": 2,
+          "family": "chapter",
+          "enabled": true,
+          "priority": 20
+        },
+        {
+          "name": "clause",
+          "pattern": "^\\s*\\u7b2c[0-9\\u4e00-\\u9fff]+\\u6b3e",
+          "level": 3,
+          "family": "chapter",
+          "enabled": true,
+          "priority": 30
+        },
+        {
+          "name": "item",
+          "pattern": "^\\s*\\u7b2c[0-9\\u4e00-\\u9fff]+\\u76ee",
+          "level": 4,
+          "family": "chapter",
+          "enabled": true,
+          "priority": 40
+        },
+        {
+          "name": "article",
+          "pattern": "^\\s*\\u7b2c[0-9\\u4e00-\\u9fff]+\\u6761",
+          "level": 4,
+          "family": "chapter",
+          "enabled": true,
+          "priority": 50
+        }
+      ],
+      "numeric_pattern": "^\\s*([0-9\\uff10-\\uff19]+(?:[\\.\\uff0e][0-9\\uff10-\\uff19]+){0,4})(?:[\\.\\uff0e\\u3002]\\s*|\\s+)(.+?)\\s*$",
+      "enum_heading_pattern": "^\\s*[\\(\\uff08]\\s*([0-9]+)\\s*[\\)\\uff09]\\s*(.+?)\\s*$",
+      "alpha_section_pattern": "^\\s*([A-Za-z\\uff21-\\uff3a\\uff41-\\uff5a])[\\.\\uff0e\\u3002]\\s*(.+?)\\s*$",
+      "bracket_section_pattern": "^\\s*\\u3010[^\\u3011]{1,60}\\u3011\\s*$",
+      "note_pattern": "^\\s*[\\(\\uff08]?\\s*\\u6ce8\\s*[0-9A-Za-z\\uff10-\\uff19]*",
+      "table_html_pattern": "<\\s*table\\b",
+      "heading_tag_pattern": "<\\s*h([1-6])\\b",
+      "header_footer_types": [
+        "footer",
+        "header",
+        "page-header",
+        "page-footer"
+      ],
+      "major_section_families": [
+        "chapter",
+        "numeric"
+      ],
+      "group_section_families": [
+        "bracket"
+      ],
+      "enum_section_families": [
+        "enum"
+      ],
+      "fullwidth_numeric_source": "０１２３４５６７８９．",
+      "fullwidth_numeric_target": "0123456789."
+    }
+  }
+}

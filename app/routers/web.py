@@ -20,6 +20,10 @@ from app.services.precision_eval import (
     build_precision_eval_report,
     resolve_precision_eval_path,
 )
+from app.services.bookrag_section_rules import (
+    BOOKRAG_SECTION_RULES_PATH,
+    save_bookrag_section_rules,
+)
 from app.services.create_config import default_create_values
 from app.teradata_runtime import (
     TERADATA_IMPORT_ERROR,
@@ -72,6 +76,28 @@ from app.workflows.create_flow import handle_upload_and_prepare_create
 from app.workflows.destroy_flow import handle_destroy_selected
 
 router = APIRouter()
+
+
+def _admin_checkbox_checked(form_data, field_name: str) -> bool:
+    value = form_data.get(field_name)
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "on", "yes"}
+
+
+def _admin_csv_values(form_data, field_name: str) -> list[str]:
+    raw_value = str(form_data.get(field_name) or "").strip()
+    if not raw_value:
+        return []
+    return [item.strip() for item in raw_value.split(",") if item.strip()]
+
+
+def _build_bookrag_admin_context(rules_payload: dict, status: dict | None = None) -> dict:
+    return {
+        "bookrag_section_rules": rules_payload,
+        "bookrag_section_rules_path": str(BOOKRAG_SECTION_RULES_PATH),
+        "bookrag_section_rules_status": status,
+    }
 
 @router.get("/", response_class=HTMLResponse)
 async def home(request: Request):
@@ -760,6 +786,77 @@ async def run_precision_eval(
         request,
         "partials/precision_eval_result.html",
         {"precision_eval_result": precision_eval_result},
+    )
+
+
+@router.post("/ui/admin/bookrag-section-rules", response_class=HTMLResponse)
+async def update_bookrag_section_rules_panel(request: Request):
+    if not _is_logged_in(request, request.app):
+        return HTMLResponse("Unauthorized", status_code=401)
+    _activate_session_state(request, request.app)
+
+    form_data = await request.form()
+    chapter_pattern_count = max(0, int(str(form_data.get("chapter_pattern_count") or "0").strip() or "0"))
+    chapter_patterns: list[dict[str, object]] = []
+    for index in range(chapter_pattern_count):
+        pattern = str(form_data.get(f"chapter_pattern_{index}") or "").strip()
+        name = str(form_data.get(f"chapter_name_{index}") or "").strip()
+        if not pattern and not name:
+            continue
+        chapter_patterns.append(
+            {
+                "name": name or f"rule_{index + 1}",
+                "pattern": pattern,
+                "level": max(1, int(str(form_data.get(f"chapter_level_{index}") or "1").strip() or "1")),
+                "family": str(form_data.get(f"chapter_family_{index}") or "chapter").strip() or "chapter",
+                "enabled": _admin_checkbox_checked(form_data, f"chapter_enabled_{index}"),
+                "priority": int(str(form_data.get(f"chapter_priority_{index}") or ((index + 1) * 10)).strip() or ((index + 1) * 10)),
+            }
+        )
+
+    submitted_rules = {
+        "version": 1,
+        "updated_at": "",
+        "profiles": {
+            "jp": {
+                "chapter_patterns": chapter_patterns,
+                "numeric_pattern": str(form_data.get("numeric_pattern") or "").strip(),
+                "enum_heading_pattern": str(form_data.get("enum_heading_pattern") or "").strip(),
+                "alpha_section_pattern": str(form_data.get("alpha_section_pattern") or "").strip(),
+                "bracket_section_pattern": str(form_data.get("bracket_section_pattern") or "").strip(),
+                "note_pattern": str(form_data.get("note_pattern") or "").strip(),
+                "table_html_pattern": str(form_data.get("table_html_pattern") or "").strip(),
+                "heading_tag_pattern": str(form_data.get("heading_tag_pattern") or "").strip(),
+                "header_footer_types": _admin_csv_values(form_data, "header_footer_types"),
+                "major_section_families": _admin_csv_values(form_data, "major_section_families"),
+                "group_section_families": _admin_csv_values(form_data, "group_section_families"),
+                "enum_section_families": _admin_csv_values(form_data, "enum_section_families"),
+                "fullwidth_numeric_source": str(form_data.get("fullwidth_numeric_source") or "").strip(),
+                "fullwidth_numeric_target": str(form_data.get("fullwidth_numeric_target") or "").strip(),
+            }
+        },
+    }
+
+    try:
+        saved_rules = save_bookrag_section_rules(submitted_rules)
+        status = {
+            "kind": "ok",
+            "title": "Rules Saved",
+            "detail": f"Saved BookRAG section rules to {BOOKRAG_SECTION_RULES_PATH}.",
+        }
+        context = _build_bookrag_admin_context(saved_rules, status=status)
+    except Exception as ex:
+        status = {
+            "kind": "error",
+            "title": "Save Failed",
+            "detail": str(ex),
+        }
+        context = _build_bookrag_admin_context(submitted_rules, status=status)
+
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "partials/bookrag_admin_panel.html",
+        context,
     )
 
 

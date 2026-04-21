@@ -198,6 +198,10 @@ def _fetch_rows_by_values(
     return rows
 
 
+def _node_source_element_id(node: NodeRow) -> str | None:
+    return _as_text(node.get("source_element_id") or node.get("source_block_id"))
+
+
 def _nearest_section(node: NodeRow, node_map: dict[str, NodeRow]) -> NodeRow | None:
     current = node
     while current is not None:
@@ -270,7 +274,7 @@ def build_bookrag_evidence_packages(
     node_columns = [
         "node_id",
         "doc_id",
-        "source_block_id",
+        "source_element_id",
         "parent_node_id",
         "node_type",
         "level",
@@ -345,10 +349,10 @@ def build_bookrag_evidence_packages(
         if node is not None:
             resolved_nodes.append(node)
 
-    source_block_ids = [
-        _as_text(node.get("source_block_id"))
+    source_element_ids = [
+        _node_source_element_id(node)
         for node in resolved_nodes
-        if _as_text(node.get("source_block_id"))
+        if _node_source_element_id(node)
     ]
     block_columns = [
         "element_id",
@@ -364,7 +368,7 @@ def build_bookrag_evidence_packages(
         schema_name=effective_schema_name,
         table_name=table_targets["blocks"],
         id_column="element_id",
-        ids=source_block_ids,
+        ids=source_element_ids,
         columns=block_columns,
         execute_sql_fn=execute_sql_fn,
     )
@@ -377,8 +381,8 @@ def build_bookrag_evidence_packages(
         node = _resolve_match_node(match, node_map, content_node_map)
         if node is None:
             continue
-        source_block_id = _as_text(node.get("source_block_id"))
-        block = block_map.get(source_block_id) if source_block_id else None
+        source_element_id = _node_source_element_id(node)
+        block = block_map.get(source_element_id) if source_element_id else None
         nearest_section = _nearest_section(node, node_map)
         packages.append(
             {
@@ -395,7 +399,7 @@ def build_bookrag_evidence_packages(
                     "path": _as_text(node.get("path")),
                     "page_start": _as_int(node.get("page_start")),
                     "page_end": _as_int(node.get("page_end")),
-                    "source_block_id": source_block_id,
+                    "source_element_id": source_element_id,
                     "parent_node_id": _as_text(node.get("parent_node_id")),
                     "ordinal": _as_int(node.get("ordinal")),
                 },

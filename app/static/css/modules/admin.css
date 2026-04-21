@@ -1,0 +1,120 @@
+.bookrag-admin-shell {
+  display: grid;
+  gap: 1rem;
+}
+
+.admin-rule-path {
+  margin-top: 0.3rem;
+  word-break: break-all;
+}
+
+.admin-rule-form {
+  display: grid;
+  gap: 1rem;
+}
+
+.admin-rule-card {
+  display: grid;
+  gap: 0.9rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid rgba(69, 117, 216, 0.18);
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(245, 249, 255, 0.9));
+}
+
+.admin-rule-card-head {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.admin-rule-card-head h4 {
+  margin: 0;
+}
+
+.admin-rule-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem;
+}
+
+.admin-rule-grid .field {
+  min-width: 0;
+}
+
+.admin-rule-grid .field textarea,
+.admin-rule-grid .field input[type="text"] {
+  width: 100%;
+}
+
+.admin-rule-table {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.admin-rule-row {
+  display: grid;
+  grid-template-columns: minmax(9rem, 0.9fr) minmax(18rem, 2.4fr) minmax(8rem, 0.8fr) minmax(5rem, 0.45fr) minmax(6rem, 0.55fr) minmax(5rem, 0.45fr);
+  gap: 0.55rem;
+  align-items: start;
+}
+
+.admin-rule-row-head {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #516481;
+  padding: 0 0.2rem;
+}
+
+.admin-rule-row textarea,
+.admin-rule-row input[type="text"],
+.admin-rule-row input[type="number"] {
+  width: 100%;
+}
+
+.admin-rule-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 3rem;
+  padding: 0 0.2rem;
+}
+
+.admin-rule-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.8rem 1rem;
+  border-radius: 16px;
+  border: 1px solid transparent;
+}
+
+.admin-rule-status.ok {
+  background: rgba(23, 162, 101, 0.09);
+  border-color: rgba(23, 162, 101, 0.24);
+  color: #12593c;
+}
+
+.admin-rule-status.error {
+  background: rgba(203, 74, 74, 0.08);
+  border-color: rgba(203, 74, 74, 0.24);
+  color: #7b2020;
+}
+
+.admin-rule-actions {
+  justify-content: flex-start;
+}
+
+@media (max-width: 1200px) {
+  .admin-rule-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-rule-row {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-rule-row-head {
+    display: none;
+  }
+}

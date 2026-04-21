@@ -38,6 +38,8 @@ BOOKRAG_BLOCK_COLUMNS: list[tuple[str, str]] = [
     ("doc_id", "VARCHAR(64)"),
     ("element_id", "VARCHAR(64)"),
     ("parent_id", "VARCHAR(64)"),
+    ("category_depth", "INTEGER"),
+    ("heading_level", "INTEGER"),
     ("page_number", "INTEGER"),
     ("ordinal", "INTEGER"),
     ("type", "VARCHAR(50)"),
@@ -84,7 +86,7 @@ BOOKRAG_CHUNK_COLUMNS: list[tuple[str, str]] = [
 BOOKRAG_NODE_COLUMNS: list[tuple[str, str]] = [
     ("node_id", 'VARCHAR(64) NOT NULL'),
     ("doc_id", "VARCHAR(64)"),
-    ("source_block_id", "VARCHAR(64)"),
+    ("source_element_id", "VARCHAR(64)"),
     ("parent_node_id", "VARCHAR(64)"),
     ("node_type", "VARCHAR(50)"),
     ("level", "INTEGER"),
@@ -124,7 +126,7 @@ BOOKRAG_ENTITY_LINK_COLUMNS: list[tuple[str, str]] = [
 BOOKRAG_ENTITY_RELATION_COLUMNS: list[tuple[str, str]] = [
     ("relation_id", 'VARCHAR(64) NOT NULL'),
     ("doc_id", "VARCHAR(64)"),
-    ("source_block_id", "VARCHAR(64)"),
+    ("source_element_id", "VARCHAR(64)"),
     ("source_node_id", "VARCHAR(64)"),
     ("section_node_id", "VARCHAR(64)"),
     ("from_entity_id", "VARCHAR(64)"),

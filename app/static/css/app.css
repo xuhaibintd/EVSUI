@@ -8,6 +8,7 @@
 @import url("modules/connect.css?v=20260414-13");
 @import url("modules/chat.css?v=20260415-1");
 @import url("modules/precision-eval.css?v=20260420-4");
+@import url("modules/admin.css?v=20260422-1");
 @import url("modules/responsive.css?v=20260411-11");
 
 
@@ -700,6 +701,27 @@ button.ghost.monitor-btn-health:disabled,
 button.monitor-btn-list:disabled,
 button.ghost.monitor-btn-list:disabled {
   opacity: 0.78;
+}
+
+.left-menu .menu-item.disabled,
+.left-menu .menu-item.locked,
+.left-menu .menu-item[disabled],
+.left-menu .menu-item[aria-disabled="true"] {
+  border-color: #eceff1 !important;
+  background: #f8f9fa !important;
+  color: #80868b !important;
+  opacity: 0.78 !important;
+  cursor: not-allowed !important;
+  pointer-events: none !important;
+}
+
+.left-menu .menu-item.disabled:hover,
+.left-menu .menu-item.locked:hover,
+.left-menu .menu-item[disabled]:hover,
+.left-menu .menu-item[aria-disabled="true"]:hover {
+  border-color: #eceff1 !important;
+  background: #f8f9fa !important;
+  color: #80868b !important;
 }
 
 .top-op-line {

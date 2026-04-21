@@ -1,0 +1,131 @@
+{% set jp_rules = (bookrag_section_rules.get('profiles', {}).get('jp', {}) if bookrag_section_rules else {}) %}
+<div id="bookrag-admin-panel" class="bookrag-admin-shell">
+  <div class="section-head">
+    <div>
+      <p class="eyebrow">Administrator Menu</p>
+      <h3>BookRAG Section Rules</h3>
+      <p class="muted admin-rule-path">Linked file: {{ bookrag_section_rules_path }}</p>
+      {% if bookrag_section_rules.updated_at %}
+      <p class="muted admin-rule-path">Last updated: {{ bookrag_section_rules.updated_at }}</p>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if bookrag_section_rules_status %}
+  <div class="admin-rule-status {{ bookrag_section_rules_status.kind }}">
+    <strong>{{ bookrag_section_rules_status.title }}</strong>
+    <span>{{ bookrag_section_rules_status.detail }}</span>
+  </div>
+  {% endif %}
+
+  <form
+    class="admin-rule-form"
+    hx-post="/ui/admin/bookrag-section-rules"
+    hx-target="#bookrag-admin-panel"
+    hx-swap="outerHTML"
+  >
+    <section class="admin-rule-card">
+      <div class="admin-rule-card-head">
+        <h4>Core Patterns</h4>
+        <p class="muted">These regex values are compiled at runtime and used by `bookrag_tree.py`.</p>
+      </div>
+      <div class="admin-rule-grid">
+        <label class="field">
+          <span class="field-label">Numeric Heading</span>
+          <textarea name="numeric_pattern" rows="2">{{ jp_rules.numeric_pattern or '' }}</textarea>
+        </label>
+        <label class="field">
+          <span class="field-label">Enum Heading</span>
+          <textarea name="enum_heading_pattern" rows="2">{{ jp_rules.enum_heading_pattern or '' }}</textarea>
+        </label>
+        <label class="field">
+          <span class="field-label">Alpha Heading</span>
+          <textarea name="alpha_section_pattern" rows="2">{{ jp_rules.alpha_section_pattern or '' }}</textarea>
+        </label>
+        <label class="field">
+          <span class="field-label">Bracket Heading</span>
+          <textarea name="bracket_section_pattern" rows="2">{{ jp_rules.bracket_section_pattern or '' }}</textarea>
+        </label>
+        <label class="field">
+          <span class="field-label">Note Pattern</span>
+          <textarea name="note_pattern" rows="2">{{ jp_rules.note_pattern or '' }}</textarea>
+        </label>
+        <label class="field">
+          <span class="field-label">Table HTML Pattern</span>
+          <textarea name="table_html_pattern" rows="2">{{ jp_rules.table_html_pattern or '' }}</textarea>
+        </label>
+        <label class="field">
+          <span class="field-label">Heading Tag Pattern</span>
+          <textarea name="heading_tag_pattern" rows="2">{{ jp_rules.heading_tag_pattern or '' }}</textarea>
+        </label>
+        <label class="field">
+          <span class="field-label">Fullwidth Source</span>
+          <input type="text" name="fullwidth_numeric_source" value="{{ jp_rules.fullwidth_numeric_source or '' }}" />
+        </label>
+        <label class="field">
+          <span class="field-label">Fullwidth Target</span>
+          <input type="text" name="fullwidth_numeric_target" value="{{ jp_rules.fullwidth_numeric_target or '' }}" />
+        </label>
+      </div>
+    </section>
+
+    <section class="admin-rule-card">
+      <div class="admin-rule-card-head">
+        <h4>Chapter Rules</h4>
+        <p class="muted">Priority is ascending. Enabled rules participate in hierarchy detection.</p>
+      </div>
+      <input type="hidden" name="chapter_pattern_count" value="{{ (jp_rules.chapter_patterns or [])|length }}" />
+      <div class="admin-rule-table">
+        <div class="admin-rule-row admin-rule-row-head">
+          <span>Name</span>
+          <span>Regex</span>
+          <span>Family</span>
+          <span>Level</span>
+          <span>Priority</span>
+          <span>Enabled</span>
+        </div>
+        {% for rule in jp_rules.chapter_patterns or [] %}
+        <div class="admin-rule-row">
+          <input type="text" name="chapter_name_{{ loop.index0 }}" value="{{ rule.name or '' }}" />
+          <textarea name="chapter_pattern_{{ loop.index0 }}" rows="2">{{ rule.pattern or '' }}</textarea>
+          <input type="text" name="chapter_family_{{ loop.index0 }}" value="{{ rule.family or '' }}" />
+          <input type="number" name="chapter_level_{{ loop.index0 }}" min="1" step="1" value="{{ rule.level or 1 }}" />
+          <input type="number" name="chapter_priority_{{ loop.index0 }}" step="1" value="{{ rule.priority or (loop.index * 10) }}" />
+          <label class="admin-rule-check">
+            <input type="checkbox" name="chapter_enabled_{{ loop.index0 }}" {% if rule.enabled %}checked{% endif %} />
+            <span>On</span>
+          </label>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="admin-rule-card">
+      <div class="admin-rule-card-head">
+        <h4>Families And Filters</h4>
+      </div>
+      <div class="admin-rule-grid">
+        <label class="field">
+          <span class="field-label">Header/Footer Types</span>
+          <input type="text" name="header_footer_types" value="{{ (jp_rules.header_footer_types or [])|join(', ') }}" />
+        </label>
+        <label class="field">
+          <span class="field-label">Major Families</span>
+          <input type="text" name="major_section_families" value="{{ (jp_rules.major_section_families or [])|join(', ') }}" />
+        </label>
+        <label class="field">
+          <span class="field-label">Group Families</span>
+          <input type="text" name="group_section_families" value="{{ (jp_rules.group_section_families or [])|join(', ') }}" />
+        </label>
+        <label class="field">
+          <span class="field-label">Enum Families</span>
+          <input type="text" name="enum_section_families" value="{{ (jp_rules.enum_section_families or [])|join(', ') }}" />
+        </label>
+      </div>
+    </section>
+
+    <div class="wizard-actions admin-rule-actions">
+      <button type="submit" class="wizard-btn">Save BookRAG Rules</button>
+    </div>
+  </form>
+</div>
