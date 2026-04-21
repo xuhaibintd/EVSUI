@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.services.bookrag_retrieval import retrieve_bookrag_evidence
+from app.runtime import DEFAULT_EVSUI_API_TOKEN
 from app.teradata_runtime import TERADATA_IMPORT_ERROR, VectorStore, execute_sql
 from app.utils.table_state import format_preview
 from app.web_support import (
@@ -310,7 +311,8 @@ class BookRAGAnswerResponse(BaseModel):
 
 
 def _external_api_token() -> str:
-    return str(os.getenv("EVSUI_API_TOKEN", "")).strip()
+    configured = str(os.getenv("EVSUI_API_TOKEN", "")).strip()
+    return configured or DEFAULT_EVSUI_API_TOKEN
 
 
 def _resolve_external_token_context(request: Request) -> dict[str, str] | None:
