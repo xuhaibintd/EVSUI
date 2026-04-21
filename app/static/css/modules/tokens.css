@@ -1,5 +1,5 @@
 :root {
-  --ui-topbar-h: clamp(84px, 9.5vh, 106px);
+  --ui-topbar-h: 156px;
   --left-rail-w: clamp(210px, 12.8vw, 260px);
   --ui-font-base: clamp(15px, 0.3vw + 11px, 19px);
   --page-pad: clamp(0.75rem, 0.8vw, 1.35rem);

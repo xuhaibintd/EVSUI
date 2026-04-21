@@ -100,6 +100,7 @@
     const messageField = form.querySelector("#chat-message");
     const selectedVsField = form.querySelector("[data-chat-selected-vs]");
     const apiUrlField = form.querySelector("#bookrag-api-url");
+    const topKField = form.querySelector("#bookrag-api-top-k");
     const messagesRoot = document.querySelector("#chat-messages");
     const submitButton = form.querySelector("button[type='submit'][data-progress-button]");
 
@@ -119,10 +120,20 @@
       return;
     }
 
-    const apiUrl = apiUrlField instanceof HTMLInputElement ? apiUrlField.value.trim() : "";
+    const apiUrl =
+      apiUrlField instanceof HTMLInputElement || apiUrlField instanceof HTMLSelectElement
+        ? apiUrlField.value.trim()
+        : "";
     if (!apiUrl) {
       appendMessage(messagesRoot, "assistant", "BookRAG API URL is unavailable.", nowHm());
       return;
+    }
+
+    const topKRaw =
+      topKField instanceof HTMLInputElement ? Number.parseInt(topKField.value, 10) : Number.NaN;
+    const topK = Number.isFinite(topKRaw) ? Math.max(1, Math.min(20, topKRaw)) : 5;
+    if (topKField instanceof HTMLInputElement) {
+      topKField.value = String(topK);
     }
 
     const userTime = nowHm();
@@ -140,6 +151,7 @@
         body: JSON.stringify({
           question,
           vector_store_name: vectorStoreName,
+          top_k: topK,
         }),
       });
 
@@ -169,9 +181,10 @@
 
     const radios = Array.from(form.querySelectorAll("[data-retrieval-mode-toggle]"));
     const nativeOnly = Array.from(form.querySelectorAll("[data-native-only]"));
+    const apiOnly = Array.from(form.querySelectorAll("[data-api-only]"));
     const cards = Array.from(form.querySelectorAll("[data-retrieval-option]"));
 
-    nativeOnly.forEach((element) => {
+    [...nativeOnly, ...apiOnly].forEach((element) => {
       if (!element.hasAttribute("data-native-base-disabled")) {
         element.setAttribute("data-native-base-disabled", element.disabled ? "1" : "0");
       }
@@ -180,6 +193,7 @@
     function applyState() {
       const mode = currentMode(form, radios);
       const nativeSelected = mode === "native";
+      const apiSelected = mode === "api";
 
       cards.forEach((card) => {
         const selected = card.getAttribute("data-retrieval-option") === mode;
@@ -190,6 +204,11 @@
       nativeOnly.forEach((element) => {
         const baseDisabled = element.getAttribute("data-native-base-disabled") === "1";
         element.disabled = baseDisabled || !nativeSelected;
+      });
+
+      apiOnly.forEach((element) => {
+        const baseDisabled = element.getAttribute("data-native-base-disabled") === "1";
+        element.disabled = baseDisabled || !apiSelected;
       });
     }
 

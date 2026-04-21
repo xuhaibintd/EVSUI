@@ -80,6 +80,30 @@ _JP_ENTITY_TYPE_SUFFIXES: tuple[tuple[str, str], ...] = (
     ("\u57fa\u6e96", "valuation"),
     ("\u5bfe\u8c61", "coverage"),
 )
+_PLACEHOLDER_ENTITY_LABELS = {
+    "CARDINAL",
+    "DATE",
+    "DOCUMENT",
+    "EVENT",
+    "FACILITY",
+    "GPE",
+    "LANGUAGE",
+    "LAW",
+    "LOCATION",
+    "MONEY",
+    "NORP",
+    "NUMBER",
+    "ORDINAL",
+    "ORGANIZATION",
+    "PERCENT",
+    "PERSON",
+    "PRODUCT",
+    "QUANTITY",
+    "ROLE",
+    "TIME",
+    "UNKNOWN",
+    "WORK_OF_ART",
+}
 
 
 def _classify_entity_type(name: str) -> str:
@@ -87,6 +111,17 @@ def _classify_entity_type(name: str) -> str:
         if name.endswith(suffix):
             return entity_type
     return "section_topic"
+
+
+def _is_placeholder_entity_label(text: str | None, entity_type: str | None = None) -> bool:
+    normalized = _as_text(text, max_len=1000)
+    if not normalized:
+        return False
+    label = normalized.strip().upper()
+    if label in _PLACEHOLDER_ENTITY_LABELS:
+        return True
+    normalized_type = _as_text(entity_type, max_len=100)
+    return bool(normalized_type and label == normalized_type.strip().upper())
 
 
 def _extract_section_topic_entity(title: str | None) -> str | None:
@@ -251,6 +286,8 @@ def build_bookrag_entities(
 
     def get_or_create_entity(name: str, entity_type: str) -> dict[str, Any] | None:
         normalized_input = _as_text(name, max_len=1000)
+        if _is_placeholder_entity_label(normalized_input, entity_type):
+            return None
         if entity_type in {"DATE", "MONEY"}:
             canonical_name = normalized_input
         else:
@@ -322,6 +359,8 @@ def build_bookrag_entities(
             return resolved
         normalized_name = _as_text(name, max_len=1000)
         if not normalized_name:
+            return None
+        if _is_placeholder_entity_label(normalized_name):
             return None
         entity = get_or_create_entity(normalized_name, _guess_relation_entity_type(normalized_name))
         if entity is None:

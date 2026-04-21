@@ -41,7 +41,14 @@ from app.session_state import (
     session_id_from_request,
     user_initials,
 )
-from app.teradata_runtime import TERADATA_IMPORT_ERROR, VSManager, VectorStore, remove_context
+from app.teradata_runtime import (
+    TERADATA_IMPORT_ERROR,
+    VSManager,
+    VectorStore,
+    create_context,
+    remove_context,
+    set_auth_token,
+)
 from app.utils.table_state import (
     apply_chat_list_output_to_state,
     apply_list_output_to_state,
@@ -312,6 +319,41 @@ def _cleanup_context() -> dict[str, str]:
         except Exception:
             result["remove_context"] = "error"
     return result
+
+
+def _ensure_connected_runtime_for_session(request: Request, app) -> None:
+    _activate_session_state(request, app)
+    state = app.state.evs_state
+    if not state.get("connected"):
+        raise RuntimeError("Step 1 is not connected for the active session.")
+    if create_context is None or set_auth_token is None:
+        raise RuntimeError(f"teradataml/teradatagenai runtime is unavailable: {TERADATA_IMPORT_ERROR}")
+
+    params = dict(state.get("params") or {})
+    host = str(params.get("host") or "").strip()
+    username = str(params.get("username") or "").strip()
+    password = params.get("password") or ""
+    ues_url = str(params.get("ues_url") or "").strip()
+    pat_token = str(params.get("pat_token") or "").strip()
+    pem_hint = str(params.get("pem_file") or "").strip()
+    if not all([host, username, password, ues_url, pat_token]):
+        raise RuntimeError("Stored Step 1 connection parameters are incomplete for runtime reactivation.")
+
+    cleanup_before = _cleanup_context()
+    _ = cleanup_before
+    create_context(host=host, username=username, password=password)
+
+    base_url = _derive_base_url(ues_url)
+    resolved_pem_for_auth = _resolve_path_hint(pem_hint)
+    normalized_pem_for_auth = _normalize_pem_filename_for_auth(resolved_pem_for_auth) if resolved_pem_for_auth else ""
+    auth_kwargs = {"base_url": base_url, "pat_token": pat_token}
+    if normalized_pem_for_auth:
+        auth_kwargs["pem_file"] = normalized_pem_for_auth
+    elif resolved_pem_for_auth:
+        auth_kwargs["pem_file"] = resolved_pem_for_auth
+    elif pem_hint:
+        auth_kwargs["pem_file"] = pem_hint
+    set_auth_token(**auth_kwargs)
 
 
 def _cleanup_result_status(cleanup_result: dict[str, str]) -> str:

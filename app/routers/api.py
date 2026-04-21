@@ -12,7 +12,12 @@ from pydantic import BaseModel, Field
 from app.services.bookrag_retrieval import retrieve_bookrag_evidence
 from app.teradata_runtime import TERADATA_IMPORT_ERROR, VectorStore, execute_sql
 from app.utils.table_state import format_preview
-from app.web_support import _activate_session_state, _build_bookrag_chat_reply, _is_logged_in
+from app.web_support import (
+    _activate_session_state,
+    _build_bookrag_chat_reply,
+    _ensure_connected_runtime_for_session,
+    _is_logged_in,
+)
 
 router = APIRouter()
 
@@ -119,6 +124,47 @@ class BookRAGEvidenceBlockResponse(BaseModel):
     ordinal: int | None = None
 
 
+class BookRAGEvidenceEntityResponse(BaseModel):
+    entity_id: str | None = None
+    doc_id: str | None = None
+    canonical_name: str | None = None
+    display_name: str | None = None
+    entity_type: str | None = None
+    mention_count: int | None = None
+    node_count: int | None = None
+
+
+class BookRAGEvidenceMappingResponse(BaseModel):
+    link_id: str | None = None
+    entity_id: str | None = None
+    doc_id: str | None = None
+    node_id: str | None = None
+    section_node_id: str | None = None
+    source_field: str | None = None
+    mention_text: str | None = None
+    page_start: int | None = None
+    page_end: int | None = None
+    ordinal: int | None = None
+    section_path: str | None = None
+
+
+class BookRAGEvidenceRelationResponse(BaseModel):
+    relation_id: str | None = None
+    doc_id: str | None = None
+    source_element_id: str | None = None
+    source_node_id: str | None = None
+    section_node_id: str | None = None
+    from_entity_id: str | None = None
+    from_entity_text: str | None = None
+    relationship: str | None = None
+    to_entity_id: str | None = None
+    to_entity_text: str | None = None
+    page_start: int | None = None
+    page_end: int | None = None
+    ordinal: int | None = None
+    section_path: str | None = None
+
+
 class BookRAGSectionChainItemResponse(BaseModel):
     node_id: str | None = None
     title: str | None = None
@@ -137,11 +183,19 @@ class BookRAGEvidencePackageResponse(BaseModel):
     section: BookRAGEvidenceSectionResponse | None = None
     section_chain: list[BookRAGSectionChainItemResponse] = Field(default_factory=list)
     block: BookRAGEvidenceBlockResponse | None = None
+    entities: list[BookRAGEvidenceEntityResponse] = Field(default_factory=list)
+    mapping: list[BookRAGEvidenceMappingResponse] = Field(default_factory=list)
+    relations: list[BookRAGEvidenceRelationResponse] = Field(default_factory=list)
 
 
 class BookRAGEvidenceResponse(BaseModel):
     vector_store_name: str
     schema_name: str | None = None
+    doc_id: str | None = None
+    filename: str | None = None
+    source_file: str | None = None
+    workflow_name: str | None = None
+    processing_profile: str | None = None
     packages: list[BookRAGEvidencePackageResponse] = Field(default_factory=list)
     package_count: int
     packages_total: int | None = None
@@ -198,6 +252,7 @@ class BookRAGLLMEvidenceItemResponse(BaseModel):
     source_element_id: str | None = None
     entities: list[dict[str, Any]] = Field(default_factory=list)
     mapping: list[dict[str, Any]] = Field(default_factory=list)
+    relations: list[dict[str, Any]] = Field(default_factory=list)
     why_selected: str | None = None
 
 
@@ -401,7 +456,7 @@ def _build_bookrag_dummy_data(*, question: str, vector_store_name: str, schema_n
         },
     }
 
-def _retrieve_bookrag_evidence_or_raise(*, question: str, vector_store_name: str, schema_name: str | None):
+def _retrieve_bookrag_evidence_or_raise(*, question: str, vector_store_name: str, schema_name: str | None, top_k: int | None = None):
     if VectorStore is None:
         raise HTTPException(status_code=503, detail=f"VectorStore runtime is unavailable: {TERADATA_IMPORT_ERROR}")
     if execute_sql is None:
@@ -422,7 +477,10 @@ def _retrieve_bookrag_evidence_or_raise(*, question: str, vector_store_name: str
 
     try:
         try:
-            similarity_result = vector_store.similarity_search(question=question_value)
+            similarity_result = vector_store.similarity_search(
+                question=question_value,
+                top_k=_clamp_top_k(top_k) if top_k is not None else None,
+            )
         except TypeError:
             similarity_result = vector_store.similarity_search(question_value)
     except Exception as ex:
@@ -447,6 +505,15 @@ def _clamp_top_k(raw: int | None, *, default: int = 5, minimum: int = 1, maximum
     except Exception:
         value = default
     return max(minimum, min(maximum, value))
+
+
+def _normalize_optional_text(raw: object) -> str | None:
+    if raw is None:
+        return None
+    value = str(raw).strip()
+    if not value or value.lower() == "none":
+        return None
+    return value
 
 
 def _normalize_bookrag_evidence(*, evidence: dict[str, object] | None, top_k: int | None) -> dict[str, object]:
@@ -522,6 +589,7 @@ def _build_bookrag_llm_input(
             item["entities"] = package.get("entities") or []
         if include_mapping:
             item["mapping"] = package.get("mapping") or []
+        item["relations"] = package.get("relations") or []
         evidence_items.append(item)
 
     return {
@@ -636,7 +704,34 @@ def _build_bookrag_llm_prompt(llm_input: dict[str, object]) -> str:
         content = str(item.get("content") or "").strip()
         if len(content) > 1800:
             content = content[:1800] + " ..."
-        evidence_lines.append(f"[{item.get('rank')}] node_id={node_id} title={title}{page_label}\n{content}")
+        entity_items = list(item.get("entities") or [])
+        relation_items = list(item.get("relations") or [])
+        entity_preview = ", ".join(
+            str(entity.get("display_name") or entity.get("canonical_name") or entity.get("entity_id") or "").strip()
+            for entity in entity_items[:8]
+            if str(entity.get("display_name") or entity.get("canonical_name") or entity.get("entity_id") or "").strip()
+        )
+        relation_preview = "; ".join(
+            " | ".join(
+                part for part in [
+                    str(relation.get("from_entity_text") or relation.get("from_entity_id") or "").strip(),
+                    str(relation.get("relationship") or "").strip(),
+                    str(relation.get("to_entity_text") or relation.get("to_entity_id") or "").strip(),
+                ]
+                if part
+            )
+            for relation in relation_items[:6]
+            if any(
+                str(relation.get(field) or "").strip()
+                for field in ("from_entity_text", "from_entity_id", "relationship", "to_entity_text", "to_entity_id")
+            )
+        )
+        lines = [f"[{item.get('rank')}] node_id={node_id} title={title}{page_label}", content]
+        if entity_preview:
+            lines.append(f"Entities: {entity_preview}")
+        if relation_preview:
+            lines.append(f"Relations: {relation_preview}")
+        evidence_lines.append("\n".join(lines))
     prompt_parts = [
         "You are a grounded BookRAG answerer.",
         *instructions,
@@ -719,17 +814,18 @@ async def api_bookrag_retrieve_get(
     top_k: int = 5,
     dummy: str | None = None,
 ):
-    schema_value = str(schema_name).strip() or None
+    schema_value = _normalize_optional_text(schema_name)
     top_k_value = _clamp_top_k(top_k)
     has_runtime_inputs = any(value is not None for value in (question, vector_store_name, schema_name))
     if has_runtime_inputs:
         auth_context = _require_api_access(request)
         if auth_context.get("mode") == "session":
-            _activate_session_state(request, request.app)
+            _ensure_connected_runtime_for_session(request, request.app)
         question_value, vector_store_value, evidence = _retrieve_bookrag_evidence_or_raise(
             question=question,
             vector_store_name=vector_store_name,
             schema_name=schema_value,
+            top_k=top_k_value,
         )
         evidence = _normalize_bookrag_evidence(evidence=evidence, top_k=top_k_value)
         assistant_message = _build_bookrag_chat_reply(evidence, vector_store_value)
@@ -784,17 +880,18 @@ async def api_bookrag_answer_get(
     schema_name: str | None = None,
     top_k: int = 5,
 ):
-    schema_value = str(schema_name).strip() or None
+    schema_value = _normalize_optional_text(schema_name)
     top_k_value = _clamp_top_k(top_k)
     has_runtime_inputs = any(value is not None for value in (question, vector_store_name, schema_name))
     if has_runtime_inputs:
         auth_context = _require_api_access(request)
         if auth_context.get("mode") == "session":
-            _activate_session_state(request, request.app)
+            _ensure_connected_runtime_for_session(request, request.app)
         question_value, vector_store_value, evidence = _retrieve_bookrag_evidence_or_raise(
             question=question,
             vector_store_name=vector_store_name,
             schema_name=schema_value,
+            top_k=top_k_value,
         )
         evidence = _normalize_bookrag_evidence(evidence=evidence, top_k=top_k_value)
         llm_input = _build_bookrag_llm_input(
@@ -907,14 +1004,15 @@ async def api_bookrag_answer_get(
 async def api_bookrag_retrieve(request: Request, payload: BookRAGRetrieveRequest):
     auth_context = _require_api_access(request)
     if auth_context.get("mode") == "session":
-        _activate_session_state(request, request.app)
+        _ensure_connected_runtime_for_session(request, request.app)
 
-    schema_value = str(payload.schema_name).strip() or None
+    schema_value = _normalize_optional_text(payload.schema_name)
     top_k_value = _clamp_top_k(payload.top_k)
     question, vector_store_name, evidence = _retrieve_bookrag_evidence_or_raise(
         question=payload.question,
         vector_store_name=payload.vector_store_name,
         schema_name=schema_value,
+        top_k=top_k_value,
     )
     evidence = _normalize_bookrag_evidence(evidence=evidence, top_k=top_k_value)
 
@@ -950,14 +1048,15 @@ async def api_bookrag_retrieve(request: Request, payload: BookRAGRetrieveRequest
 async def api_bookrag_answer(request: Request, payload: BookRAGAnswerRequest):
     auth_context = _require_api_access(request)
     if auth_context.get("mode") == "session":
-        _activate_session_state(request, request.app)
+        _ensure_connected_runtime_for_session(request, request.app)
 
-    schema_value = str(payload.schema_name).strip() or None
+    schema_value = _normalize_optional_text(payload.schema_name)
     top_k_value = _clamp_top_k(payload.top_k)
     question, vector_store_name, evidence = _retrieve_bookrag_evidence_or_raise(
         question=payload.question,
         vector_store_name=payload.vector_store_name,
         schema_name=schema_value,
+        top_k=top_k_value,
     )
     evidence = _normalize_bookrag_evidence(evidence=evidence, top_k=top_k_value)
     llm_input = _build_bookrag_llm_input(

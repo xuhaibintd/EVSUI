@@ -1,7 +1,7 @@
 @import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600&family=Manrope:wght@400;500;600;700;800&family=Sora:wght@500;600;700;800&display=swap");
 
-@import url("modules/tokens.css?v=20260409-7");
-@import url("modules/base.css?v=20260411-11");
+@import url("modules/tokens.css?v=20260422-3");
+@import url("modules/base.css?v=20260422-2");
 @import url("modules/layout.css?v=20260411-11");
 @import url("modules/forms-uploads.css?v=20260414-1");
 @import url("modules/create.css?v=20260421-2");
@@ -9,7 +9,7 @@
 @import url("modules/chat.css?v=20260415-1");
 @import url("modules/precision-eval.css?v=20260420-4");
 @import url("modules/admin.css?v=20260422-1");
-@import url("modules/responsive.css?v=20260411-11");
+@import url("modules/responsive.css?v=20260422-3");
 
 
 #section-create .basic-layout {
@@ -729,7 +729,7 @@ button.ghost.monitor-btn-list:disabled {
   background: #ffffff;
   color: #1a1a1a !important;
   line-height: 1.35;
-  max-height: calc(1.35em * 3 + 0.9rem);
+  max-height: calc(1.35em * 2 + 1rem);
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-gutter: stable;

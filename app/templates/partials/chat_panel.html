@@ -30,7 +30,32 @@
               <span class="chat-retrieval-title">BookRAG API</span>
             </span>
           </label>
-          <input id="bookrag-api-url" class="chat-api-url chat-retrieval-control" type="text" readonly value="{{ request.url_for('api_bookrag_retrieve') }}" />
+          <div class="stack-inline" style="gap:0.75rem; align-items:center; min-width:0;">
+            <span class="label" style="margin:0; white-space:nowrap;">POST Endpoint</span>
+            <input
+              id="bookrag-api-url"
+              class="chat-api-url chat-retrieval-control"
+              data-api-only
+              type="text"
+              readonly
+              value="{{ request.url_for('api_bookrag_retrieve') }}"
+              style="flex:1 1 auto; min-width:0;"
+              {% if not evs.connected %}disabled{% endif %}
+            />
+            <span class="label" style="margin:0; white-space:nowrap;">top_k</span>
+            <input
+              id="bookrag-api-top-k"
+              class="chat-retrieval-control"
+              data-api-only
+              type="number"
+              min="1"
+              max="20"
+              step="1"
+              value="5"
+              style="width:6rem; flex:0 0 6rem;"
+              {% if not evs.connected %}disabled{% endif %}
+            />
+          </div>
         </div>
       </div>
     </div>

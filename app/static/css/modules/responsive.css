@@ -134,7 +134,7 @@
 
 @media (max-height: 900px) and (min-width: 1101px) and (max-width: 1600px) {
   :root {
-    --ui-topbar-h: clamp(76px, 10vh, 92px);
+    --ui-topbar-h: 156px;
     --create-result-h: clamp(220px, 40vh, 520px);
     --chat-window-h: clamp(90px, 16vh, 170px);
   }

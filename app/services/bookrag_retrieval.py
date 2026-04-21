@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import re
 from typing import Any
 
 from app.services.bookrag_schema import build_bookrag_table_targets
@@ -9,6 +10,16 @@ from app.utils.table_state import format_preview, normalize_header_key, table_fr
 NodeRow = dict[str, Any]
 EvidencePackage = dict[str, Any]
 BookRAGEvidenceResult = dict[str, Any]
+
+_SIMILARITY_PREVIEW_ROW_RE = re.compile(
+    r"^\s*\d+\s+"
+    r"(?P<score>-?\d+(?:\.\d+)?)\s+"
+    r"(?P<schema>\S+)\s+"
+    r"(?P<table>\S+)\s+"
+    r"(?P<node_id>\S+)\s+"
+    r"(?P<content>.*?)\s+"
+    r"(?P<index_label>\S+)\s*$"
+)
 
 
 def _as_text(value: Any) -> str | None:
@@ -78,6 +89,11 @@ def _cursor_to_rows(cursor: Any) -> list[dict[str, Any]]:
 
 
 def _extract_similarity_matches(similarity_result: Any) -> tuple[list[dict[str, Any]], str | None]:
+    preview_text = format_preview(similarity_result, max_chars=None)
+    preview_matches, preview_schema_name = _extract_similarity_matches_from_preview(preview_text)
+    if preview_matches:
+        return preview_matches, preview_schema_name
+
     headers, rows = table_from_result(similarity_result)
     if not headers or not rows:
         return [], None
@@ -141,6 +157,54 @@ def _extract_similarity_matches(similarity_result: Any) -> tuple[list[dict[str, 
     return matches, inferred_schema_name
 
 
+def _extract_similarity_matches_from_preview(preview_text: str) -> tuple[list[dict[str, Any]], str | None]:
+    text = str(preview_text or "").strip()
+    if not text or "similar_objects:" not in text:
+        return [], None
+
+    matches: list[dict[str, Any]] = []
+    seen_keys: set[str] = set()
+    inferred_schema_name: str | None = None
+    in_table = False
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip()
+        if not line:
+            continue
+        if "similar_objects:" in line:
+            in_table = True
+            continue
+        if not in_table:
+            continue
+
+        normalized = line.strip().lower()
+        if "databasename" in normalized and "node_id" in normalized:
+            continue
+        if not line.lstrip().startswith(tuple(str(idx) for idx in range(10))):
+            continue
+
+        match_obj = _SIMILARITY_PREVIEW_ROW_RE.match(line)
+        if match_obj is None:
+            continue
+        node_id = _as_text(match_obj.group("node_id"))
+        content = _as_text(match_obj.group("content"))
+        if not node_id and not content:
+            continue
+        dedupe_key = f"id:{node_id}" if node_id else f"content:{content}"
+        if dedupe_key in seen_keys:
+            continue
+        seen_keys.add(dedupe_key)
+        if inferred_schema_name is None:
+            inferred_schema_name = _as_text(match_obj.group("schema"))
+        matches.append(
+            {
+                "node_id": node_id,
+                "content": content,
+                "score": _as_float(match_obj.group("score")),
+            }
+        )
+    return matches, inferred_schema_name
+
+
 def _iter_batches(values: list[str], size: int = 64) -> list[list[str]]:
     return [values[idx:idx + size] for idx in range(0, len(values), size)]
 
@@ -198,8 +262,99 @@ def _fetch_rows_by_values(
     return rows
 
 
+def _safe_fetch_rows_by_ids(**kwargs) -> list[dict[str, Any]]:
+    try:
+        return _fetch_rows_by_ids(**kwargs)
+    except Exception:
+        return []
+
+
+def _safe_fetch_rows_by_values(**kwargs) -> list[dict[str, Any]]:
+    try:
+        return _fetch_rows_by_values(**kwargs)
+    except Exception:
+        return []
+
+
+def _dedupe_rows_by_key(rows: list[dict[str, Any]], *keys: str) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+    for row in rows:
+        key = tuple(row.get(column) for column in keys)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped
+
+
 def _node_source_element_id(node: NodeRow) -> str | None:
     return _as_text(node.get("source_element_id") or node.get("source_block_id"))
+
+
+def _normalize_entity_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "entity_id": _as_text(row.get("entity_id")),
+        "doc_id": _as_text(row.get("doc_id")),
+        "canonical_name": _as_text(row.get("canonical_name")),
+        "display_name": _as_text(row.get("display_name")),
+        "entity_type": _as_text(row.get("entity_type")),
+        "mention_count": _as_int(row.get("mention_count")),
+        "node_count": _as_int(row.get("node_count")),
+    }
+
+
+def _normalize_entity_link_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "link_id": _as_text(row.get("link_id")),
+        "entity_id": _as_text(row.get("entity_id")),
+        "doc_id": _as_text(row.get("doc_id")),
+        "node_id": _as_text(row.get("node_id")),
+        "section_node_id": _as_text(row.get("section_node_id")),
+        "source_field": _as_text(row.get("source_field")),
+        "mention_text": _as_text(row.get("mention_text")),
+        "page_start": _as_int(row.get("page_start")),
+        "page_end": _as_int(row.get("page_end")),
+        "ordinal": _as_int(row.get("ordinal")),
+        "section_path": _as_text(row.get("section_path")),
+    }
+
+
+def _normalize_entity_relation_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "relation_id": _as_text(row.get("relation_id")),
+        "doc_id": _as_text(row.get("doc_id")),
+        "source_element_id": _as_text(row.get("source_element_id")),
+        "source_node_id": _as_text(row.get("source_node_id")),
+        "section_node_id": _as_text(row.get("section_node_id")),
+        "from_entity_id": _as_text(row.get("from_entity_id")),
+        "from_entity_text": _as_text(row.get("from_entity_text")),
+        "relationship": _as_text(row.get("relationship")),
+        "to_entity_id": _as_text(row.get("to_entity_id")),
+        "to_entity_text": _as_text(row.get("to_entity_text")),
+        "page_start": _as_int(row.get("page_start")),
+        "page_end": _as_int(row.get("page_end")),
+        "ordinal": _as_int(row.get("ordinal")),
+        "section_path": _as_text(row.get("section_path")),
+    }
+
+
+def _normalize_document_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "doc_id": _as_text(row.get("doc_id")),
+        "vector_store_name": _as_text(row.get("vector_store_name")),
+        "workflow_id": _as_text(row.get("workflow_id")),
+        "workflow_name": _as_text(row.get("workflow_name")),
+        "job_id": _as_text(row.get("job_id")),
+        "processing_profile": _as_text(row.get("processing_profile")),
+        "source_file": _as_text(row.get("source_file")),
+        "filename": _as_text(row.get("filename")),
+        "filetype": _as_text(row.get("filetype")),
+        "filesize_bytes": _as_int(row.get("filesize_bytes")),
+        "page_count": _as_int(row.get("page_count")),
+        "language_hint": _as_text(row.get("language_hint")),
+        "created_at": _as_text(row.get("created_at")),
+    }
 
 
 def _nearest_section(node: NodeRow, node_map: dict[str, NodeRow]) -> NodeRow | None:
@@ -262,10 +417,10 @@ def build_bookrag_evidence_packages(
     similarity_result: Any,
     execute_sql_fn,
     schema_name: str | None = None,
-) -> list[EvidencePackage]:
+) -> tuple[list[EvidencePackage], dict[str, Any] | None]:
     matches, inferred_schema_name = _extract_similarity_matches(similarity_result)
     if not matches:
-        return []
+        return [], None
 
     effective_schema_name = schema_name or inferred_schema_name
     table_targets = build_bookrag_table_targets(vector_store_name)
@@ -376,14 +531,174 @@ def build_bookrag_evidence_packages(
         str(row.get("element_id")): row for row in block_rows if _as_text(row.get("element_id"))
     }
 
+    resolved_node_ids = [
+        node_id for node in resolved_nodes if (node_id := _as_text(node.get("node_id")))
+    ]
+    doc_ids = sorted(
+        {
+            doc_id
+            for node in resolved_nodes
+            if (doc_id := _as_text(node.get("doc_id")))
+        }
+    )
+    document_columns = [
+        "doc_id",
+        "vector_store_name",
+        "workflow_id",
+        "workflow_name",
+        "job_id",
+        "processing_profile",
+        "source_file",
+        "filename",
+        "filetype",
+        "filesize_bytes",
+        "page_count",
+        "language_hint",
+        "created_at",
+    ]
+    document_rows = _safe_fetch_rows_by_ids(
+        schema_name=effective_schema_name,
+        table_name=table_targets["documents"],
+        id_column="doc_id",
+        ids=doc_ids,
+        columns=document_columns,
+        execute_sql_fn=execute_sql_fn,
+    )
+    document_map = {
+        doc_id: _normalize_document_row(row)
+        for row in document_rows
+        if (doc_id := _as_text(row.get("doc_id")))
+    }
+
+    entity_link_columns = [
+        "link_id",
+        "entity_id",
+        "doc_id",
+        "node_id",
+        "section_node_id",
+        "source_field",
+        "mention_text",
+        "page_start",
+        "page_end",
+        "ordinal",
+        "section_path",
+    ]
+    entity_link_rows = _safe_fetch_rows_by_values(
+        schema_name=effective_schema_name,
+        table_name=table_targets["entity_links"],
+        value_column="node_id",
+        values=resolved_node_ids,
+        columns=entity_link_columns,
+        execute_sql_fn=execute_sql_fn,
+    )
+    entity_link_rows = _dedupe_rows_by_key(entity_link_rows, "link_id")
+    entity_links_by_node: dict[str, list[dict[str, Any]]] = {}
+    for row in entity_link_rows:
+        node_id = _as_text(row.get("node_id"))
+        if not node_id:
+            continue
+        entity_links_by_node.setdefault(node_id, []).append(_normalize_entity_link_row(row))
+
+    relation_columns = [
+        "relation_id",
+        "doc_id",
+        "source_element_id",
+        "source_node_id",
+        "section_node_id",
+        "from_entity_id",
+        "from_entity_text",
+        "relationship",
+        "to_entity_id",
+        "to_entity_text",
+        "page_start",
+        "page_end",
+        "ordinal",
+        "section_path",
+    ]
+    relation_rows = _safe_fetch_rows_by_values(
+        schema_name=effective_schema_name,
+        table_name=table_targets["entity_relations"],
+        value_column="source_node_id",
+        values=resolved_node_ids,
+        columns=relation_columns,
+        execute_sql_fn=execute_sql_fn,
+    )
+    relation_rows = _dedupe_rows_by_key(relation_rows, "relation_id")
+    relations_by_node: dict[str, list[dict[str, Any]]] = {}
+    for row in relation_rows:
+        source_node_id = _as_text(row.get("source_node_id"))
+        if not source_node_id:
+            continue
+        relations_by_node.setdefault(source_node_id, []).append(_normalize_entity_relation_row(row))
+
+    entity_ids = sorted(
+        {
+            entity_id
+            for row in entity_link_rows
+            for entity_id in [_as_text(row.get("entity_id"))]
+            if entity_id
+        }
+        |
+        {
+            entity_id
+            for row in relation_rows
+            for entity_id in (_as_text(row.get("from_entity_id")), _as_text(row.get("to_entity_id")))
+            if entity_id
+        }
+    )
+    entity_columns = [
+        "entity_id",
+        "doc_id",
+        "canonical_name",
+        "display_name",
+        "entity_type",
+        "mention_count",
+        "node_count",
+    ]
+    entity_rows = _safe_fetch_rows_by_ids(
+        schema_name=effective_schema_name,
+        table_name=table_targets["entities"],
+        id_column="entity_id",
+        ids=entity_ids,
+        columns=entity_columns,
+        execute_sql_fn=execute_sql_fn,
+    )
+    entity_map = {
+        entity_id: _normalize_entity_row(row)
+        for row in entity_rows
+        if (entity_id := _as_text(row.get("entity_id")))
+    }
+
     packages: list[EvidencePackage] = []
     for rank, match in enumerate(matches, start=1):
         node = _resolve_match_node(match, node_map, content_node_map)
         if node is None:
             continue
+        node_id = _as_text(node.get("node_id"))
         source_element_id = _node_source_element_id(node)
         block = block_map.get(source_element_id) if source_element_id else None
         nearest_section = _nearest_section(node, node_map)
+        doc_info = document_map.get(_as_text(node.get("doc_id")) or "")
+        mapping_rows = list(entity_links_by_node.get(node_id or "", []))
+        relation_rows_for_node = list(relations_by_node.get(node_id or "", []))
+        package_entity_ids = {
+            entity_id
+            for row in mapping_rows
+            for entity_id in [_as_text(row.get("entity_id"))]
+            if entity_id
+        }
+        for relation in relation_rows_for_node:
+            from_entity_id = _as_text(relation.get("from_entity_id"))
+            to_entity_id = _as_text(relation.get("to_entity_id"))
+            if from_entity_id:
+                package_entity_ids.add(from_entity_id)
+            if to_entity_id:
+                package_entity_ids.add(to_entity_id)
+        package_entities = [
+            entity_map[entity_id]
+            for entity_id in sorted(package_entity_ids)
+            if entity_id in entity_map
+        ]
         packages.append(
             {
                 "rank": rank,
@@ -426,9 +741,18 @@ def build_bookrag_evidence_packages(
                 }
                 if block is not None
                 else None,
+                "document": doc_info,
+                "entities": package_entities,
+                "mapping": mapping_rows,
+                "relations": relation_rows_for_node,
             }
         )
-    return packages
+    document_info = None
+    if resolved_nodes:
+        first_doc_id = _as_text(resolved_nodes[0].get("doc_id"))
+        if first_doc_id:
+            document_info = document_map.get(first_doc_id)
+    return packages, document_info
 
 
 def render_bookrag_evidence_packages(packages: list[EvidencePackage]) -> str:
@@ -476,19 +800,24 @@ def retrieve_bookrag_evidence(
     schema_name: str | None = None,
 ) -> BookRAGEvidenceResult:
     similarity_headers, similarity_rows = table_from_result(similarity_result)
-    packages = build_bookrag_evidence_packages(
+    similarity_matches, _ = _extract_similarity_matches(similarity_result)
+    packages, document_info = build_bookrag_evidence_packages(
         vector_store_name=vector_store_name,
         similarity_result=similarity_result,
         execute_sql_fn=execute_sql_fn,
         schema_name=schema_name,
     )
-    return {
+    payload = {
         "vector_store_name": vector_store_name,
         "schema_name": schema_name,
         "packages": packages,
         "package_count": len(packages),
-        "similarity_row_count": len(similarity_rows),
+        "similarity_row_count": len(similarity_matches) or len(similarity_rows),
         "similarity_headers": similarity_headers[1:] if similarity_headers[:1] == ["#"] else similarity_headers,
         "similarity_preview": format_preview(similarity_result, max_chars=500),
         "evidence_text": render_bookrag_evidence_packages(packages),
+        "retrieval_source": "bnode.content",
     }
+    if document_info:
+        payload.update(document_info)
+    return payload
