@@ -437,6 +437,38 @@ async def handle_upload_and_prepare_create(
             ready_confirmed, status_output_preview, readiness_error, _ready_status_text = await _wait_for_vectorstore_ready(
                 vector_store
             )
+            if (not ready_confirmed) and readiness_error and callable(verify_vectorstore_exists_fn):
+                fallback_verified = False
+                fallback_detail = ""
+                fallback_error = ""
+                try:
+                    fallback_verified, fallback_detail, fallback_error = verify_vectorstore_exists_fn(
+                        vector_store_name,
+                        allow_status_fallback=True,
+                    )
+                except Exception as verify_ex:
+                    fallback_error = str(verify_ex)
+
+                if fallback_detail and not status_output_preview:
+                    status_output_preview = fallback_detail
+
+                if fallback_verified:
+                    refreshed_vector_store = vector_store_cls(vector_store_name)
+                    fallback_state, fallback_status_text, fallback_preview, fallback_status_error = _read_vectorstore_status(
+                        refreshed_vector_store
+                    )
+                    if fallback_preview:
+                        status_output_preview = fallback_preview
+                    if fallback_state == "ready":
+                        ready_confirmed = True
+                        warnings.append(
+                            f"Primary VectorStore.status() check was inconclusive after create(); fallback probe confirmed '{vector_store_name}' is Ready."
+                        )
+                    elif fallback_status_error and not readiness_error:
+                        readiness_error = fallback_status_error
+                    elif fallback_error and not readiness_error:
+                        readiness_error = fallback_error
+
             if ready_confirmed:
                 result_status = "ok_with_warnings" if warnings else "ok"
                 result_message = "Step 2 completed. VectorStore.create() executed successfully and status is Ready."
