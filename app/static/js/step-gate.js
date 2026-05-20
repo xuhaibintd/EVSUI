@@ -4,7 +4,8 @@
   function createStepGate(options = {}) {
     const connectSectionId = options.connectSectionId || "section-connect";
     const connectContentId = options.connectContentId || "section-connect-content";
-    const lockedSections = options.lockedSections || ["section-create", "section-chat"];
+    const lockedSections =
+      options.lockedSections || ["section-create", "section-chat", "section-eval", "section-admin"];
     const menuHintId = options.menuHintId || "menu-hint";
     const wizardNoteSelector = options.wizardNoteSelector || "#section-connect .wizard-note";
     const noteConnectedText = options.noteConnectedText || "Step 1 completed. Continue to Step 2.";
@@ -62,6 +63,7 @@
       document.querySelectorAll(".menu-item").forEach((item) => {
         const isLockedMenu = lockedSections.includes(item.dataset.section || "");
         item.classList.toggle("locked", locked && isLockedMenu);
+        item.classList.toggle("disabled", locked && isLockedMenu);
         if (isLockedMenu) {
           item.setAttribute("aria-disabled", locked ? "true" : "false");
           if ("disabled" in item) {

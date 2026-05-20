@@ -100,24 +100,15 @@
   }
 
   .topbar {
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas:
-      "brand actions"
-      "title title";
-    align-items: start;
-  }
-
-  .brand-block {
-    grid-area: brand;
+    grid-template-columns: minmax(12rem, var(--left-rail-w)) minmax(0, 1fr) auto;
+    align-items: center;
   }
 
   .title-block {
-    grid-area: title;
     min-width: 0;
   }
 
   .top-actions {
-    grid-area: actions;
     justify-self: end;
     flex-wrap: wrap;
     justify-content: flex-end;
