@@ -58,6 +58,7 @@ This project should follow Unstructured's current hosted API guidance:
 
 Official references:
 - Workflow docs: https://docs.unstructured.io/api-reference/workflow/workflows
+- Workflow available models: https://docs.unstructured.io/api-reference/workflow/models
 - Workflow UI guide: https://docs.unstructured.io/ui/workflows
 - Partition Endpoint overview: https://docs.unstructured.io/platform-api/partition-api/overview
 - Partition Endpoint parameters: https://docs.unstructured.io/api-reference/partition/api-parameters
@@ -178,6 +179,8 @@ These are **application defaults**, not official Unstructured defaults:
 - Configure Unstructured credentials in `app/config/unstructured.json`.
 - Supported API key fields: `api_key`, `key_id`, `UNSTRUCTURED_API_KEY`, `UNSTRUCTURED_API_KEY_AUTH`
 - Supported API URL fields: `api_url`, `UNSTRUCTURED_API_URL`, `UNSTRUCTURED_PLATFORM_URL`
+- Unstructured does not currently expose a public Workflow models-list endpoint in the documented API or Python SDK. EVSUI ships with an internal fallback model catalog and can load overrides from `app/config/unstructured_models.json` or `UNSTRUCTURED_MODEL_CATALOG_PATH`.
+- To update UI model choices without code changes, copy `app/config/unstructured_models.example.json` to `app/config/unstructured_models.json` and edit the `partitioner_vlm`, `enrichment`, or `table_to_html` sections.
 
 Example:
 

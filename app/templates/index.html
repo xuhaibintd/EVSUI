@@ -26,7 +26,7 @@
     </article>
 
     <article class="panel menu-section{% if not evs.connected %} locked{% endif %}" id="section-create" data-step="2">
-      <div class="panel-content">
+      <div class="panel-content" id="section-create-content">
         {% include "partials/create_panel.html" %}
       </div>
       <div class="wizard-nav">
@@ -38,7 +38,7 @@
     </article>
 
     <article class="panel menu-section{% if not evs.connected %} locked{% endif %}" id="section-chat" data-step="3">
-      <div class="panel-content">
+      <div class="panel-content" id="section-chat-content">
         {% include "partials/chat_panel.html" %}
       </div>
       <div class="wizard-nav">
@@ -51,7 +51,7 @@
     </article>
 
     <article class="panel menu-section{% if not evs.connected %} locked{% endif %}" id="section-eval" data-step="4">
-      <div class="panel-content">
+      <div class="panel-content" id="section-eval-content">
         {% include "partials/precision_eval_panel.html" %}
       </div>
       <div class="wizard-nav">
@@ -64,7 +64,7 @@
     </article>
 
     <article class="panel menu-section{% if not evs.connected %} locked{% endif %}" id="section-admin" data-step="5">
-      <div class="panel-content">
+      <div class="panel-content" id="section-admin-content">
         {% include "partials/bookrag_admin_panel.html" %}
       </div>
       <div class="wizard-nav">

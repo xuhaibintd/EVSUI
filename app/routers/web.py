@@ -429,7 +429,18 @@ async def evs_reset(request: Request):
     request.app.state.last_create_operation = None
     request.app.state.document_uploads = []
     request.app.state.document_upload_notices = []
-    return _render_connect_panel(request, request.app)
+    request.app.state.chat_history = []
+    _persist_active_session_state(request, request.app)
+    headers = getattr(request, "headers", {})
+    if headers.get("HX-Request", "").lower() != "true":
+        return _render_connect_panel(request, request.app)
+    context = _build_home_context(request, request.app)
+    context["is_htmx"] = True
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "partials/evs_reset_response.html",
+        context,
+    )
 
 
 @router.post("/ui/create/upload-documents", response_class=HTMLResponse)

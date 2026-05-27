@@ -1,6 +1,14 @@
 from __future__ import annotations
 
+import json
+import os
+from pathlib import Path
+from typing import Any
+
 from .constants import DOC_PIPELINE_UI_DEFAULTS
+
+
+_DEFAULT_MODEL_CATALOG_PATH = Path(__file__).resolve().parents[2] / "config" / "unstructured_models.json"
 
 
 def _merge_wrapper_class(existing: str | None, extra: str | None) -> str:
@@ -12,104 +20,73 @@ def _merge_wrapper_class(existing: str | None, extra: str | None) -> str:
     return " ".join(dict.fromkeys(parts))
 
 
+def _load_model_catalog() -> dict[str, Any]:
+    raw_path = os.getenv("UNSTRUCTURED_MODEL_CATALOG_PATH", "").strip()
+    path = Path(raw_path) if raw_path else _DEFAULT_MODEL_CATALOG_PATH
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _normalize_model_ids(raw: Any) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    return [str(model_id).strip() for model_id in raw if str(model_id).strip()]
+
+
+def _model_options(model_ids: list[str]) -> list[dict[str, str]]:
+    return [{"value": model_id, "label": model_id} for model_id in model_ids]
+
+
+def _model_option_groups(catalog: dict[str, Any], key: str, fallback: dict[str, list[str]]) -> list[dict[str, object]]:
+    section = catalog.get(key)
+    merged = dict(fallback)
+    if isinstance(section, dict):
+        for raw_label, raw_models in section.items():
+            label = str(raw_label).strip()
+            models = _normalize_model_ids(raw_models)
+            if label and models:
+                merged[label] = models
+    return [{"label": label, "options": _model_options(models)} for label, models in merged.items()]
+
+
 def _build_multi_format_field_map() -> dict[str, dict[str, object]]:
     defaults = DOC_PIPELINE_UI_DEFAULTS
-
-    vlm_model_option_groups = [
-        {
-            "label": "Anthropic",
-            "options": [
-                {"value": "claude-opus-4-5-20251101", "label": "claude-opus-4-5-20251101"},
-                {"value": "claude-3-7-sonnet-20250219", "label": "claude-3-7-sonnet-20250219"},
-                {"value": "claude-sonnet-4-20250514", "label": "claude-sonnet-4-20250514"},
-                {"value": "claude-sonnet-4-5-20250929", "label": "claude-sonnet-4-5-20250929"},
-            ],
-        },
-        {
-            "label": "Bedrock",
-            "options": [
-                {"value": "us.amazon.nova-lite-v1:0", "label": "us.amazon.nova-lite-v1:0"},
-                {"value": "us.amazon.nova-pro-v1:0", "label": "us.amazon.nova-pro-v1:0"},
-                {"value": "us.anthropic.claude-3-haiku-20240307-v1:0", "label": "us.anthropic.claude-3-haiku-20240307-v1:0"},
-                {"value": "us.anthropic.claude-3-opus-20240229-v1:0", "label": "us.anthropic.claude-3-opus-20240229-v1:0"},
-                {"value": "us.anthropic.claude-3-sonnet-20240229-v1:0", "label": "us.anthropic.claude-3-sonnet-20240229-v1:0"},
-                {"value": "us.anthropic.claude-3-7-sonnet-20250219-v1:0", "label": "us.anthropic.claude-3-7-sonnet-20250219-v1:0"},
-                {"value": "us.anthropic.claude-sonnet-4-20250514-v1:0", "label": "us.anthropic.claude-sonnet-4-20250514-v1:0"},
-            ],
-        },
-        {
-            "label": "OpenAI",
-            "options": [
-                {"value": "gpt-4o", "label": "gpt-4o"},
-                {"value": "gpt-5-mini-2025-08-07", "label": "gpt-5-mini-2025-08-07"},
-            ],
-        },
-        {
-            "label": "Vertex AI",
-            "options": [
-                {"value": "gemini-2.0-flash-001", "label": "gemini-2.0-flash-001"},
-            ],
-        },
-    ]
-
-    enrichment_model_groups = [
-        {
-            "label": "Anthropic",
-            "options": [
-                {"value": "claude-opus-4-5-20251101", "label": "claude-opus-4-5-20251101"},
-                {"value": "claude-3-7-sonnet-20250219", "label": "claude-3-7-sonnet-20250219"},
-                {"value": "claude-sonnet-4-20250514", "label": "claude-sonnet-4-20250514"},
-                {"value": "claude-sonnet-4-5-20250929", "label": "claude-sonnet-4-5-20250929"},
-            ],
-        },
-        {
-            "label": "Bedrock",
-            "options": [
-                {"value": "us.amazon.nova-lite-v1:0", "label": "us.amazon.nova-lite-v1:0"},
-                {"value": "us.amazon.nova-pro-v1:0", "label": "us.amazon.nova-pro-v1:0"},
-                {"value": "us.anthropic.claude-3-haiku-20240307-v1:0", "label": "us.anthropic.claude-3-haiku-20240307-v1:0"},
-                {"value": "us.anthropic.claude-3-opus-20240229-v1:0", "label": "us.anthropic.claude-3-opus-20240229-v1:0"},
-                {"value": "us.anthropic.claude-3-sonnet-20240229-v1:0", "label": "us.anthropic.claude-3-sonnet-20240229-v1:0"},
-                {"value": "us.anthropic.claude-3-7-sonnet-20250219-v1:0", "label": "us.anthropic.claude-3-7-sonnet-20250219-v1:0"},
-                {"value": "us.anthropic.claude-sonnet-4-20250514-v1:0", "label": "us.anthropic.claude-sonnet-4-20250514-v1:0"},
-                {"value": "us.anthropic.claude-sonnet-4-5-20250929-v1:0", "label": "us.anthropic.claude-sonnet-4-5-20250929-v1:0"},
-            ],
-        },
-        {
-            "label": "OpenAI",
-            "options": [
-                {"value": "gpt-4o", "label": "gpt-4o"},
-                {"value": "gpt-4o-mini", "label": "gpt-4o-mini"},
-                {"value": "gpt-5-mini", "label": "gpt-5-mini"},
-            ],
-        },
-        {
-            "label": "Vertex AI",
-            "options": [
-                {"value": "gemini-2.0-flash-001", "label": "gemini-2.0-flash-001"},
-            ],
-        },
-    ]
-
-    table_to_html_model_groups = [
-        {
-            "label": "Anthropic",
-            "options": [
-                {"value": "claude-opus-4-5-20251101", "label": "claude-opus-4-5-20251101"},
-                {"value": "claude-3-7-sonnet-20250219", "label": "claude-3-7-sonnet-20250219"},
-                {"value": "claude-sonnet-4-20250514", "label": "claude-sonnet-4-20250514"},
-                {"value": "claude-sonnet-4-5-20250929", "label": "claude-sonnet-4-5-20250929"},
-            ],
-        },
-        {
-            "label": "OpenAI",
-            "options": [
-                {"value": "gpt-4o", "label": "gpt-4o"},
-                {"value": "gpt-4o-mini", "label": "gpt-4o-mini"},
-                {"value": "gpt-5-mini", "label": "gpt-5-mini"},
-            ],
-        },
-    ]
+    model_catalog = _load_model_catalog()
+    default_vlm_models = {
+        "Anthropic": [
+            "claude-opus-4-5-20251101",
+            "claude-opus-4-6",
+            "claude-sonnet-4-20250514",
+            "claude-sonnet-4-5-20250929",
+        ],
+        "Bedrock": [
+            "us.amazon.nova-lite-v1:0",
+            "us.amazon.nova-pro-v1:0",
+            "us.anthropic.claude-3-haiku-20240307-v1:0",
+            "us.anthropic.claude-3-opus-20240229-v1:0",
+            "us.anthropic.claude-3-sonnet-20240229-v1:0",
+            "us.anthropic.claude-opus-4-5-20251101-v1:0",
+            "us.anthropic.claude-opus-4-6-v1",
+            "us.anthropic.claude-sonnet-4-20250514-v1:0",
+            "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        ],
+        "OpenAI": ["gpt-4o", "gpt-4o-mini", "gpt-5-mini", "gpt-5.2"],
+        "Azure OpenAI": ["gpt-4o", "gpt-4o-mini", "gpt-5-mini"],
+        "Vertex AI": ["gemini-2.0-flash-001", "gemini-2.5-flash", "gemini-2.5-pro"],
+    }
+    default_table_to_html_models = {
+        "Anthropic": default_vlm_models["Anthropic"],
+        "OpenAI": default_vlm_models["OpenAI"],
+        "Azure OpenAI": default_vlm_models["Azure OpenAI"],
+    }
+    vlm_model_option_groups = _model_option_groups(model_catalog, "partitioner_vlm", default_vlm_models)
+    enrichment_model_groups = _model_option_groups(model_catalog, "enrichment", default_vlm_models)
+    table_to_html_model_groups = _model_option_groups(model_catalog, "table_to_html", default_table_to_html_models)
 
     def _select_field(
         name: str,
@@ -227,6 +204,7 @@ def _build_multi_format_field_map() -> dict[str, dict[str, object]]:
                 {"value": "anthropic", "label": "Anthropic"},
                 {"value": "bedrock", "label": "Bedrock"},
                 {"value": "openai", "label": "OpenAI"},
+                {"value": "azure_openai", "label": "Azure OpenAI"},
                 {"value": "vertexai", "label": "Vertex AI"},
             ],
             wrapper_class="field doc-field-short",
@@ -361,6 +339,7 @@ def _build_multi_format_field_map() -> dict[str, dict[str, object]]:
                 {"value": "anthropic", "label": "Anthropic"},
                 {"value": "bedrock", "label": "Bedrock"},
                 {"value": "openai", "label": "OpenAI"},
+                {"value": "azure_openai", "label": "Azure OpenAI"},
             ],
             wrapper_class="field doc-field-medium",
         ),
@@ -396,6 +375,7 @@ def _build_multi_format_field_map() -> dict[str, dict[str, object]]:
                 {"value": "", "label": "(not used for twopass)"},
                 {"value": "anthropic", "label": "Anthropic"},
                 {"value": "openai", "label": "OpenAI"},
+                {"value": "azure_openai", "label": "Azure OpenAI"},
             ],
             wrapper_class="field doc-field-long",
         ),
@@ -432,6 +412,7 @@ def _build_multi_format_field_map() -> dict[str, dict[str, object]]:
                 {"value": "anthropic", "label": "Anthropic"},
                 {"value": "bedrock", "label": "Bedrock"},
                 {"value": "openai", "label": "OpenAI"},
+                {"value": "azure_openai", "label": "Azure OpenAI"},
                 {"value": "vertexai", "label": "Vertex AI"},
             ],
             wrapper_class="field doc-field-medium",
@@ -469,6 +450,7 @@ def _build_multi_format_field_map() -> dict[str, dict[str, object]]:
                 {"value": "anthropic", "label": "Anthropic"},
                 {"value": "bedrock", "label": "Bedrock"},
                 {"value": "openai", "label": "OpenAI"},
+                {"value": "azure_openai", "label": "Azure OpenAI"},
                 {"value": "vertexai", "label": "Vertex AI"},
             ],
             wrapper_class="field doc-field-medium",
@@ -598,6 +580,7 @@ def _build_multi_format_field_map() -> dict[str, dict[str, object]]:
                 {"value": "anthropic", "label": "Anthropic"},
                 {"value": "bedrock", "label": "Bedrock"},
                 {"value": "openai", "label": "OpenAI"},
+                {"value": "azure_openai", "label": "Azure OpenAI"},
                 {"value": "vertexai", "label": "Vertex AI"},
             ],
             wrapper_class="field doc-field-short",

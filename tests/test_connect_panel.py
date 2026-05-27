@@ -76,8 +76,10 @@ class ConnectResetRouteTests(unittest.IsolatedAsyncioTestCase):
         original_activate = web_router_module._activate_session_state
         original_cleanup = web_router_module._cleanup_context
         original_default_state = web_router_module._default_evs_state
+        original_persist = web_router_module._persist_active_session_state
         original_render = web_router_module._render_connect_panel
         try:
+            persisted = {"called": False}
             web_router_module._is_logged_in = lambda request, app: True
             web_router_module._activate_session_state = lambda request, app: None
             web_router_module._cleanup_context = lambda: {"vs_disconnect": "ok"}
@@ -87,9 +89,11 @@ class ConnectResetRouteTests(unittest.IsolatedAsyncioTestCase):
                 "last_success": "",
                 "connect_steps": [],
             }
+            web_router_module._persist_active_session_state = lambda request, app: persisted.update(called=True)
             web_router_module._render_connect_panel = lambda request, app: {
                 "evs": app.state.evs_state,
                 "create_form_values": app.state.create_form_values,
+                "chat_history": app.state.chat_history,
             }
 
             request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
@@ -98,6 +102,7 @@ class ConnectResetRouteTests(unittest.IsolatedAsyncioTestCase):
                 last_create_operation={"x": 1},
                 document_uploads=[{"name": "demo"}],
                 document_upload_notices=["n"],
+                chat_history=[{"role": "user", "content": "before"}],
             )))
 
             result = await web_router_module.evs_reset(request)
@@ -106,11 +111,14 @@ class ConnectResetRouteTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result["evs"]["last_success"], "Disconnected and reset completed.")
             self.assertIsInstance(result["create_form_values"], dict)
             self.assertIn("vector_store_name", result["create_form_values"])
+            self.assertEqual(result["chat_history"], [])
+            self.assertTrue(persisted["called"])
         finally:
             web_router_module._is_logged_in = original_is_logged_in
             web_router_module._activate_session_state = original_activate
             web_router_module._cleanup_context = original_cleanup
             web_router_module._default_evs_state = original_default_state
+            web_router_module._persist_active_session_state = original_persist
             web_router_module._render_connect_panel = original_render
 
 

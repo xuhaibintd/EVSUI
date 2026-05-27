@@ -65,6 +65,9 @@
     if (current === "openai") {
       return "OpenAI";
     }
+    if (current === "azure_openai") {
+      return "Azure OpenAI";
+    }
     if (current === "vertexai") {
       return "Vertex AI";
     }

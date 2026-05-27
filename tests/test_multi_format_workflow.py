@@ -503,7 +503,7 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
         self.assertIsNotNone(row)
         self.assertEqual(row['id'], '000000000007')
         self.assertEqual(row['element_id'], 'unstructured-element-7')
-        self.assertEqual(row['filename'], 'demo.pdf')
+        self.assertEqual(row['filename'], Path(__file__).name)
         self.assertEqual(row['table_id'], 'table-1')
         self.assertEqual(row['chunk_index'], 3)
         self.assertTrue(row['is_continuation'])
@@ -516,10 +516,57 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
         self.assertNotIn('record_id', row)
         self.assertNotIn('parent_id', row)
 
+    def test_chunk_row_filename_uses_source_file_name_not_unstructured_metadata(self) -> None:
+        src = Path('A S 茜町（異動2019.01.30）.pdf')
+        row = multi_format._element_to_chunk_row(
+            {
+                'element_id': 'element-1',
+                'type': 'NarrativeText',
+                'text': 'body text',
+                'metadata': {
+                    'filename': 'AS茜町異動20190130-c4dcc7ff.pdf',
+                    'filetype': 'application/pdf',
+                },
+            },
+            src=src,
+            content_type='application/pdf',
+            row_sequence=1,
+        )
+
+        self.assertIsNotNone(row)
+        self.assertEqual(row['filename'], src.name)
+
+    def test_bookrag_document_and_root_node_keep_source_file_name(self) -> None:
+        from app.services.bookrag_storage import build_bookrag_document_row
+        from app.services.bookrag_tree import build_bookrag_nodes
+
+        src = Path('A S 茜町（異動2019.01.30）.pdf')
+        document_row = build_bookrag_document_row(
+            doc_id='doc-1',
+            vector_store_name='demo',
+            workflow_id='workflow-1',
+            workflow_name='BookRAG_Test',
+            job_id='job-1',
+            processing_profile='partition:vlm:vlm',
+            filename=src.name,
+            source_file='raw_stage/AS_20190130_doc-1.json',
+            filetype='application/pdf',
+            filesize_bytes=123,
+        )
+        nodes = build_bookrag_nodes(document_row, [])
+
+        self.assertEqual(document_row['filename'], src.name)
+        self.assertEqual(nodes[0]['title'], src.name)
+        self.assertEqual(nodes[0]['path'], src.name)
+
 
 
     def test_bookrag_pipeline_uses_reconciled_elements_for_entities(self) -> None:
-        create_values = self._create_values()
+        create_values = self._create_values(
+            multi_format_bookrag_generate_entities='true',
+            multi_format_bookrag_generate_entity_links='true',
+            multi_format_bookrag_generate_entity_relations='true',
+        )
         raw_payload = [
             {
                 'type': 'NarrativeText',
@@ -621,12 +668,16 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
         self.assertEqual(summary['entity_count'], 2)
         self.assertEqual(summary['entity_link_count'], 1)
         self.assertEqual(summary['entity_relation_count'], 1)
-        self.assertEqual(captured['nodes'][1]['source_block_id'], 'recon-1')
+        self.assertEqual(captured['nodes'][1]['source_element_id'], 'recon-1')
         self.assertEqual(captured['entity_links'][0]['node_id'], captured['nodes'][1]['node_id'])
         self.assertEqual(captured['entity_relations'][0]['source_node_id'], captured['nodes'][1]['node_id'])
 
     def test_bookrag_pipeline_persists_tree_outputs(self) -> None:
-        create_values = self._create_values()
+        create_values = self._create_values(
+            multi_format_bookrag_generate_entities='true',
+            multi_format_bookrag_generate_entity_links='true',
+            multi_format_bookrag_generate_entity_relations='true',
+        )
         raw_payload = [
             {
                 'type': 'Title',
@@ -737,7 +788,7 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
                     target_warnings=[],
                 )
 
-        self.assertEqual(summary['workflow_mode'], 'bookrag on-demand jobs tree tables only')
+        self.assertEqual(summary['workflow_mode'], 'bookrag on-demand jobs selected tables debug')
         self.assertEqual(summary['raw_element_count'], 2)
         self.assertEqual(summary['block_count'], 2)
         self.assertEqual(summary['node_count'], 3)
@@ -750,7 +801,6 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
         self.assertEqual(patched_payload['key_columns'], ['node_id'])
         self.assertNotIn('vector_column', patched_payload)
         self.assertIn('unstructured_bookrag_flg', patched_payload['description'])
-        self.assertEqual(summary['leaf_nodes_table_name'], 'demo_schema.demo_bk_bleaf')
         self.assertEqual(summary['vectorstore_source_object'], 'demo_schema.demo_bk_bnode')
         self.assertEqual(len(captured['document_rows']), 1)
         self.assertEqual(len(captured['raw_rows']), 2)

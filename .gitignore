@@ -4,3 +4,4 @@ __pycache__/
 uploads/
 pem_runtime/
 .env
+app/config/unstructured_models.json
