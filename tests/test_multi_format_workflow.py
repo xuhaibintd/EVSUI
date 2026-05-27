@@ -503,7 +503,7 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
         self.assertIsNotNone(row)
         self.assertEqual(row['id'], '000000000007')
         self.assertEqual(row['element_id'], 'unstructured-element-7')
-        self.assertEqual(row['filename'], Path(__file__).name)
+        self.assertEqual(row['filename'], 'demo.pdf')
         self.assertEqual(row['table_id'], 'table-1')
         self.assertEqual(row['chunk_index'], 3)
         self.assertTrue(row['is_continuation'])
@@ -516,7 +516,7 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
         self.assertNotIn('record_id', row)
         self.assertNotIn('parent_id', row)
 
-    def test_chunk_row_filename_uses_source_file_name_not_unstructured_metadata(self) -> None:
+    def test_chunk_row_filename_uses_unstructured_metadata_filename(self) -> None:
         src = Path('A S 茜町（異動2019.01.30）.pdf')
         row = multi_format._element_to_chunk_row(
             {
@@ -534,7 +534,7 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
         )
 
         self.assertIsNotNone(row)
-        self.assertEqual(row['filename'], src.name)
+        self.assertEqual(row['filename'], 'AS茜町異動20190130-c4dcc7ff.pdf')
 
     def test_bookrag_document_and_root_node_keep_source_file_name(self) -> None:
         from app.services.bookrag_storage import build_bookrag_document_row

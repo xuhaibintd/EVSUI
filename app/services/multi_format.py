@@ -981,7 +981,7 @@ def _element_to_chunk_row(
     row = {
         "text": text,
         "type": _as_text(element.get("type"), max_len=50),
-        "filename": _as_text(src.name, max_len=255),
+        "filename": _as_text(metadata.get("filename"), max_len=255) or _as_text(src.name, max_len=255),
         "element_id": element_id,
         "id": row_id,
         "table_id": _as_text(metadata.get("table_id"), max_len=128),
