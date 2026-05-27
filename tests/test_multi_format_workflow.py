@@ -413,6 +413,50 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
         self.assertNotIn('model', partition_node['settings'])
         self.assertEqual(processing_profile, 'partition:vlm:auto,chunk:chunk_by_character')
 
+    def test_as_text_strips_invalid_unicode_for_teradata(self) -> None:
+        raw = "A\x00B\ud800C\ufdd0D\ufffeE\nF\tG"
+        self.assertEqual(multi_format._as_text(raw), "ABCDE\nF\tG")
+
+    def test_insert_chunk_rows_omits_invalid_unicode_from_sql_literals(self) -> None:
+        executed: list[str] = []
+
+        rows = [
+            {
+                "text": multi_format._as_text("Hello\x00World\ud800"),
+                "type": "NarrativeText",
+                "filename": "demo.pdf",
+                "element_id": "el-1",
+                "id": "000000000001",
+                "table_id": None,
+                "chunk_index": 1,
+                "is_continuation": False,
+                "num_carried_over_header_rows": None,
+                "partitioner_type": "vlm",
+                "image_description": multi_format._as_text("img\ufffe"),
+                "table_description": None,
+                "generative_ocr": None,
+                "table_to_html": None,
+                "filetype": "application/pdf",
+                "date_processed": "2026-05-27 00:00:00",
+            }
+        ]
+
+        inserted = multi_format._insert_chunk_rows(
+            schema_name=None,
+            table_name="demo_unstructured",
+            rows=rows,
+            execute_sql_fn=executed.append,
+        )
+
+        self.assertEqual(inserted, 1)
+        self.assertEqual(len(executed), 1)
+        sql = executed[0]
+        self.assertIn("HelloWorld", sql)
+        self.assertIn("img", sql)
+        self.assertNotIn("\x00", sql)
+        self.assertNotIn("\ud800", sql)
+        self.assertNotIn("\ufffe", sql)
+
     def test_bookrag_image_partition_options_ignore_multi_format_inputs(self) -> None:
         options, warnings, summary = multi_format._resolve_bookrag_image_partition_options(
             self._create_values(

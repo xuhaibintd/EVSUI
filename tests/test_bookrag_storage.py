@@ -7,10 +7,14 @@ import unittest
 from unittest import mock
 
 from app.services.bookrag_schema import BOOKRAG_RAW_COLUMNS
-from app.services.bookrag_storage import _insert_rows, _raw_row_to_element_dict, build_bookrag_raw_rows, persist_bookrag_dataset
+from app.services.bookrag_storage import _as_text, _insert_rows, _raw_row_to_element_dict, build_bookrag_raw_rows, persist_bookrag_dataset
 
 
 class BookragRawStorageTests(unittest.TestCase):
+    def test_as_text_strips_invalid_unicode_for_teradata(self) -> None:
+        raw = "A\x00B\ud800C\ufdd0D\uffffE"
+        self.assertEqual(_as_text(raw), "ABCDE")
+
     def test_raw_schema_includes_image_columns(self) -> None:
         column_names = [name for name, _ in BOOKRAG_RAW_COLUMNS]
         self.assertIn("image_caption", column_names)

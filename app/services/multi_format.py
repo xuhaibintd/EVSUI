@@ -14,6 +14,7 @@ from app.services.teradata_sql import (
     ExecuteSqlFn,
     _count_teradata_rows,
     _qualified_table_sql,
+    _sanitize_teradata_text,
     _sql_literal,
     _teradata_table_exists,
 )
@@ -736,6 +737,7 @@ def _as_text(value: Any, max_len: int | None = None) -> str | None:
         text = json.dumps(value, ensure_ascii=False)
     else:
         text = str(value)
+    text = _sanitize_teradata_text(text)
     text = text.strip()
     if not text:
         return None

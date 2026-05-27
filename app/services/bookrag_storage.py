@@ -20,7 +20,13 @@ from app.services.bookrag_schema import (
     BOOKRAG_NODE_COLUMNS,
     BOOKRAG_RAW_COLUMNS,
 )
-from app.services.teradata_sql import ExecuteSqlFn, _qualified_table_sql, _sql_literal, _sql_typed_literal
+from app.services.teradata_sql import (
+    ExecuteSqlFn,
+    _qualified_table_sql,
+    _sanitize_teradata_text,
+    _sql_literal,
+    _sql_typed_literal,
+)
 
 
 
@@ -164,7 +170,7 @@ def _metadata_dict(element: dict[str, Any]) -> dict[str, Any]:
 def _as_text(value: Any, max_len: int | None = None) -> str | None:
     if value is None:
         return None
-    text = str(value).strip()
+    text = _sanitize_teradata_text(str(value)).strip()
     if not text:
         return None
     if max_len is not None and len(text) > max_len:

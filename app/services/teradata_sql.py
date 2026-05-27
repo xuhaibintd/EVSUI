@@ -6,6 +6,34 @@ from typing import Any, Callable
 ExecuteSqlFn = Callable[[str], Any]
 
 
+def _sanitize_teradata_text(value: str) -> str:
+    if not value:
+        return value
+
+    cleaned_chars: list[str] = []
+    for ch in value:
+        codepoint = ord(ch)
+
+        # Keep common whitespace controls; drop other C0 controls and DEL.
+        if codepoint < 32 or codepoint == 127:
+            if ch in "\t\n\r":
+                cleaned_chars.append(ch)
+            continue
+
+        # Drop surrogate code points and Unicode noncharacters that Teradata
+        # may reject during character-set translation.
+        if 0xD800 <= codepoint <= 0xDFFF:
+            continue
+        if 0xFDD0 <= codepoint <= 0xFDEF:
+            continue
+        if (codepoint & 0xFFFF) in {0xFFFE, 0xFFFF}:
+            continue
+
+        cleaned_chars.append(ch)
+
+    return "".join(cleaned_chars)
+
+
 def _qualified_table_sql(schema_name: str | None, table_name: str) -> str:
     if schema_name:
         return f'"{schema_name}"."{table_name}"'
