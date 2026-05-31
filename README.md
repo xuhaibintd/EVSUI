@@ -1,10 +1,11 @@
 # Teradata Vector Store
 
-Teradata Vector Store is a `FastAPI + Jinja2 + HTMX` three-step interface for connecting to Teradata, creating vector stores, and validating retrieval in chat.
+Teradata Vector Store is a `FastAPI + Jinja2 + HTMX` interface for connecting to Teradata, creating vector stores, validating retrieval in chat, running precision checks, and managing per-session Unstructured IO credentials.
 
 ## Overview
 
-1. Step 1: Connect & Manage
+### Connect & Manage
+
 - Database connection and authentication:
   - `create_context(host, username, password)`
   - `set_auth_token(base_url, pat_token, pem_file)`
@@ -13,26 +14,39 @@ Teradata Vector Store is a `FastAPI + Jinja2 + HTMX` three-step interface for co
   - `VSManager.list()`
   - Select and run `VectorStore.destroy()`
 
-2. Step 2: Create Vector Store
+### Vector Store Creation
+
 - Supports multi-file upload
 - Full `VectorStore.create(...)` parameter form
 - Built-in parameter sets for `VECTORDISTANCE / KMEANS / HNSW`
 - `Multi Format` mode uses Unstructured Workflow Endpoint on-demand jobs, creates a Teradata table first, and writes processed chunk rows into `<Vector Store Name>_unstructured`.
 - `Multi-Format BookRAG` mode skips `VectorStore.create()` and uses Unstructured Workflow Endpoint on-demand jobs with inline `job_nodes` to collect raw elements into dedicated Teradata tables for traceability.
 
-3. Step 3: Retrieval Chat
+### Vector Store Retrieval
+
 - Supports `VectorStore.ask` and `VectorStore.similarity_search`
 - Independent Run List dropdown for chat target vector store
 
+### Precision Evaluation
+
+- Compares selected source PDF and generated JSON debug output.
+- Produces a precision evaluation report for inspection.
+
+### Admin Rules
+
+- Shows Unstructured IO account settings for the active session.
+- Saves `unstructured_api_url` and `unstructured_api_key` into the current user session.
+- Session values are used by Multi Format and Multi-Format BookRAG before falling back to `app/config/local_dev.json`.
+
 ## Current Behavior
 
-- Step 1 `Run List` and Step 3 `Run List` are decoupled (no cross-update).
-- In Step 3, clicking `Run List` loads real vector stores and displays an available item by default.
-- Step 1 `destroy` refreshes only Step 1 list data, not the Step 3 dropdown.
+- Connect & Manage `Run List` and Vector Store Retrieval `Run List` are decoupled (no cross-update).
+- In Vector Store Retrieval, clicking `Run List` loads real vector stores and displays an available item by default.
+- Connect & Manage `destroy` refreshes only the management list data, not the retrieval dropdown.
 - No auto-list on connect; list execution is manual.
-- Step 2 submit validation blocks create unless `vector_store_name`, `doc_pipeline_mode`, `embeddings_model`, and a document source are present. Uploaded files and `document_files` both satisfy this check.
+- Vector Store Creation submit validation blocks create unless `vector_store_name`, `doc_pipeline_mode`, `embeddings_model`, and a document source are present. Uploaded files and `document_files` both satisfy this check.
 - For uploaded-file create flow, `object_names` is not auto-filled by the UI.
-- Step 2 does not report success when `VectorStore.create()` merely returns; it waits until `VectorStore.status()` reaches `Ready`.
+- Vector Store Creation does not report success when `VectorStore.create()` merely returns; it waits until `VectorStore.status()` reaches `Ready`.
 - If `create()` reports `already exists`, the app verifies existence with unfiltered `VSManager.list()` and only reuses the store when its current status is `Ready`.
 
 ## Requirements
@@ -178,6 +192,8 @@ These are **application defaults**, not official Unstructured defaults:
 
 - For local debugging, copy `app/config/local_dev.example.json` to `app/config/local_dev.json` and fill in `unstructured`.
 - `app/config/local_dev.json` is ignored by Git and must not be committed.
+- Users can override Unstructured IO settings for their active session from the Admin Rules page.
+- Multi Format and Multi-Format BookRAG use session Unstructured IO settings first, then fall back to `app/config/local_dev.json`.
 - Supported API key fields: `api_key`, `key_id`, `UNSTRUCTURED_API_KEY`, `UNSTRUCTURED_API_KEY_AUTH`
 - Supported API URL fields: `api_url`, `UNSTRUCTURED_API_URL`, `UNSTRUCTURED_PLATFORM_URL`
 - Unstructured does not currently expose a public Workflow models-list endpoint in the documented API or Python SDK. EVSUI ships with an internal fallback model catalog and can load overrides from `app/config/unstructured_models.json` or `UNSTRUCTURED_MODEL_CATALOG_PATH`.
@@ -273,7 +289,7 @@ Open: `http://127.0.0.1:8010`
   - Fallback single-user env vars: `POC_ADMIN_USER`, `POC_ADMIN_PASSWORD` (used only when config file has no users).
 
 - Multi-user isolation:
-  - Each login gets its own session (`evsui_sid`) and independent UI state.
+  - Each login gets its own session (`evsui_sid`) and independent UI state, including Unstructured IO settings.
 
 ## Project Structure
 
@@ -301,6 +317,7 @@ Open: `http://127.0.0.1:8010`
 - `POST /ui/evs/select`, `POST /ui/evs/destroy`
 - `POST /ui/create/upload-documents`, `POST /ui/create/upload`
 - `POST /ui/chat`, `POST /ui/chat/reset`
+- `POST /ui/admin/unstructured-config`
 - `GET /healthz`
 
 ## Health Check
