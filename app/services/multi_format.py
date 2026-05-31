@@ -15,7 +15,7 @@ from app.services.teradata_sql import (
     _count_teradata_rows,
     _qualified_table_sql,
     _sanitize_teradata_text,
-    _sql_literal,
+    _sql_typed_literal,
     _teradata_table_exists,
 )
 from app.services.unstructured_runtime import (
@@ -104,20 +104,20 @@ FILE_BASED_CREATE_KEYS_TO_REMOVE = {
 
 UNSTRUCTURED_CHUNK_COLUMNS: list[tuple[str, str]] = [
     ("text", "VARCHAR(32000) CHARACTER SET UNICODE"),
-    ("type", "VARCHAR(50)"),
-    ("filename", "VARCHAR(255)"),
-    ("element_id", "VARCHAR(64)"),
+    ("type", "VARCHAR(50) CHARACTER SET UNICODE"),
+    ("filename", "VARCHAR(255) CHARACTER SET UNICODE"),
+    ("element_id", "VARCHAR(64) CHARACTER SET UNICODE"),
     ("id", 'VARCHAR(64) NOT NULL'),
-    ("table_id", "VARCHAR(128)"),
+    ("table_id", "VARCHAR(128) CHARACTER SET UNICODE"),
     ("chunk_index", "INTEGER"),
     ("is_continuation", "BYTEINT"),
     ("num_carried_over_header_rows", "INTEGER"),
-    ("partitioner_type", "VARCHAR(100)"),
+    ("partitioner_type", "VARCHAR(100) CHARACTER SET UNICODE"),
     ("image_description", "VARCHAR(32000) CHARACTER SET UNICODE"),
     ("table_description", "VARCHAR(32000) CHARACTER SET UNICODE"),
     ("generative_ocr", "VARCHAR(32000) CHARACTER SET UNICODE"),
     ("table_to_html", "VARCHAR(32000) CHARACTER SET UNICODE"),
-    ("filetype", "VARCHAR(50)"),
+    ("filetype", "VARCHAR(50) CHARACTER SET UNICODE"),
     ("date_processed", "VARCHAR(50)"),
 ]
 
@@ -477,6 +477,37 @@ def _drop_teradata_column_if_exists(
     return True
 
 
+def _ensure_unstructured_unicode_columns(
+    schema_name: str | None,
+    table_name: str,
+    execute_sql_fn: ExecuteSqlFn | None,
+) -> list[str]:
+    if execute_sql_fn is None:
+        raise RuntimeError("teradataml.execute_sql is unavailable.")
+    qualified_table = _qualified_table_sql(schema_name, table_name)
+    warnings: list[str] = []
+    for column_name, column_type in UNSTRUCTURED_CHUNK_COLUMNS:
+        if "CHARACTER SET UNICODE" not in column_type.upper():
+            continue
+        if not _teradata_column_exists(
+            schema_name=schema_name,
+            table_name=table_name,
+            column_name=column_name,
+            execute_sql_fn=execute_sql_fn,
+        ):
+            continue
+        quoted_column = column_name.replace('"', '""')
+        try:
+            execute_sql_fn(f'ALTER TABLE {qualified_table} MODIFY "{quoted_column}" {column_type}')
+        except Exception as ex:
+            raise RuntimeError(
+                f'Existing Multi-Format target table {qualified_table} has a non-UNICODE-compatible column "{column_name}". '
+                "Drop/recreate that table or use a new vector store name, then rerun Multi-Format preprocessing."
+            ) from ex
+        warnings.append(f'Ensured Multi-Format column "{column_name}" uses CHARACTER SET UNICODE.')
+    return warnings
+
+
 def _ensure_unstructured_teradata_table(
     schema_name: str | None,
     table_name: str,
@@ -489,12 +520,25 @@ def _ensure_unstructured_teradata_table(
     warnings: list[str] = []
     qualified_table = _qualified_table_sql(schema_name, table_name)
     table_exists = _teradata_table_exists(qualified_table, execute_sql_fn=execute_sql_fn)
+    table_created = False
+
+    if table_exists and clear_rows:
+        try:
+            execute_sql_fn(f"DROP TABLE {qualified_table}")
+            warnings.append(f"Recreated Multi-Format target table {qualified_table} to apply the latest UNICODE schema.")
+            table_exists = False
+        except Exception as ex:
+            raise RuntimeError(
+                f"Failed to recreate existing Multi-Format target table {qualified_table}. "
+                "Drop that table manually or use a new vector store name, then rerun Multi-Format preprocessing."
+            ) from ex
 
     if not table_exists:
         create_sql = _build_unstructured_table_ddl(
             qualified_table=qualified_table,
         )
         execute_sql_fn(create_sql)
+        table_created = True
     else:
         # Remove legacy column from previous schema versions.
         try:
@@ -506,8 +550,15 @@ def _ensure_unstructured_teradata_table(
             )
         except Exception as ex:
             warnings.append(f'Failed to drop legacy column "languages": {ex}')
+        warnings.extend(
+            _ensure_unstructured_unicode_columns(
+                schema_name=schema_name,
+                table_name=table_name,
+                execute_sql_fn=execute_sql_fn,
+            )
+        )
 
-    if clear_rows:
+    if clear_rows and not table_created:
         try:
             execute_sql_fn(f"DELETE FROM {qualified_table}")
         except Exception as ex:
@@ -1255,7 +1306,7 @@ def _insert_chunk_rows(
     quoted_cols = ", ".join(f'"{name}"' for name in columns)
     inserted = 0
     for row in rows:
-        values_sql = ", ".join(_sql_literal(row.get(col)) for col in columns)
+        values_sql = ", ".join(_sql_typed_literal(row.get(name), column_type) for name, column_type in UNSTRUCTURED_CHUNK_COLUMNS)
         execute_sql_fn(f"INSERT INTO {qualified_table} ({quoted_cols}) VALUES ({values_sql})")
         inserted += 1
     return inserted
@@ -1278,6 +1329,7 @@ def _apply_bookrag_tree_pipeline(
     partition_strategy: str,
     ocr_languages: list[str],
     target_warnings: list[str],
+    connection_params: dict | None = None,
 ) -> tuple[dict, dict]:
     bookrag_tables = build_bookrag_table_targets(vector_store_name)
     table_generation = _resolve_bookrag_table_generation_flags(create_values)
@@ -1345,7 +1397,7 @@ def _apply_bookrag_tree_pipeline(
     target_warnings.extend(image_partition_warnings)
 
 
-    api_key, api_url = _load_unstructured_runtime_config()
+    api_key, api_url = _load_unstructured_runtime_config(connection_params)
     request_timeout_ms = _resolve_unstructured_request_timeout_ms()
     client = _create_unstructured_client(api_key=api_key, api_url=api_url, timeout_ms=request_timeout_ms)
     debug_dir = _prepare_unstructured_debug_dir(vector_store_name)
@@ -1737,6 +1789,7 @@ def apply_multi_format_pipeline(
             partition_strategy=partition_strategy,
             ocr_languages=ocr_languages,
             target_warnings=target_warnings,
+            connection_params=connection_params,
         )
 
     target_warnings.extend(
@@ -1748,7 +1801,7 @@ def apply_multi_format_pipeline(
         )
     )
 
-    api_key, api_url = _load_unstructured_runtime_config()
+    api_key, api_url = _load_unstructured_runtime_config(connection_params)
     request_timeout_ms = _resolve_unstructured_request_timeout_ms()
     client = _create_unstructured_client(api_key=api_key, api_url=api_url, timeout_ms=request_timeout_ms)
     runtime_settings = _load_unstructured_runtime_settings()

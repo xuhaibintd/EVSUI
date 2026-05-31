@@ -176,7 +176,8 @@ These are **application defaults**, not official Unstructured defaults:
 
 ## Multi Format Config
 
-- Configure Unstructured credentials in `app/config/unstructured.json`.
+- For local debugging, copy `app/config/local_dev.example.json` to `app/config/local_dev.json` and fill in `unstructured`.
+- `app/config/local_dev.json` is ignored by Git and must not be committed.
 - Supported API key fields: `api_key`, `key_id`, `UNSTRUCTURED_API_KEY`, `UNSTRUCTURED_API_KEY_AUTH`
 - Supported API URL fields: `api_url`, `UNSTRUCTURED_API_URL`, `UNSTRUCTURED_PLATFORM_URL`
 - Unstructured does not currently expose a public Workflow models-list endpoint in the documented API or Python SDK. EVSUI ships with an internal fallback model catalog and can load overrides from `app/config/unstructured_models.json` or `UNSTRUCTURED_MODEL_CATALOG_PATH`.
@@ -186,8 +187,10 @@ Example:
 
 ```json
 {
-  "api_key": "your-unstructured-api-key",
-  "api_url": "https://platform.unstructuredapp.io/api/v1"
+  "unstructured": {
+    "api_key": "your-unstructured-api-key",
+    "api_url": "https://platform.unstructuredapp.io/api/v1"
+  }
 }
 ```
 
@@ -233,25 +236,34 @@ Open: `http://127.0.0.1:8010`
 
 ## Login
 
-- Configure users in `app/config/auth_users.json`.
-- The repository currently ships with:
+- For local debugging, configure login defaults in `app/config/local_dev.json`.
+- If values are absent, the login page and connection form are left blank for the user to fill in.
+- `app/config/auth_users.json` is still supported for local user lists, but it is ignored by Git.
 
 ```json
 {
-  "users": {
-    "admin": "<redacted-password>"
+  "login": {
+    "username": "admin",
+    "password": "change-me",
+    "users": {
+      "alice": "alice-pass",
+      "bob": "bob-pass"
+    }
   }
 }
 ```
 
-- You can replace it with your own users, for example:
+- Connection defaults can be configured in the same local file:
 
 ```json
 {
-  "users": {
-    "admin": "change-me",
-    "alice": "alice-pass",
-    "bob": "bob-pass"
+  "connection": {
+    "host": "db-host",
+    "username": "db-user",
+    "password": "db-password",
+    "ues_url": "https://example/open-analytics",
+    "pat_token": "ccp-token",
+    "pem_file": "uploads\\pem\\debug.pem"
   }
 }
 ```
@@ -266,7 +278,7 @@ Open: `http://127.0.0.1:8010`
 ## Project Structure
 
 - Application entry and routes: `app/main.py`
-- Auth config: `app/config/auth_users.json`
+- Local debug config example: `app/config/local_dev.example.json`
 - Service layer:
   - `app/services/create_config.py` (create form schema/coercion)
   - `app/services/multi_format.py` (multi-format preprocessing pipeline)

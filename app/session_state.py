@@ -9,6 +9,24 @@ from typing import Any, Callable
 
 from fastapi import Request
 
+from app.local_config import local_auth_users, local_connection_defaults, local_login_defaults, local_unstructured_defaults
+
+
+PROJECT_DIR = Path(__file__).resolve().parents[1]
+
+
+def _configured_path_exists(path_hint: str, vs_basics_dir: Path) -> bool:
+    value = str(path_hint or "").strip()
+    if not value:
+        return False
+    candidate = Path(value)
+    if candidate.is_absolute():
+        return candidate.exists()
+    return any(
+        (base / candidate).exists()
+        for base in (PROJECT_DIR, PROJECT_DIR.parent, vs_basics_dir)
+    )
+
 
 def load_connect_defaults(
     latest_uploaded_pem_relative: Callable[[], str],
@@ -16,20 +34,36 @@ def load_connect_defaults(
     default_pat_token: str,
 ) -> dict[str, str]:
     _ = vs_basics_dir
-    preferred_pem = "uploads\\pem\\<redacted-user>__jcb.pem"
-    pem_path = preferred_pem
-    try:
-        if not Path(preferred_pem).exists():
-            pem_path = latest_uploaded_pem_relative() or preferred_pem
-    except Exception:
-        pem_path = preferred_pem
+    config_defaults = local_connection_defaults()
+    unstructured_defaults = local_unstructured_defaults()
+    pem_path = config_defaults.get("pem_file", "")
+    if pem_path and not _configured_path_exists(pem_path, vs_basics_dir):
+        pem_path = ""
+    if not pem_path:
+        try:
+            pem_path = latest_uploaded_pem_relative() or ""
+        except Exception:
+            pem_path = ""
     return {
-        "host": "<redacted-host>",
-        "username": "<redacted-user>",
-        "password": "<redacted-user>",
-        "ues_url": "https://tddemos.innovationlabs.teradata.com/api/accounts/1ca5520e-5abd-441d-ba25-40c83ff23b2e/open-analytics",
-        "pat_token": default_pat_token,
+        "host": config_defaults.get("host", ""),
+        "username": config_defaults.get("username", ""),
+        "password": config_defaults.get("password", ""),
+        "ues_url": config_defaults.get("ues_url", ""),
+        "pat_token": config_defaults.get("pat_token", "") or default_pat_token,
         "pem_file": pem_path,
+        "unstructured_api_url": str(
+            unstructured_defaults.get("api_url")
+            or unstructured_defaults.get("UNSTRUCTURED_API_URL")
+            or unstructured_defaults.get("UNSTRUCTURED_PLATFORM_URL")
+            or "https://platform.unstructuredapp.io/api/v1"
+        ).strip(),
+        "unstructured_api_key": str(
+            unstructured_defaults.get("api_key")
+            or unstructured_defaults.get("key_id")
+            or unstructured_defaults.get("UNSTRUCTURED_API_KEY")
+            or unstructured_defaults.get("UNSTRUCTURED_API_KEY_AUTH")
+            or ""
+        ).strip(),
     }
 
 
@@ -60,6 +94,27 @@ def default_evs_state(load_defaults: Callable[[], dict[str, str]]) -> dict[str, 
         "connect_steps": [],
         "params": connect_defaults,
     }
+
+
+def refresh_disconnected_connect_defaults(state: dict, load_defaults: Callable[[], dict[str, str]]) -> None:
+    if state.get("connected"):
+        return
+    params = state.setdefault("params", {})
+    if not isinstance(params, dict):
+        params = {}
+        state["params"] = params
+    raw_defaults = load_defaults()
+    defaults = raw_defaults.get("params", raw_defaults) if isinstance(raw_defaults, dict) else {}
+    for key in ("host", "username", "password", "ues_url", "pat_token", "unstructured_api_url", "unstructured_api_key"):
+        if not str(params.get(key) or "").strip() and str(defaults.get(key) or "").strip():
+            params[key] = defaults[key]
+
+    pem_file = str(params.get("pem_file") or "").strip()
+    default_pem = str(defaults.get("pem_file") or "").strip()
+    if not pem_file:
+        params["pem_file"] = default_pem
+    elif pem_file != default_pem and not _configured_path_exists(pem_file, PROJECT_DIR):
+        params["pem_file"] = default_pem
 
 
 def new_session_scope(username: str, default_evs_state_fn: Callable[[], dict], default_create_values_fn: Callable[[], dict]) -> dict:
@@ -102,6 +157,7 @@ def activate_session_state(
             sessions[sid] = scope
 
     app.state.evs_state = scope["evs_state"]
+    refresh_disconnected_connect_defaults(app.state.evs_state, default_evs_state_fn)
     app.state.create_form_values = scope["create_form_values"]
     app.state.last_create_operation = scope["last_create_operation"]
     app.state.document_uploads = scope["document_uploads"]
@@ -131,7 +187,7 @@ def auth_users_file_path(auth_users_file_default: Path) -> Path:
 
 
 def load_auth_users(auth_users_file_default: Path, logger: logging.Logger) -> dict[str, str]:
-    users: dict[str, str] = {}
+    users: dict[str, str] = local_auth_users()
     path = auth_users_file_path(auth_users_file_default)
     if path.exists() and path.is_file():
         try:
@@ -180,7 +236,9 @@ def is_logged_in(request: Request, app, session_cookie_name: str) -> bool:
 def poc_admin_credentials() -> tuple[str, str]:
     username = str(os.getenv("POC_ADMIN_USER", "")).strip()
     password = str(os.getenv("POC_ADMIN_PASSWORD", ""))
-    return username, password
+    if username or password:
+        return username, password
+    return local_login_defaults()
 
 
 def is_poc_auth_configured(load_auth_users_fn: Callable[[], dict[str, str]]) -> bool:

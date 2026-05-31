@@ -22,6 +22,8 @@ def _base_evs(connected):
             "ues_url": "https://example.com/open-analytics",
             "pat_token": "token",
             "pem_file": r"uploads\pem\demo.pem",
+            "unstructured_api_url": "https://platform.unstructuredapp.io/api/v1",
+            "unstructured_api_key": "unstructured-key",
         },
         "health_preview": "",
         "health_columns": [],
@@ -50,6 +52,8 @@ class ConnectPanelTemplateTests(unittest.TestCase):
     def test_disconnected_state_enables_connect_and_disables_disconnect(self):
         html = self._render(False)
         self.assertIn('data-step1-connected="false"', html)
+        self.assertNotIn('name="unstructured_api_url"', html)
+        self.assertNotIn('name="unstructured_api_key"', html)
         self.assertIn('<button type="submit" form="evs-connect-form" class="connect-submit-btn progress-btn" data-progress-button aria-disabled="false">', html)
         self.assertIn('<form id="evs-reset-form" class="connect-reset-form" hx-post="/ui/evs/reset" hx-target="#section-connect-content" hx-swap="innerHTML">', html)
         self.assertIn('<button type="submit" class="ghost progress-btn" data-progress-button disabled aria-disabled="true">', html)
@@ -68,6 +72,28 @@ class ConnectPanelTemplateTests(unittest.TestCase):
         self.assertIn('data-step1-connected="false"', html_false)
         self.assertIn('connect-submit-btn progress-btn" data-progress-button disabled aria-disabled="true"', html_true)
         self.assertIn('<button type="submit" class="ghost progress-btn" data-progress-button disabled aria-disabled="true">', html_false)
+
+
+class UnstructuredAdminPanelTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)))
+        cls.template = cls.env.get_template("partials/bookrag_admin_panel.html")
+
+    def test_save_confirmation_status_is_rendered(self):
+        html = self.template.render(
+            evs=_base_evs(True),
+            unstructured_status={
+                "kind": "ok",
+                "title": "Saved",
+                "detail": "Unstructured IO account saved for the current session.",
+            },
+        )
+
+        self.assertIn('hx-post="/ui/admin/unstructured-config"', html)
+        self.assertIn('role="status" aria-live="polite"', html)
+        self.assertIn("Saved", html)
+        self.assertIn("Unstructured IO account saved for the current session.", html)
 
 
 class ConnectResetRouteTests(unittest.IsolatedAsyncioTestCase):
@@ -120,6 +146,48 @@ class ConnectResetRouteTests(unittest.IsolatedAsyncioTestCase):
             web_router_module._default_evs_state = original_default_state
             web_router_module._persist_active_session_state = original_persist
             web_router_module._render_connect_panel = original_render
+
+
+class UnstructuredAdminRouteTests(unittest.IsolatedAsyncioTestCase):
+    async def test_save_updates_session_params_and_returns_confirmation(self):
+        original_is_logged_in = web_router_module._is_logged_in
+        original_activate = web_router_module._activate_session_state
+        original_persist = web_router_module._persist_active_session_state
+        try:
+            persisted = {"called": False}
+            web_router_module._is_logged_in = lambda request, app: True
+            web_router_module._activate_session_state = lambda request, app: None
+            web_router_module._persist_active_session_state = lambda request, app: persisted.update(called=True)
+
+            def template_response(request, template_name, context):
+                return {
+                    "template_name": template_name,
+                    "context": context,
+                }
+
+            app = SimpleNamespace(
+                state=SimpleNamespace(
+                    evs_state={"params": {}},
+                    templates=SimpleNamespace(TemplateResponse=template_response),
+                )
+            )
+            request = SimpleNamespace(app=app)
+
+            result = await web_router_module.update_unstructured_config_panel(
+                request,
+                unstructured_api_url=" https://session.example/api ",
+                unstructured_api_key=" session-key ",
+            )
+
+            self.assertEqual(app.state.evs_state["params"]["unstructured_api_url"], "https://session.example/api")
+            self.assertEqual(app.state.evs_state["params"]["unstructured_api_key"], "session-key")
+            self.assertTrue(persisted["called"])
+            self.assertEqual(result["template_name"], "partials/bookrag_admin_panel.html")
+            self.assertEqual(result["context"]["unstructured_status"]["title"], "Saved")
+        finally:
+            web_router_module._is_logged_in = original_is_logged_in
+            web_router_module._activate_session_state = original_activate
+            web_router_module._persist_active_session_state = original_persist
 
 
 if __name__ == "__main__":

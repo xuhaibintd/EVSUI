@@ -9,11 +9,10 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.runtime import (
     DEBUG_UPLOAD_DIR,
-    DEFAULT_LOGIN_PASSWORD,
-    DEFAULT_LOGIN_USERNAME,
     DOCUMENT_UPLOAD_DIR,
     SESSION_COOKIE_NAME,
 )
+from app.local_config import local_login_defaults
 from app.services.precision_eval import (
     build_precision_eval_panel_context,
     build_precision_eval_prototype_context,
@@ -97,6 +96,14 @@ def _build_bookrag_admin_context(rules_payload: dict, status: dict | None = None
         "bookrag_section_rules": rules_payload,
         "bookrag_section_rules_path": str(BOOKRAG_SECTION_RULES_PATH),
         "bookrag_section_rules_status": status,
+        "unstructured_status": None,
+    }
+
+
+def _build_unstructured_admin_context(app, status: dict | None = None) -> dict:
+    return {
+        "evs": app.state.evs_state,
+        "unstructured_status": status,
     }
 
 @router.get("/", response_class=HTMLResponse)
@@ -112,14 +119,15 @@ async def home(request: Request):
 async def login_page(request: Request):
     if _is_logged_in(request, request.app):
         return RedirectResponse(url="/", status_code=303)
+    default_username, default_password = local_login_defaults()
     return request.app.state.templates.TemplateResponse(
         request,
         "login.html",
         {
             "error": "",
             "logged_in": False,
-            "username": DEFAULT_LOGIN_USERNAME,
-            "password": DEFAULT_LOGIN_PASSWORD,
+            "username": default_username,
+            "password": default_password,
             "user_initials": "",
         },
     )
@@ -144,14 +152,15 @@ async def login_submit(request: Request, username: str = Form(default=""), passw
         )
     else:
         error_message = "Invalid username or password."
+    default_username, default_password = local_login_defaults()
     return request.app.state.templates.TemplateResponse(
         request,
         "login.html",
         {
             "error": error_message,
             "logged_in": False,
-            "username": clean_username or DEFAULT_LOGIN_USERNAME,
-            "password": password or DEFAULT_LOGIN_PASSWORD,
+            "username": clean_username or default_username,
+            "password": password or default_password,
             "user_initials": "",
         },
     )
@@ -193,7 +202,22 @@ async def evs_connect(
             resolved_pem_path = _save_pem_upload(pem_file)
             steps.append(_new_connect_step("PEM File", "ok", f"Uploaded PEM saved as: {resolved_pem_path}"))
     elif resolved_pem_path:
-        steps.append(_new_connect_step("PEM File", "ok", f"Using existing PEM path: {resolved_pem_path}"))
+        resolved_existing_pem = _resolve_path_hint(resolved_pem_path)
+        if resolved_existing_pem == resolved_pem_path:
+            fallback_pem = str((_default_evs_state().get("params") or {}).get("pem_file") or "").strip()
+            if fallback_pem and fallback_pem != resolved_pem_path:
+                steps.append(
+                    _new_connect_step(
+                        "PEM File",
+                        "warn",
+                        f"Existing PEM path not found: {resolved_pem_path}. Using fallback: {fallback_pem}",
+                    )
+                )
+                resolved_pem_path = fallback_pem
+            else:
+                steps.append(_new_connect_step("PEM File", "warn", f"PEM path not found: {resolved_pem_path}"))
+        else:
+            steps.append(_new_connect_step("PEM File", "ok", f"Using existing PEM path: {resolved_pem_path}"))
     else:
         steps.append(_new_connect_step("PEM File", "warn", "No PEM file provided."))
 
@@ -205,6 +229,9 @@ async def evs_connect(
         "pat_token": (pat_token or "").strip(),
         "pem_file": resolved_pem_path,
     }
+    previous_params = state.get("params") or {}
+    params["unstructured_api_url"] = str(previous_params.get("unstructured_api_url") or "").strip()
+    params["unstructured_api_key"] = str(previous_params.get("unstructured_api_key") or "").strip()
     if params["pat_token"]:
         steps.append(_new_connect_step("PAT Token", "ok", f"Using submitted token: {_mask_token(params['pat_token'])}"))
     else:
@@ -856,6 +883,7 @@ async def update_bookrag_section_rules_panel(request: Request):
             "detail": f"Saved BookRAG section rules to {BOOKRAG_SECTION_RULES_PATH}.",
         }
         context = _build_bookrag_admin_context(saved_rules, status=status)
+        context["evs"] = request.app.state.evs_state
     except Exception as ex:
         status = {
             "kind": "error",
@@ -863,11 +891,40 @@ async def update_bookrag_section_rules_panel(request: Request):
             "detail": str(ex),
         }
         context = _build_bookrag_admin_context(submitted_rules, status=status)
+        context["evs"] = request.app.state.evs_state
 
     return request.app.state.templates.TemplateResponse(
         request,
         "partials/bookrag_admin_panel.html",
         context,
+    )
+
+
+@router.post("/ui/admin/unstructured-config", response_class=HTMLResponse)
+async def update_unstructured_config_panel(
+    request: Request,
+    unstructured_api_url: str = Form(default=""),
+    unstructured_api_key: str = Form(default=""),
+):
+    if not _is_logged_in(request, request.app):
+        return HTMLResponse("Unauthorized", status_code=401)
+    _activate_session_state(request, request.app)
+
+    state = request.app.state.evs_state
+    params = state.setdefault("params", {})
+    params["unstructured_api_url"] = unstructured_api_url.strip()
+    params["unstructured_api_key"] = (unstructured_api_key or "").strip()
+    _persist_active_session_state(request, request.app)
+
+    status = {
+        "kind": "ok",
+        "title": "Saved",
+        "detail": "Unstructured IO account saved for the current session.",
+    }
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "partials/bookrag_admin_panel.html",
+        _build_unstructured_admin_context(request.app, status=status),
     )
 
 

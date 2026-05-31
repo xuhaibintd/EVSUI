@@ -13,11 +13,11 @@ PEM_UPLOAD_DIR = UPLOAD_DIR / "pem"
 VS_BASICS_DIR = PROJECT_DIR.parent / "VS_Basics_Full_Kit"
 AUTH_USERS_FILE_DEFAULT = BASE_DIR / "config" / "auth_users.json"
 SESSION_COOKIE_NAME = "evsui_sid"
-DEFAULT_PAT_TOKEN = "<redacted-pat-token>"
+DEFAULT_PAT_TOKEN = ""
 DEFAULT_EVSUI_API_TOKEN = "evsui-dev-token"
 DEFAULT_CHAT_VS_NAME = "TokioMarine_test"
-DEFAULT_LOGIN_USERNAME = "admin"
-DEFAULT_LOGIN_PASSWORD = "<redacted-password>"
+DEFAULT_LOGIN_USERNAME = ""
+DEFAULT_LOGIN_PASSWORD = ""
 
 for _path in (UPLOAD_DIR, DOCUMENT_UPLOAD_DIR, DEBUG_UPLOAD_DIR, PEM_UPLOAD_DIR):
     _path.mkdir(parents=True, exist_ok=True)

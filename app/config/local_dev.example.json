@@ -1,0 +1,19 @@
+{
+  "login": {
+    "username": "",
+    "password": "",
+    "users": {}
+  },
+  "connection": {
+    "host": "",
+    "username": "",
+    "password": "",
+    "ues_url": "",
+    "pat_token": "",
+    "pem_file": ""
+  },
+  "unstructured": {
+    "api_key": "",
+    "api_url": "https://platform.unstructuredapp.io/api/v1"
+  }
+}

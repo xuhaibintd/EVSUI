@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from app.local_config import local_unstructured_defaults
+
 UNSTRUCTURED_CONFIG_FILE_DEFAULT = Path(__file__).resolve().parents[1] / "config" / "unstructured.json"
 UNSTRUCTURED_WORKFLOW_API_URL_DEFAULT = "https://platform.unstructuredapp.io/api/v1"
 UNSTRUCTURED_WORKFLOW_POLL_SECONDS_DEFAULT = 900
@@ -83,11 +85,25 @@ def _load_unstructured_runtime_settings() -> dict[str, Any]:
                 raise RuntimeError("must be a JSON object")
         except Exception as ex:
             raise RuntimeError(f"Invalid Unstructured config at {config_path}: {ex}") from ex
+    local_config = local_unstructured_defaults()
+    if local_config:
+        config.update(local_config)
     return config
 
 
-def _load_unstructured_runtime_config() -> tuple[str, str]:
+def _load_unstructured_runtime_config(overrides: dict[str, Any] | None = None) -> tuple[str, str]:
     config = _load_unstructured_runtime_settings()
+    if overrides:
+        config.update(
+            {
+                key: value
+                for key, value in {
+                    "api_key": overrides.get("unstructured_api_key") or overrides.get("api_key"),
+                    "api_url": overrides.get("unstructured_api_url") or overrides.get("api_url"),
+                }.items()
+                if str(value or "").strip()
+            }
+        )
 
     api_key = str(
         config.get("api_key")
@@ -105,7 +121,7 @@ def _load_unstructured_runtime_config() -> tuple[str, str]:
 
     if not api_key:
         raise RuntimeError(
-            f"Unstructured API key missing. Set key_id/api_key in {UNSTRUCTURED_CONFIG_FILE_DEFAULT}."
+            "Unstructured API key missing. Set unstructured.api_key in app/config/local_dev.json."
         )
     if not api_url:
         api_url = UNSTRUCTURED_WORKFLOW_API_URL_DEFAULT
