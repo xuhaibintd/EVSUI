@@ -1,7 +1,7 @@
 {% set _list_visible_rows = list_visible_rows|default(5) %}
 {% set _selectable = selectable|default(false) %}
 {% set _connected_empty_text = connected_empty_text|default("Connected. Click Get Vector Store List.") %}
-{% set _disconnected_empty_text = disconnected_empty_text|default("Not connected. Click Connect in Step 1 first.") %}
+{% set _disconnected_empty_text = disconnected_empty_text|default("Not connected. Click Connect first.") %}
 
 {% if evs.connected and evs.list_rows %}
 {% set ns = namespace(vs_name_idx=-1) %}

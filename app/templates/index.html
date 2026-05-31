@@ -4,11 +4,11 @@
 <section class="menu-layout" data-connected="{% if evs.connected %}true{% else %}false{% endif %}">
   <aside class="panel left-menu">
     <p class="eyebrow">Vector Store Navigation</p>
-    <button class="menu-item active" type="button" data-section="section-connect">1. Connect &amp; Manage</button>
-    <button class="menu-item {% if not evs.connected %}disabled locked{% endif %}" type="button" data-section="section-create" aria-disabled="{% if not evs.connected %}true{% else %}false{% endif %}" {% if not evs.connected %}disabled{% endif %}>2. Vector Store Creation</button>
-    <button class="menu-item {% if not evs.connected %}disabled locked{% endif %}" type="button" data-section="section-chat" aria-disabled="{% if not evs.connected %}true{% else %}false{% endif %}" {% if not evs.connected %}disabled{% endif %}>3. Vector Store Retrieval</button>
-    <button class="menu-item {% if not evs.connected %}disabled locked{% endif %}" type="button" data-section="section-eval" aria-disabled="{% if not evs.connected %}true{% else %}false{% endif %}" {% if not evs.connected %}disabled{% endif %}>4. Precision Evaluation</button>
-    <button class="menu-item {% if not evs.connected %}disabled locked{% endif %}" type="button" data-section="section-admin" aria-disabled="{% if not evs.connected %}true{% else %}false{% endif %}" {% if not evs.connected %}disabled{% endif %}>5. Admin Rules</button>
+    <button class="menu-item active" type="button" data-section="section-connect">Connect &amp; Manage</button>
+    <button class="menu-item {% if not evs.connected %}disabled locked{% endif %}" type="button" data-section="section-create" aria-disabled="{% if not evs.connected %}true{% else %}false{% endif %}" {% if not evs.connected %}disabled{% endif %}>Vector Store Creation</button>
+    <button class="menu-item {% if not evs.connected %}disabled locked{% endif %}" type="button" data-section="section-chat" aria-disabled="{% if not evs.connected %}true{% else %}false{% endif %}" {% if not evs.connected %}disabled{% endif %}>Vector Store Retrieval</button>
+    <button class="menu-item {% if not evs.connected %}disabled locked{% endif %}" type="button" data-section="section-eval" aria-disabled="{% if not evs.connected %}true{% else %}false{% endif %}" {% if not evs.connected %}disabled{% endif %}>Precision Evaluation</button>
+    <button class="menu-item {% if not evs.connected %}disabled locked{% endif %}" type="button" data-section="section-admin" aria-disabled="{% if not evs.connected %}true{% else %}false{% endif %}" {% if not evs.connected %}disabled{% endif %}>Admin Rules</button>
     <p id="menu-hint" class="menu-hint muted"></p>
   </aside>
 
@@ -45,7 +45,7 @@
         <div class="wizard-actions">
           <button type="button" class="ghost wizard-btn" data-target="section-create">Back</button>
           <button type="button" class="wizard-btn" data-target="section-eval" data-requires-connected="true" {% if not evs.connected %}disabled{% endif %}>Next: Precision Evaluation</button>
-          <button type="button" class="ghost wizard-btn" data-target="section-connect">Go to Step 1</button>
+          <button type="button" class="ghost wizard-btn" data-target="section-connect">Go to Connect</button>
         </div>
       </div>
     </article>
@@ -58,7 +58,7 @@
         <div class="wizard-actions">
           <button type="button" class="ghost wizard-btn" data-target="section-chat">Back</button>
           <button type="button" class="wizard-btn" data-target="section-admin" data-requires-connected="true" {% if not evs.connected %}disabled{% endif %}>Next: Admin Rules</button>
-          <button type="button" class="ghost wizard-btn" data-target="section-connect">Go to Step 1</button>
+          <button type="button" class="ghost wizard-btn" data-target="section-connect">Go to Connect</button>
         </div>
       </div>
     </article>
@@ -70,7 +70,7 @@
       <div class="wizard-nav">
         <div class="wizard-actions">
           <button type="button" class="ghost wizard-btn" data-target="section-eval">Back</button>
-          <button type="button" class="ghost wizard-btn" data-target="section-connect">Go to Step 1</button>
+          <button type="button" class="ghost wizard-btn" data-target="section-connect">Go to Connect</button>
         </div>
       </div>
     </article>

@@ -131,7 +131,7 @@
         {%- elif is_connected -%}
         Connected. Click Vector Store Health check.
         {%- else -%}
-        Not connected. Click Connect in Step 1 first.
+        Not connected. Click Connect first.
         {%- endif %}
       </div>
     </article>
@@ -159,7 +159,7 @@
         {% set list_visible_rows = 5 %}
         {% set selectable = true %}
         {% set connected_empty_text = "Connected. Click Get Vector Store List." %}
-        {% set disconnected_empty_text = "Not connected. Click Connect in Step 1 first." %}
+        {% set disconnected_empty_text = "Not connected. Click Connect first." %}
         {% include "partials/vector_store_list_body.html" %}
       </div>
       <div class="vs-destroy-panel" data-vs-destroy-panel>
