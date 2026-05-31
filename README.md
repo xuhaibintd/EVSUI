@@ -1,6 +1,8 @@
 # Teradata Vector Store
 
-Teradata Vector Store is a `FastAPI + Jinja2 + HTMX` interface for connecting to Teradata, creating vector stores, validating retrieval in chat, running precision checks, and managing per-session Unstructured IO credentials.
+Teradata Vector Store provides vector-search and retrieval capabilities on top of Teradata data. It stores document chunks and embeddings as managed vector stores, then exposes operations for creation, health checks, listing, deletion, semantic similarity search, and grounded Q&A through `VectorStore` and `VSManager`.
+
+EVSUI is a `FastAPI + Jinja2 + HTMX` interface for working with Teradata Vector Store. It helps users connect to Teradata, create vector stores from uploaded or configured document sources, validate retrieval in chat, run precision checks, and manage per-session Unstructured IO credentials.
 
 ## Overview
 
