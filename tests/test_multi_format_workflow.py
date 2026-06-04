@@ -697,7 +697,12 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
                 stack.enter_context(mock.patch('app.services.multi_format.persist_bookrag_entity_relations', side_effect=_persist_entity_relations))
                 stack.enter_context(mock.patch('app.services.multi_format._count_teradata_rows', return_value=1))
                 _, summary = multi_format._apply_bookrag_tree_pipeline(
-                    exec_payload={'document_files': [str(src)]},
+                    exec_payload={
+                        'document_files': [str(src)],
+                        'nv_ingestor': 'legacy-file-ingestor',
+                        'custom_ingestor': 'legacy-custom-ingestor',
+                        'ingest_host': 'legacy-host',
+                    },
                     create_values=create_values,
                     vector_store_name='demo',
                     execute_sql_fn=mock.Mock(),
@@ -844,6 +849,10 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
         self.assertEqual(patched_payload['data_columns'], ['content'])
         self.assertEqual(patched_payload['key_columns'], ['node_id'])
         self.assertNotIn('vector_column', patched_payload)
+        self.assertNotIn('document_files', patched_payload)
+        self.assertNotIn('nv_ingestor', patched_payload)
+        self.assertNotIn('custom_ingestor', patched_payload)
+        self.assertNotIn('ingest_host', patched_payload)
         self.assertIn('unstructured_bookrag_flg', patched_payload['description'])
         self.assertEqual(summary['vectorstore_source_object'], 'demo_schema.demo_bk_bnode')
         self.assertEqual(len(captured['document_rows']), 1)
