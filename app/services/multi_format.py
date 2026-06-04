@@ -100,6 +100,8 @@ FILE_BASED_CREATE_KEYS_TO_REMOVE = {
     "vlm_base_url",
     "hf_access_token",
 }
+FILE_BASED_CREATE_KEY_PREFIXES_TO_REMOVE = ("ingest_",)
+FILE_BASED_CREATE_KEY_SUFFIXES_TO_REMOVE = ("_ingestor",)
 
 
 UNSTRUCTURED_CHUNK_COLUMNS: list[tuple[str, str]] = [
@@ -592,6 +594,14 @@ def _wait_for_table_rows(
 
 def _strip_file_based_create_params(payload: dict[str, Any]) -> dict[str, Any]:
     cleaned = dict(payload)
+    for key in list(cleaned):
+        normalized_key = str(key or "").strip().lower()
+        if (
+            normalized_key in FILE_BASED_CREATE_KEYS_TO_REMOVE
+            or normalized_key.startswith(FILE_BASED_CREATE_KEY_PREFIXES_TO_REMOVE)
+            or normalized_key.endswith(FILE_BASED_CREATE_KEY_SUFFIXES_TO_REMOVE)
+        ):
+            cleaned.pop(key, None)
     for key in FILE_BASED_CREATE_KEYS_TO_REMOVE:
         cleaned.pop(key, None)
     return cleaned
