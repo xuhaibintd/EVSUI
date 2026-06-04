@@ -22,7 +22,7 @@ EVSUI is a `FastAPI + Jinja2 + HTMX` interface for working with Teradata Vector 
 - Full `VectorStore.create(...)` parameter form
 - Built-in parameter sets for `VECTORDISTANCE / KMEANS / HNSW`
 - `Multi Format` mode uses Unstructured Workflow Endpoint on-demand jobs, creates a Teradata table first, and writes processed chunk rows into `<Vector Store Name>_unstructured`.
-- `Multi-Format BookRAG` mode skips `VectorStore.create()` and uses Unstructured Workflow Endpoint on-demand jobs with inline `job_nodes` to collect raw elements into dedicated Teradata tables for traceability.
+- `Multi-Format BookRAG` mode skips `VectorStore.create()` and uses Unstructured Workflow Endpoint on-demand jobs with inline `job_nodes` to collect raw elements into dedicated Teradata tables for traceability. See [BookRAG Pipeline: Data Structures and Processing Flow](docs/bookrag_pipeline_diagram.md) for the visual pipeline and table model.
 
 ### Vector Store Retrieval
 
@@ -128,6 +128,7 @@ Official references:
 - Current transport path: `local file -> POST /jobs -> inline job_nodes`
 - Current implemented chain: `Partitioner -> optional Enrichment nodes`
 - Current app behavior stores raw workflow output in Teradata BookRAG tables.
+- Visual architecture reference: [BookRAG Pipeline: Data Structures and Processing Flow](docs/bookrag_pipeline_diagram.md)
 - Current app behavior submits an on-demand job with inline `job_nodes`; it does **not** currently create/reuse a named Workflow and does **not** run by `workflow_id`.
 - Current BookRAG flow does **not** add a Workflow `Chunker` node.
 - Do not describe the current BookRAG implementation as `by_title` chunking unless the code actually adds a Workflow chunk node.
