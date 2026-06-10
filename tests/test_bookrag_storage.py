@@ -12,7 +12,7 @@ from app.services.bookrag_storage import _as_text, _insert_rows, _raw_row_to_ele
 
 class BookragRawStorageTests(unittest.TestCase):
     def test_as_text_strips_invalid_unicode_for_teradata(self) -> None:
-        raw = "A\x00B\ud800C\ufdd0D\uffffE"
+        raw = "A\x00B\ud800C\ufdd0D\uffffE🆓"
         self.assertEqual(_as_text(raw), "ABCDE")
 
     def test_raw_schema_includes_image_columns(self) -> None:

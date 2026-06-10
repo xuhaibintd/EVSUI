@@ -28,6 +28,10 @@ def _sanitize_teradata_text(value: str) -> str:
             continue
         if (codepoint & 0xFFFF) in {0xFFFE, 0xFFFF}:
             continue
+        # Teradata CHARACTER SET UNICODE is commonly limited to BMP code
+        # points; supplementary-plane characters such as emoji can raise 6705.
+        if codepoint > 0xFFFF:
+            continue
 
         cleaned_chars.append(ch)
 
@@ -47,7 +51,7 @@ def _sql_literal(value: Any) -> str:
         return "1" if value else "0"
     if isinstance(value, int):
         return str(value)
-    text = str(value).replace("'", "''")
+    text = _sanitize_teradata_text(str(value)).replace("'", "''")
     return f"'{text}'"
 
 

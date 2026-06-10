@@ -414,7 +414,7 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
         self.assertEqual(processing_profile, 'partition:vlm:auto,chunk:chunk_by_character')
 
     def test_as_text_strips_invalid_unicode_for_teradata(self) -> None:
-        raw = "A\x00B\ud800C\ufdd0D\ufffeE\nF\tG"
+        raw = "A\x00B\ud800C\ufdd0D\ufffeE🆓\nF\tG"
         self.assertEqual(multi_format._as_text(raw), "ABCDE\nF\tG")
 
     def test_insert_chunk_rows_omits_invalid_unicode_from_sql_literals(self) -> None:
