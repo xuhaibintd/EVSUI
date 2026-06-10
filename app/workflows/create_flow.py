@@ -15,7 +15,11 @@ from app.services.create_config import (
 )
 from app.services.doc_modes.constants import collect_doc_pipeline_ui_values
 from app.services.doc_modes.registry import get_doc_pipeline_handler
-from app.services.multi_format import normalize_document_files_for_create
+from app.services.multi_format import (
+    normalize_document_files_for_create,
+    strip_create_ingestor_params,
+    strip_file_based_create_params,
+)
 from app.utils.table_state import format_preview, row_value_by_header, table_from_result
 
 
@@ -430,6 +434,11 @@ async def handle_upload_and_prepare_create(
         result_message = "Step 2 failed: VectorStore runtime is unavailable in current environment."
     else:
         try:
+            if doc_pipeline_handler.MODE in {"multi_format", "multi_format_bookrag"}:
+                exec_payload = strip_file_based_create_params(exec_payload)
+                exec_payload["nv_ingestor"] = None
+            else:
+                exec_payload = strip_create_ingestor_params(exec_payload)
             vector_store = vector_store_cls(vector_store_name)
             create_output = vector_store.create(**exec_payload)
             execution_output_preview = format_preview(create_output)

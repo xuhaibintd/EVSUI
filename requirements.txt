@@ -2,7 +2,10 @@ fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 jinja2>=3.1.4
 python-multipart>=0.0.9
-teradataml
-teradatagenai
+teradatagenai>=20.0.0.7
+teradataml>=20.0.0.10
+teradatamlwidgets>=20.0.0.7
+teradatasql>=20.0.0.60
+teradatasqlalchemy>=20.0.0.9
 unstructured-client==0.44.1
 packaging>=24.0

@@ -1,7 +1,7 @@
 <div id="bookrag-admin-panel" class="bookrag-admin-shell">
   <header>
     <p class="eyebrow">ADMINISTRATOR MENU</p>
-    <h3>Unstructured IO</h3>
+    <h3>Admin Rules</h3>
   </header>
 
   {% if unstructured_status %}
@@ -11,42 +11,56 @@
   </div>
   {% endif %}
 
-  <form
-    class="admin-rule-form"
-    hx-post="/ui/admin/unstructured-config"
-    hx-target="#bookrag-admin-panel"
-    hx-swap="outerHTML"
-  >
-    <section class="admin-rule-card">
-      <div class="admin-rule-card-head">
-        <h4>Account</h4>
-      </div>
-      <div class="admin-rule-grid">
-        <label class="field">
-          <span>API URL</span>
-          <input
-            type="text"
-            name="unstructured_api_url"
-            value="{{ evs.params.unstructured_api_url }}"
-            placeholder="https://platform.unstructuredapp.io/api/v1"
-          />
-        </label>
-        <label class="field">
-          <span>API Key</span>
-          <input
-            type="password"
-            name="unstructured_api_key"
-            value="{{ evs.params.unstructured_api_key }}"
-            placeholder="unstructured api key"
-          />
-        </label>
-      </div>
+  <div class="admin-rule-tab-shell">
+    <input class="admin-rule-tab-input" type="radio" name="admin-rule-tab" id="admin-rule-tab-external" checked>
+    <input class="admin-rule-tab-input" type="radio" name="admin-rule-tab" id="admin-rule-tab-business">
+
+    <div class="admin-rule-tab-nav" role="tablist" aria-label="Admin rule configuration">
+      <label class="admin-rule-tab-btn" for="admin-rule-tab-external" role="tab">External Account Configuration</label>
+      <label class="admin-rule-tab-btn" for="admin-rule-tab-business" role="tab">Business Configuration</label>
+    </div>
+
+    <section class="admin-rule-tab-panel admin-rule-panel-external">
+      <form
+        class="admin-rule-form"
+        hx-post="/ui/admin/unstructured-config"
+        hx-target="#bookrag-admin-panel"
+        hx-swap="outerHTML"
+      >
+        <section class="admin-rule-card">
+          <div class="admin-rule-card-head">
+            <h4>Unstructured IO</h4>
+          </div>
+          <div class="admin-rule-grid">
+            <label class="field">
+              <span>API URL</span>
+              <input
+                type="text"
+                name="unstructured_api_url"
+                value="{{ evs.params.unstructured_api_url }}"
+                placeholder="https://platform.unstructuredapp.io/api/v1"
+              />
+            </label>
+            <label class="field">
+              <span>API Key</span>
+              <input
+                type="password"
+                name="unstructured_api_key"
+                value="{{ evs.params.unstructured_api_key }}"
+                placeholder="unstructured api key"
+              />
+            </label>
+          </div>
+        </section>
+
+        <div class="wizard-actions admin-rule-actions">
+          <button type="button" class="ghost wizard-btn" data-target="section-eval">Back</button>
+          <button type="submit" class="wizard-btn">Save</button>
+          <button type="button" class="ghost wizard-btn" data-target="section-connect">Go to Connect</button>
+        </div>
+      </form>
     </section>
 
-    <div class="wizard-actions admin-rule-actions">
-      <button type="button" class="ghost wizard-btn" data-target="section-eval">Back</button>
-      <button type="submit" class="wizard-btn">Save</button>
-      <button type="button" class="ghost wizard-btn" data-target="section-connect">Go to Connect</button>
-    </div>
-  </form>
+    <section class="admin-rule-tab-panel admin-rule-panel-business" aria-label="Business Configuration"></section>
+  </div>
 </div>

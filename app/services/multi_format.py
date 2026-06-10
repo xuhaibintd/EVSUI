@@ -111,6 +111,7 @@ UNSTRUCTURED_CHUNK_COLUMNS: list[tuple[str, str]] = [
     ("element_id", "VARCHAR(64) CHARACTER SET UNICODE"),
     ("id", 'VARCHAR(64) NOT NULL'),
     ("table_id", "VARCHAR(128) CHARACTER SET UNICODE"),
+    ("page_number", "INTEGER"),
     ("chunk_index", "INTEGER"),
     ("is_continuation", "BYTEINT"),
     ("num_carried_over_header_rows", "INTEGER"),
@@ -118,6 +119,7 @@ UNSTRUCTURED_CHUNK_COLUMNS: list[tuple[str, str]] = [
     ("image_description", "VARCHAR(32000) CHARACTER SET UNICODE"),
     ("table_description", "VARCHAR(32000) CHARACTER SET UNICODE"),
     ("generative_ocr", "VARCHAR(32000) CHARACTER SET UNICODE"),
+    ("text_as_html", "VARCHAR(32000) CHARACTER SET UNICODE"),
     ("table_to_html", "VARCHAR(32000) CHARACTER SET UNICODE"),
     ("filetype", "VARCHAR(50) CHARACTER SET UNICODE"),
     ("date_processed", "VARCHAR(50)"),
@@ -607,6 +609,23 @@ def _strip_file_based_create_params(payload: dict[str, Any]) -> dict[str, Any]:
     return cleaned
 
 
+def strip_file_based_create_params(payload: dict[str, Any]) -> dict[str, Any]:
+    return _strip_file_based_create_params(payload)
+
+
+def strip_create_ingestor_params(payload: dict[str, Any]) -> dict[str, Any]:
+    cleaned = dict(payload)
+    for key in list(cleaned):
+        normalized_key = str(key or "").strip().lower()
+        if (
+            normalized_key in {"ingestor", "ingest_params", "nv_ingestor", "ingest_host", "ingest_port"}
+            or normalized_key.startswith(FILE_BASED_CREATE_KEY_PREFIXES_TO_REMOVE)
+            or normalized_key.endswith(FILE_BASED_CREATE_KEY_SUFFIXES_TO_REMOVE)
+        ):
+            cleaned.pop(key, None)
+    return cleaned
+
+
 def _now_ts() -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S")
 
@@ -1039,15 +1058,21 @@ def _element_to_chunk_row(
 
     row_id = _format_chunk_row_id(row_sequence)
     element_id = _as_text(element.get("element_id") or element.get("id"), max_len=64)
+    element_type = _as_text(element.get("type"), max_len=50)
     filetype = _as_text(metadata.get("filetype"), max_len=50) or _as_text(content_type, max_len=50)
+    text_as_html = _as_text(metadata.get("text_as_html"), max_len=32000)
+    table_to_html = None
+    if element_type in {"Table", "TableChunk"}:
+        table_to_html = _as_text(metadata.get("table_to_html"), max_len=32000) or text_as_html
 
     row = {
         "text": text,
-        "type": _as_text(element.get("type"), max_len=50),
+        "type": element_type,
         "filename": _as_text(metadata.get("filename"), max_len=255) or _as_text(src.name, max_len=255),
         "element_id": element_id,
         "id": row_id,
         "table_id": _as_text(metadata.get("table_id"), max_len=128),
+        "page_number": _as_int(metadata.get("page_number")),
         "chunk_index": _as_int(metadata.get("chunk_index")),
         "is_continuation": bool(metadata.get("is_continuation")) if metadata.get("is_continuation") is not None else None,
         "num_carried_over_header_rows": _as_int(metadata.get("num_carried_over_header_rows")),
@@ -1055,7 +1080,8 @@ def _element_to_chunk_row(
         "image_description": _as_text(metadata.get("image_description"), max_len=32000),
         "table_description": _as_text(metadata.get("table_description"), max_len=32000),
         "generative_ocr": _as_text(metadata.get("generative_ocr"), max_len=32000),
-        "table_to_html": _as_text(metadata.get("table_to_html") or metadata.get("text_as_html"), max_len=32000),
+        "text_as_html": text_as_html,
+        "table_to_html": table_to_html,
         "filetype": filetype,
         "date_processed": _now_ts(),
     }

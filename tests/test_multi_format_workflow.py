@@ -529,6 +529,7 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
                 'metadata': {
                     'filename': 'demo.pdf',
                     'table_id': 'table-1',
+                    'page_number': 3,
                     'chunk_index': 3,
                     'is_continuation': True,
                     'num_carried_over_header_rows': 2,
@@ -549,6 +550,7 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
         self.assertEqual(row['element_id'], 'unstructured-element-7')
         self.assertEqual(row['filename'], 'demo.pdf')
         self.assertEqual(row['table_id'], 'table-1')
+        self.assertEqual(row['page_number'], 3)
         self.assertEqual(row['chunk_index'], 3)
         self.assertTrue(row['is_continuation'])
         self.assertEqual(row['num_carried_over_header_rows'], 2)
@@ -556,9 +558,33 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
         self.assertEqual(row['image_description'], 'image summary')
         self.assertEqual(row['table_description'], 'table summary')
         self.assertEqual(row['generative_ocr'], 'ocr text')
+        self.assertEqual(row['text_as_html'], '<table><tr><td>x</td></tr></table>')
         self.assertEqual(row['table_to_html'], '<table><tr><td>x</td></tr></table>')
         self.assertNotIn('record_id', row)
         self.assertNotIn('parent_id', row)
+
+    def test_chunk_row_keeps_page_and_does_not_treat_narrative_html_as_table_html(self) -> None:
+        row = multi_format._element_to_chunk_row(
+            {
+                'element_id': 'element-1',
+                'type': 'CompositeElement',
+                'text': 'body text',
+                'metadata': {
+                    'filename': 'demo.pdf',
+                    'page_number': 11,
+                    'text_as_html': '<p>body text</p>',
+                    'table_to_html': '<table><tr><td>not a table element</td></tr></table>',
+                },
+            },
+            src=Path('fallback.pdf'),
+            content_type='application/pdf',
+            row_sequence=8,
+        )
+
+        self.assertIsNotNone(row)
+        self.assertEqual(row['page_number'], 11)
+        self.assertEqual(row['text_as_html'], '<p>body text</p>')
+        self.assertIsNone(row['table_to_html'])
 
     def test_chunk_row_filename_uses_unstructured_metadata_filename(self) -> None:
         src = Path('A S 茜町（異動2019.01.30）.pdf')

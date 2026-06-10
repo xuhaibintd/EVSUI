@@ -95,6 +95,14 @@ class UnstructuredAdminPanelTests(unittest.TestCase):
         self.assertIn("Saved", html)
         self.assertIn("Unstructured IO account saved for the current session.", html)
 
+    def test_admin_tabs_are_rendered(self):
+        html = self.template.render(evs=_base_evs(True), unstructured_status=None)
+
+        self.assertIn("External Account Configuration", html)
+        self.assertIn("Business Configuration", html)
+        self.assertIn('class="admin-rule-tab-panel admin-rule-panel-business"', html)
+        self.assertIn("Unstructured IO", html)
+
 
 class ConnectResetRouteTests(unittest.IsolatedAsyncioTestCase):
     async def test_evs_reset_reinitializes_create_values_without_name_error(self):

@@ -13,6 +13,51 @@
   gap: 1rem;
 }
 
+.admin-rule-tab-shell {
+  position: relative;
+}
+
+.admin-rule-tab-input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.admin-rule-tab-nav {
+  display: inline-flex;
+  gap: 0.4rem;
+  padding: 0.25rem;
+  border: 1px solid #dbe6f4;
+  border-radius: 999px;
+  background: #f8fbff;
+}
+
+.admin-rule-tab-btn {
+  padding: 0.58rem 0.95rem;
+  border-radius: 999px;
+  font-weight: 700;
+  color: #61738c;
+  cursor: pointer;
+}
+
+#admin-rule-tab-external:checked ~ .admin-rule-tab-nav label[for="admin-rule-tab-external"],
+#admin-rule-tab-business:checked ~ .admin-rule-tab-nav label[for="admin-rule-tab-business"] {
+  background: linear-gradient(180deg, #2d7df6 0%, #1d63db 100%);
+  color: #ffffff !important;
+  box-shadow: 0 8px 16px rgba(37, 99, 235, 0.18);
+}
+
+.admin-rule-tab-panel {
+  display: none;
+  margin-top: 0.75rem;
+}
+
+#admin-rule-tab-external:checked ~ .admin-rule-panel-external,
+#admin-rule-tab-business:checked ~ .admin-rule-panel-business {
+  display: grid;
+  gap: 1rem;
+}
+
 .admin-rule-card {
   display: grid;
   gap: 0.9rem;
@@ -106,6 +151,16 @@
 }
 
 @media (max-width: 1200px) {
+  .admin-rule-tab-nav {
+    display: grid;
+    width: 100%;
+    border-radius: 18px;
+  }
+
+  .admin-rule-tab-btn {
+    text-align: center;
+  }
+
   .admin-rule-grid {
     grid-template-columns: 1fr;
   }
