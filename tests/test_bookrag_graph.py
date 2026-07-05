@@ -68,7 +68,7 @@ class BookragGraphTests(unittest.TestCase):
         self.assertEqual(entity_relations[0]["relationship"], "published_in")
         self.assertEqual(entity_relations[0]["from_entity_text"], "Demo Corp")
         self.assertEqual(entity_relations[0]["to_entity_text"], "2026-02-09")
-        self.assertEqual(entity_relations[0]["source_block_id"], "blk-1")
+        self.assertEqual(entity_relations[0]["source_element_id"], "blk-1")
         self.assertEqual(entity_relations[0]["source_node_id"], "leaf-1")
         self.assertEqual(entity_relations[0]["section_node_id"], "sec-1")
         self.assertTrue(entity_relations[0]["from_entity_id"])

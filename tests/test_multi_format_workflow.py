@@ -631,7 +631,7 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
 
 
 
-    def test_bookrag_pipeline_uses_reconciled_elements_for_entities(self) -> None:
+    def test_bookrag_pipeline_bypasses_reconcile_for_entities(self) -> None:
         create_values = self._create_values(
             multi_format_bookrag_generate_entities='true',
             multi_format_bookrag_generate_entity_links='true',
@@ -712,7 +712,7 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
                 stack.enter_context(mock.patch('app.services.multi_format._enforce_unstructured_job_submission_spacing', side_effect=lambda value: value))
                 stack.enter_context(mock.patch('app.services.multi_format._build_bookrag_reusable_workflow_definition', return_value=('BookRAG_Test', [{'name': 'Partitioner'}], {'workflow_name': 'BookRAG_Test', 'workflow_nodes': [{'name': 'Partitioner'}]}, [], 'partition:vlm:vlm')))
                 stack.enter_context(mock.patch('app.services.multi_format._run_unstructured_workflow_job_for_file', return_value=(raw_payload, raw_payload, {'workflow_name': 'BookRAG_Test'}, 'job-1', 'workflow-1', 'BookRAG_Test')))
-                stack.enter_context(mock.patch('app.services.multi_format.reconcile_unstructured_elements', return_value=reconciled_payload))
+                reconcile_mock = stack.enter_context(mock.patch('app.services.multi_format.reconcile_unstructured_elements', return_value=reconciled_payload))
                 stack.enter_context(mock.patch('app.services.multi_format._write_unstructured_debug_file', return_value=''))
                 stack.enter_context(mock.patch('app.services.multi_format.persist_bookrag_documents', return_value=1))
                 stack.enter_context(mock.patch('app.services.multi_format.persist_bookrag_raw_rows', return_value=1))
@@ -740,12 +740,14 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
                     target_warnings=[],
                 )
 
-        self.assertEqual(summary['entity_count'], 2)
-        self.assertEqual(summary['entity_link_count'], 1)
-        self.assertEqual(summary['entity_relation_count'], 1)
-        self.assertEqual(captured['nodes'][1]['source_element_id'], 'recon-1')
-        self.assertEqual(captured['entity_links'][0]['node_id'], captured['nodes'][1]['node_id'])
-        self.assertEqual(captured['entity_relations'][0]['source_node_id'], captured['nodes'][1]['node_id'])
+        reconcile_mock.assert_not_called()
+        self.assertEqual(summary['entity_count'], 0)
+        self.assertEqual(summary['entity_link_count'], 0)
+        self.assertEqual(summary['entity_relation_count'], 0)
+        self.assertEqual(captured['nodes'][1]['source_element_id'], 'raw-1')
+        self.assertEqual(captured['entities'], [])
+        self.assertEqual(captured['entity_links'], [])
+        self.assertEqual(captured['entity_relations'], [])
 
     def test_bookrag_pipeline_persists_tree_outputs(self) -> None:
         create_values = self._create_values(

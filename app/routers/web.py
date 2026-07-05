@@ -23,6 +23,7 @@ from app.services.bookrag_section_rules import (
     BOOKRAG_SECTION_RULES_PATH,
     save_bookrag_section_rules,
 )
+from app.services.unstructured_json_inspector import build_unstructured_json_inspector_context
 from app.services.create_config import default_create_values
 from app.teradata_runtime import (
     TERADATA_IMPORT_ERROR,
@@ -97,6 +98,7 @@ def _build_bookrag_admin_context(rules_payload: dict, status: dict | None = None
         "bookrag_section_rules_path": str(BOOKRAG_SECTION_RULES_PATH),
         "bookrag_section_rules_status": status,
         "unstructured_status": None,
+        "json_inspector": build_unstructured_json_inspector_context(),
     }
 
 
@@ -104,6 +106,7 @@ def _build_unstructured_admin_context(app, status: dict | None = None) -> dict:
     return {
         "evs": app.state.evs_state,
         "unstructured_status": status,
+        "json_inspector": build_unstructured_json_inspector_context(),
     }
 
 @router.get("/", response_class=HTMLResponse)
@@ -900,6 +903,21 @@ async def update_bookrag_section_rules_panel(request: Request):
     )
 
 
+
+@router.get("/ui/admin/json-inspector", response_class=HTMLResponse)
+async def inspect_unstructured_json_file(
+    request: Request,
+    json_file: str = "",
+):
+    if not _is_logged_in(request, request.app):
+        return HTMLResponse("Unauthorized", status_code=401)
+    _activate_session_state(request, request.app)
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "partials/unstructured_json_inspector_result.html",
+        {"json_inspector": build_unstructured_json_inspector_context(json_file.strip())},
+    )
+
 @router.post("/ui/admin/unstructured-config", response_class=HTMLResponse)
 async def update_unstructured_config_panel(
     request: Request,
@@ -926,5 +944,3 @@ async def update_unstructured_config_panel(
         "partials/bookrag_admin_panel.html",
         _build_unstructured_admin_context(request.app, status=status),
     )
-
-

@@ -173,3 +173,830 @@
     display: none;
   }
 }
+
+
+#admin-rule-tab-json:checked ~ .admin-rule-tab-nav label[for="admin-rule-tab-json"] {
+  background: linear-gradient(180deg, #2d7df6 0%, #1d63db 100%);
+  color: #ffffff !important;
+  box-shadow: 0 8px 16px rgba(37, 99, 235, 0.18);
+}
+
+#admin-rule-tab-json:checked ~ .admin-rule-panel-json {
+  display: grid;
+  gap: 1rem;
+}
+
+.json-inspector-toolbar {
+  display: grid;
+  grid-template-columns: minmax(20rem, 1fr) auto auto;
+  gap: 0.75rem;
+  align-items: end;
+}
+
+.json-inspector-toolbar select {
+  width: 100%;
+}
+
+.json-inspector-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.json-inspector-stat {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.8rem;
+  border: 1px solid #dbe6f4;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.json-inspector-stat span {
+  color: #61738c;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.json-inspector-stat strong {
+  color: #172033;
+}
+
+.json-inspector-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.json-inspector-flags span {
+  padding: 0.35rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid #dbe6f4;
+  background: #ffffff;
+  font-weight: 700;
+  font-size: 0.82rem;
+}
+
+.json-inspector-flags span.ok {
+  color: #12593c;
+  border-color: rgba(23, 162, 101, 0.24);
+  background: rgba(23, 162, 101, 0.09);
+}
+
+.json-inspector-flags span.warn {
+  color: #8a5a00;
+  border-color: rgba(185, 126, 0, 0.28);
+  background: rgba(255, 190, 55, 0.14);
+}
+
+.json-inspector-grids {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.json-inspector-kv-list {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.json-inspector-kv-list div {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid rgba(97, 115, 140, 0.16);
+}
+
+.json-inspector-kv-list span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.json-inspector-table-wrap {
+  overflow: auto;
+  border: 1px solid #dbe6f4;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.json-inspector-table {
+  width: 100%;
+  min-width: 900px;
+  border-collapse: collapse;
+  font-size: 0.84rem;
+}
+
+.json-inspector-table th,
+.json-inspector-table td {
+  padding: 0.55rem 0.65rem;
+  border-bottom: 1px solid rgba(97, 115, 140, 0.16);
+  text-align: left;
+  vertical-align: top;
+}
+
+.json-inspector-table th {
+  color: #516481;
+  background: #f8fbff;
+  font-weight: 800;
+}
+
+.json-inspector-details {
+  border: 1px solid #dbe6f4;
+  border-radius: 12px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.json-inspector-details summary {
+  cursor: pointer;
+  padding: 0.75rem 0.9rem;
+  font-weight: 800;
+}
+
+.json-inspector-details pre {
+  max-height: 34rem;
+  margin: 0;
+  padding: 0.9rem;
+  overflow: auto;
+  border-top: 1px solid #dbe6f4;
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+}
+
+.json-inspector-empty {
+  display: grid;
+  gap: 0.25rem;
+  padding: 1rem;
+  border: 1px dashed #cbd8ea;
+  border-radius: 12px;
+  color: #61738c;
+  background: #fbfdff;
+}
+
+@media (max-width: 1200px) {
+  .json-inspector-toolbar,
+  .json-inspector-summary,
+  .json-inspector-grids {
+    grid-template-columns: 1fr;
+  }
+}
+/* Keep the Administration page useful even if no radio tab is checked. */
+.admin-rule-panel-external {
+  display: grid;
+  gap: 1rem;
+}
+
+#admin-rule-tab-business:checked ~ .admin-rule-panel-external,
+#admin-rule-tab-json:checked ~ .admin-rule-panel-external {
+  display: none;
+}
+
+.admin-rule-tab-nav label[for="admin-rule-tab-external"] {
+  background: linear-gradient(180deg, #2d7df6 0%, #1d63db 100%);
+  color: #ffffff !important;
+  box-shadow: 0 8px 16px rgba(37, 99, 235, 0.18);
+}
+
+#admin-rule-tab-business:checked ~ .admin-rule-tab-nav label[for="admin-rule-tab-external"],
+#admin-rule-tab-json:checked ~ .admin-rule-tab-nav label[for="admin-rule-tab-external"] {
+  background: transparent;
+  color: #61738c !important;
+  box-shadow: none;
+}
+.json-inspector-summary.compact {
+  grid-template-columns: repeat(4, minmax(8rem, 1fr));
+}
+
+.json-viewer {
+  display: grid;
+  grid-template-columns: minmax(22rem, 0.9fr) minmax(0, 1.6fr);
+  gap: 0.9rem;
+  min-height: 34rem;
+}
+
+.json-viewer-sidebar,
+.json-viewer-main {
+  min-width: 0;
+  border: 1px solid #dbe6f4;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.json-viewer-sidebar {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.json-viewer-filterbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(9rem, 0.65fr);
+  gap: 0.55rem;
+  padding: 0.75rem;
+  border-bottom: 1px solid #dbe6f4;
+  background: #f8fbff;
+}
+
+.json-viewer-list {
+  display: grid;
+  align-content: start;
+  gap: 0.35rem;
+  max-height: 42rem;
+  overflow: auto;
+  padding: 0.55rem;
+}
+
+.json-viewer-item {
+  display: grid;
+  gap: 0.2rem;
+  width: 100%;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #1f2937 !important;
+  box-shadow: none;
+  text-align: left;
+}
+
+.json-viewer-item:hover,
+.json-viewer-item.is-selected {
+  border-color: #8ab4f8;
+  background: #eaf2ff;
+}
+
+.json-viewer-item-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.json-viewer-item-head strong,
+.json-viewer-item-id,
+.json-viewer-item-text {
+  overflow-wrap: anywhere;
+}
+
+.json-viewer-item-id,
+.json-viewer-item-text,
+.json-viewer-item-head small {
+  color: #64748b !important;
+  font-size: 0.78rem;
+}
+
+.json-viewer-main {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.json-viewer-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: start;
+  padding: 0.85rem 0.95rem;
+  border-bottom: 1px solid #dbe6f4;
+  background: #ffffff;
+}
+
+.json-viewer-toolbar h4 {
+  margin: 0;
+}
+
+.json-viewer-toolbar p {
+  margin: 0.2rem 0 0;
+  overflow-wrap: anywhere;
+}
+
+.json-viewer-tabs {
+  display: inline-flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.json-viewer-tabs button {
+  padding: 0.42rem 0.65rem;
+}
+
+.json-viewer-tabs button.is-active {
+  border-color: #1a73e8;
+  background: #1a73e8;
+  color: #ffffff !important;
+}
+
+.json-viewer-path {
+  min-height: 2rem;
+  padding: 0.45rem 0.95rem;
+  border-bottom: 1px solid #dbe6f4;
+  color: #64748b;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+.json-viewer-code {
+  margin: 0;
+  padding: 0.95rem;
+  overflow: auto;
+  max-height: 38rem;
+  background: #0f172a;
+  color: #e5eefb;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.compact-details {
+  margin-top: 0.9rem;
+}
+
+@media (max-width: 1200px) {
+  .json-viewer,
+  .json-viewer-filterbar {
+    grid-template-columns: 1fr;
+  }
+}
+/* Wide workbench layout for the read-only Unstructured JSON viewer. */
+#section-admin.menu-section.active {
+  display: flex;
+  flex-direction: column;
+}
+
+#section-admin .panel-content {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+#section-admin .wizard-nav {
+  flex: 0 0 auto;
+  margin-top: 0.45rem;
+  padding-top: 0.45rem;
+}
+
+.bookrag-admin-shell {
+  min-height: 0;
+  flex: 1 1 auto;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.bookrag-admin-shell > header {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.6rem;
+  align-items: baseline;
+}
+
+.bookrag-admin-shell > header .eyebrow,
+.bookrag-admin-shell > header h3 {
+  margin: 0;
+}
+
+.admin-rule-tab-shell {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+}
+
+.admin-rule-panel-json {
+  min-height: 0;
+}
+
+#admin-rule-tab-json:checked ~ .admin-rule-panel-json {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.json-inspector-picker-card {
+  padding: 0.7rem 0.8rem;
+}
+
+.json-inspector-toolbar {
+  grid-template-columns: minmax(24rem, 1fr) auto auto;
+  gap: 0.55rem;
+}
+
+.json-inspector-toolbar .field {
+  gap: 0.25rem;
+}
+
+.json-inspector-toolbar input,
+.json-inspector-toolbar select,
+.json-inspector-toolbar button {
+  min-height: 2.35rem;
+}
+
+#json-inspector-result {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 0.45rem;
+}
+
+.json-inspector-summary.compact {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.json-inspector-summary.compact .json-inspector-stat {
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  padding: 0.45rem 0.65rem;
+  min-height: 2.4rem;
+}
+
+.json-inspector-summary.compact .json-inspector-stat span {
+  font-size: 0.75rem;
+}
+
+.json-inspector-summary.compact .json-inspector-stat strong {
+  justify-self: end;
+  font-size: 0.9rem;
+}
+
+.json-inspector-flags {
+  margin-top: -0.15rem;
+}
+
+.json-inspector-flags span {
+  padding: 0.22rem 0.45rem;
+  font-size: 0.76rem;
+}
+
+.json-viewer {
+  min-height: 0;
+  height: min(62rem, calc(100dvh - 24rem));
+  grid-template-columns: minmax(20rem, 0.38fr) minmax(0, 1fr);
+  gap: 0.6rem;
+}
+
+.json-viewer-list {
+  max-height: none;
+  min-height: 0;
+}
+
+.json-viewer-filterbar {
+  grid-template-columns: minmax(0, 1fr) minmax(8rem, 0.5fr);
+  padding: 0.55rem;
+}
+
+.json-viewer-filterbar .field {
+  gap: 0.25rem;
+}
+
+.json-viewer-item {
+  padding: 0.45rem 0.55rem;
+  gap: 0.12rem;
+}
+
+.json-viewer-item-text {
+  display: block;
+  max-height: 2.8em;
+  overflow: hidden;
+}
+
+.json-viewer-main,
+.json-viewer-sidebar {
+  min-height: 0;
+}
+
+.json-viewer-toolbar {
+  padding: 0.6rem 0.75rem;
+  align-items: center;
+}
+
+.json-viewer-toolbar p {
+  font-size: 0.82rem;
+}
+
+.json-viewer-tabs button {
+  min-height: 2rem;
+  padding: 0.32rem 0.55rem;
+}
+
+.json-viewer-path {
+  min-height: 1.7rem;
+  padding: 0.32rem 0.75rem;
+}
+
+.json-viewer-code {
+  max-height: none;
+  height: 100%;
+  min-height: 0;
+  white-space: pre;
+  overflow: auto;
+}
+
+.compact-details {
+  margin-top: 0;
+}
+
+.compact-details summary {
+  padding: 0.45rem 0.65rem;
+}
+
+@media (max-width: 1200px) {
+  #section-admin .panel-content {
+    overflow: auto;
+  }
+
+  .bookrag-admin-shell,
+  .admin-rule-tab-shell,
+  #json-inspector-result {
+    display: grid;
+  }
+
+  .json-viewer {
+    height: auto;
+    min-height: 34rem;
+  }
+}
+
+/* Full-height JSON inspector workbench. Keep this at the end so it wins over older admin rules. */
+#section-admin.menu-section.active {
+  height: calc(100dvh - 10rem);
+  min-height: 42rem;
+  overflow: hidden;
+}
+
+#section-admin .panel-content,
+#bookrag-admin-panel,
+#bookrag-admin-panel .admin-rule-tab-shell,
+#bookrag-admin-panel .admin-rule-panel-json,
+#bookrag-admin-panel #json-inspector-result {
+  min-height: 0;
+}
+
+#bookrag-admin-panel {
+  gap: 0.7rem;
+}
+
+#bookrag-admin-panel .admin-rule-tab-shell {
+  height: 100%;
+}
+
+#bookrag-admin-panel .admin-rule-tab-nav {
+  flex: 0 0 auto;
+}
+
+#admin-rule-tab-json:checked ~ .admin-rule-panel-json {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0.55rem;
+  margin-top: 0.55rem;
+  overflow: hidden;
+}
+
+#bookrag-admin-panel .json-inspector-picker-card {
+  padding: 0.55rem 0.65rem;
+  border-radius: 14px;
+}
+
+#bookrag-admin-panel .json-inspector-toolbar {
+  grid-template-columns: minmax(18rem, 1fr) auto auto;
+  align-items: end;
+}
+
+#bookrag-admin-panel .json-inspector-toolbar .field > span {
+  font-size: 0.78rem;
+}
+
+#bookrag-admin-panel .json-inspector-toolbar select,
+#bookrag-admin-panel .json-inspector-toolbar button {
+  height: 2.25rem;
+  min-height: 2.25rem;
+}
+
+#bookrag-admin-panel #json-inspector-result {
+  overflow: hidden;
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+#bookrag-admin-panel .json-inspector-summary.compact {
+  gap: 0.35rem;
+}
+
+#bookrag-admin-panel .json-inspector-summary.compact .json-inspector-stat {
+  min-height: 2.1rem;
+  padding: 0.35rem 0.55rem;
+}
+
+#bookrag-admin-panel .json-inspector-flags {
+  gap: 0.3rem;
+}
+
+#bookrag-admin-panel .json-inspector-flags span {
+  padding: 0.16rem 0.4rem;
+}
+
+#bookrag-admin-panel .json-viewer {
+  height: auto;
+  min-height: 0;
+  overflow: hidden;
+  grid-template-columns: minmax(18rem, 0.36fr) minmax(0, 1fr);
+}
+
+#bookrag-admin-panel .json-viewer-sidebar,
+#bookrag-admin-panel .json-viewer-main {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+#bookrag-admin-panel .json-viewer-list,
+#bookrag-admin-panel .json-viewer-code {
+  min-height: 0;
+  max-height: none;
+  overflow: auto;
+}
+
+#bookrag-admin-panel .json-viewer-code {
+  height: auto;
+  white-space: pre;
+  overflow-wrap: normal;
+  tab-size: 2;
+}
+
+#bookrag-admin-panel .compact-details {
+  display: none;
+}
+
+@media (max-width: 1200px) {
+  #section-admin.menu-section.active {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  #bookrag-admin-panel .admin-rule-panel-json,
+  #bookrag-admin-panel #json-inspector-result,
+  #bookrag-admin-panel .json-viewer {
+    overflow: visible;
+  }
+
+  #bookrag-admin-panel .json-viewer {
+    min-height: 36rem;
+  }
+}
+
+/* External account tab must stay compact; the JSON workbench sizing above is not for this form. */
+#bookrag-admin-panel .admin-rule-panel-external {
+  align-content: start;
+  align-items: start;
+  overflow: auto;
+}
+
+#bookrag-admin-panel .admin-rule-panel-external .admin-rule-form {
+  align-content: start;
+  align-items: start;
+  grid-auto-rows: auto;
+}
+
+#bookrag-admin-panel .admin-rule-panel-external .admin-rule-card,
+#bookrag-admin-panel .admin-rule-panel-external .admin-rule-actions {
+  width: 100%;
+  align-self: start;
+}
+
+#bookrag-admin-panel .admin-rule-panel-external .admin-rule-grid {
+  align-items: end;
+}
+
+#bookrag-admin-panel .admin-rule-panel-external .field {
+  align-self: end;
+}
+
+#bookrag-admin-panel .admin-rule-panel-external input[type="text"],
+#bookrag-admin-panel .admin-rule-panel-external input[type="password"] {
+  height: auto;
+  min-height: 3rem;
+  padding-block: 0.65rem;
+}
+
+#bookrag-admin-panel .admin-rule-panel-external .wizard-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+#bookrag-admin-panel .admin-rule-panel-external .wizard-btn {
+  width: auto;
+  height: auto;
+  min-height: 2.35rem;
+  padding: 0.55rem 0.9rem;
+}
+
+/* Scope viewport-height behavior to the JSON inspector tab only. */
+#section-admin.menu-section.active:has(#admin-rule-tab-external:checked),
+#section-admin.menu-section.active:has(#admin-rule-tab-business:checked) {
+  height: 100%;
+  min-height: 0;
+}
+
+#section-admin.menu-section.active:has(#admin-rule-tab-json:checked) {
+  height: calc(100dvh - 10rem);
+  min-height: 42rem;
+}
+
+/* Final Administration layout split: compact config tabs, full-height JSON tab. */
+#section-admin > .wizard-nav {
+  display: none;
+}
+
+#section-admin.menu-section.active:has(#admin-rule-tab-external:checked),
+#section-admin.menu-section.active:has(#admin-rule-tab-business:checked) {
+  height: auto !important;
+  min-height: 0 !important;
+  align-self: start;
+  overflow: visible !important;
+}
+
+#section-admin.menu-section.active:has(#admin-rule-tab-external:checked) .panel-content,
+#section-admin.menu-section.active:has(#admin-rule-tab-business:checked) .panel-content {
+  flex: 0 0 auto;
+  overflow: visible !important;
+}
+
+#section-admin.menu-section.active:has(#admin-rule-tab-external:checked) #bookrag-admin-panel,
+#section-admin.menu-section.active:has(#admin-rule-tab-business:checked) #bookrag-admin-panel {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-rows: auto auto;
+}
+
+#section-admin.menu-section.active:has(#admin-rule-tab-external:checked) .admin-rule-tab-shell,
+#section-admin.menu-section.active:has(#admin-rule-tab-business:checked) .admin-rule-tab-shell {
+  height: auto !important;
+  display: grid;
+  grid-template-rows: auto auto;
+}
+
+#section-admin.menu-section.active:has(#admin-rule-tab-external:checked) .admin-rule-tab-panel,
+#section-admin.menu-section.active:has(#admin-rule-tab-business:checked) .admin-rule-tab-panel {
+  min-height: 0;
+}
+
+#section-admin.menu-section.active:has(#admin-rule-tab-external:checked) .admin-rule-panel-external {
+  display: grid;
+  gap: 1rem;
+  overflow: visible;
+}
+
+#section-admin.menu-section.active:has(#admin-rule-tab-json:checked) {
+  height: 100% !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
+
+#section-admin.menu-section.active:has(#admin-rule-tab-json:checked) .panel-content,
+#section-admin.menu-section.active:has(#admin-rule-tab-json:checked) #bookrag-admin-panel,
+#section-admin.menu-section.active:has(#admin-rule-tab-json:checked) .admin-rule-tab-shell,
+#section-admin.menu-section.active:has(#admin-rule-tab-json:checked) .admin-rule-panel-json,
+#section-admin.menu-section.active:has(#admin-rule-tab-json:checked) #json-inspector-result {
+  min-height: 0;
+}
+
+/* Algorithm-focused JSON summary. */
+#bookrag-admin-panel .algorithm-summary {
+  grid-template-columns: minmax(16rem, 1.25fr) repeat(5, minmax(9rem, 1fr));
+}
+
+#bookrag-admin-panel .algorithm-summary .json-inspector-stat.signal {
+  border-color: rgba(26, 115, 232, 0.35);
+  background: #eef5ff;
+}
+
+#bookrag-admin-panel .algorithm-summary .json-inspector-stat strong {
+  overflow-wrap: anywhere;
+}
+
+#bookrag-admin-panel .json-inspector-source-note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: -0.15rem;
+  color: #64748b;
+  font-size: 0.76rem;
+}
+
+#bookrag-admin-panel .json-inspector-source-note span {
+  padding: 0.12rem 0.4rem;
+  border: 1px solid #dbe6f4;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #64748b;
+}
+
+@media (max-width: 1400px) {
+  #bookrag-admin-panel .algorithm-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  #bookrag-admin-panel .algorithm-summary {
+    grid-template-columns: 1fr;
+  }
+}

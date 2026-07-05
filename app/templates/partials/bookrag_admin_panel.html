@@ -1,7 +1,7 @@
 <div id="bookrag-admin-panel" class="bookrag-admin-shell">
   <header>
     <p class="eyebrow">ADMINISTRATOR MENU</p>
-    <h3>Admin Rules</h3>
+    <h3>Administration</h3>
   </header>
 
   {% if unstructured_status %}
@@ -14,10 +14,12 @@
   <div class="admin-rule-tab-shell">
     <input class="admin-rule-tab-input" type="radio" name="admin-rule-tab" id="admin-rule-tab-external" checked>
     <input class="admin-rule-tab-input" type="radio" name="admin-rule-tab" id="admin-rule-tab-business">
+    <input class="admin-rule-tab-input" type="radio" name="admin-rule-tab" id="admin-rule-tab-json">
 
-    <div class="admin-rule-tab-nav" role="tablist" aria-label="Admin rule configuration">
+    <div class="admin-rule-tab-nav" role="tablist" aria-label="Administration">
       <label class="admin-rule-tab-btn" for="admin-rule-tab-external" role="tab">External Account Configuration</label>
       <label class="admin-rule-tab-btn" for="admin-rule-tab-business" role="tab">Business Configuration</label>
+      <label class="admin-rule-tab-btn" for="admin-rule-tab-json" role="tab">Unstructured JSON Inspector</label>
     </div>
 
     <section class="admin-rule-tab-panel admin-rule-panel-external">
@@ -62,5 +64,34 @@
     </section>
 
     <section class="admin-rule-tab-panel admin-rule-panel-business" aria-label="Business Configuration"></section>
+
+    <section class="admin-rule-tab-panel admin-rule-panel-json" aria-label="Unstructured JSON Inspector">
+      {% set inspector = json_inspector | default({"files": [], "selected_file": "", "summary": none, "error": ""}) %}
+      <section class="admin-rule-card json-inspector-picker-card">
+        <form
+          class="json-inspector-toolbar"
+          hx-get="/ui/admin/json-inspector"
+          hx-target="#json-inspector-result"
+          hx-swap="innerHTML"
+        >
+          <label class="field">
+            <span>JSON File</span>
+            <select id="json-inspector-file" name="json_file">
+              <option value="">Select a JSON file</option>
+              {% for file in inspector.files %}
+              <option value="{{ file.value }}" {% if inspector.selected_file == file.value %}selected{% endif %}>{{ file.label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <button type="submit" class="wizard-btn">Open</button>
+          <button type="submit" class="ghost wizard-btn">Refresh</button>
+        </form>
+      </section>
+
+      <div id="json-inspector-result">
+        {% set json_inspector = inspector %}
+        {% include "partials/unstructured_json_inspector_result.html" %}
+      </div>
+    </section>
   </div>
 </div>

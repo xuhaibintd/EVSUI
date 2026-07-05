@@ -1,0 +1,117 @@
+{% if json_inspector.error %}
+<div class="admin-rule-status error" role="status" aria-live="polite">
+  <strong>Inspection Failed</strong>
+  <span>{{ json_inspector.error }}</span>
+</div>
+{% elif json_inspector.summary %}
+{% set summary = json_inspector.summary %}
+<section class="json-inspector-summary compact algorithm-summary">
+  <div class="json-inspector-stat signal"><span>Decomposition Signal</span><strong>{{ summary.decomposition_signal }}</strong></div>
+  <div class="json-inspector-stat"><span>Structure</span><strong>{{ summary.structure_verdict }}</strong></div>
+  <div class="json-inspector-stat"><span>Parent Links</span><strong>{{ summary.parent_link_count }}/{{ summary.element_count }} ({{ summary.parent_link_ratio_label }})</strong></div>
+  <div class="json-inspector-stat"><span>Depth</span><strong>{% if summary.max_category_depth is not none %}max {{ summary.max_category_depth }} / {{ summary.category_depth_count }} tagged{% else %}none{% endif %}</strong></div>
+  <div class="json-inspector-stat"><span>Pages</span><strong>{{ summary.page_range_label }}</strong></div>
+  <div class="json-inspector-stat"><span>Content Mix</span><strong>{{ summary.text_element_count }} text / {{ summary.table_count }} table / {{ summary.image_count }} image</strong></div>
+</section>
+
+<div class="json-inspector-source-note">
+  <span>{{ summary.element_count }} elements</span>
+  <span>{{ summary.top_shape }} via {{ summary.element_source }}</span>
+  <span>{{ summary.size_bytes }} bytes</span>
+</div>
+
+<section class="json-inspector-flags" aria-label="Structural signals">
+  <span class="{% if summary.has_parent_id %}ok{% else %}muted{% endif %}">parent_id</span>
+  <span class="{% if summary.has_category_depth %}ok{% else %}muted{% endif %}">category_depth</span>
+  <span class="{% if summary.has_text_as_html %}ok{% else %}muted{% endif %}">text_as_html</span>
+  <span class="{% if summary.has_entities %}ok{% else %}muted{% endif %}">entities</span>
+  <span class="{% if summary.has_composite_elements %}warn{% else %}muted{% endif %}">CompositeElement</span>
+</section>
+
+<section class="json-viewer" data-json-viewer>
+  <aside class="json-viewer-sidebar">
+    <div class="json-viewer-filterbar">
+      <label class="field">
+        <span>Filter</span>
+        <input type="search" data-json-viewer-filter placeholder="type, page, id, text" />
+      </label>
+      <label class="field">
+        <span>Type</span>
+        <select data-json-viewer-type>
+          <option value="">All types</option>
+          {% for name, count in summary.type_counts %}
+          <option value="{{ name }}">{{ name }} ({{ count }})</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+    <div class="json-viewer-list" data-json-viewer-list>
+      {% for element in summary.sample_elements %}
+      <button
+        type="button"
+        class="json-viewer-item {% if loop.first %}is-selected{% endif %}"
+        data-json-viewer-item
+        data-index="{{ element.ordinal }}"
+        data-type="{{ element.type }}"
+        data-page="{{ element.page_number if element.page_number is not none else '' }}"
+        data-element-id="{{ element.element_id }}"
+        data-parent-id="{{ element.parent_id }}"
+        data-depth="{{ element.category_depth if element.category_depth is not none else '' }}"
+        data-text="{{ element.text_preview }}"
+        data-json='{{ element.json_compact | e }}'
+      >
+        <span class="json-viewer-item-head">
+          <strong>#{{ element.ordinal }} {{ element.type or 'UNKNOWN' }}</strong>
+          <small>p{{ element.page_number if element.page_number is not none else '-' }}</small>
+        </span>
+        <span class="json-viewer-item-id">{{ element.element_id or 'no element_id' }}</span>
+        <span class="json-viewer-item-text">{{ element.text_preview or 'empty text' }}</span>
+      </button>
+      {% endfor %}
+    </div>
+  </aside>
+
+  <section class="json-viewer-main">
+    <div class="json-viewer-toolbar">
+      <div>
+        <h4 data-json-viewer-title>Element JSON</h4>
+        <p class="muted" data-json-viewer-subtitle>Select an element on the left.</p>
+      </div>
+      <div class="json-viewer-tabs" role="tablist">
+        <button type="button" class="ghost is-active" data-json-viewer-tab="json">JSON</button>
+        <button type="button" class="ghost" data-json-viewer-tab="metadata">Metadata</button>
+        <button type="button" class="ghost" data-json-viewer-tab="text">Text</button>
+      </div>
+    </div>
+    <div class="json-viewer-path" data-json-viewer-path></div>
+    <pre class="json-viewer-code" data-json-viewer-code>{}</pre>
+  </section>
+</section>
+
+<details class="json-inspector-details compact-details">
+  <summary>Type and metadata distribution</summary>
+  <div class="json-inspector-grids">
+    <section class="admin-rule-card">
+      <div class="admin-rule-card-head"><h4>Element Types</h4></div>
+      <div class="json-inspector-kv-list">
+        {% for name, count in summary.type_counts[:16] %}
+        <div><span>{{ name }}</span><strong>{{ count }}</strong></div>
+        {% endfor %}
+      </div>
+    </section>
+    <section class="admin-rule-card">
+      <div class="admin-rule-card-head"><h4>Metadata Keys</h4></div>
+      <div class="json-inspector-kv-list">
+        {% for name, count in summary.metadata_key_counts[:20] %}
+        <div><span>{{ name }}</span><strong>{{ count }}</strong></div>
+        {% endfor %}
+      </div>
+    </section>
+  </div>
+</details>
+{% else %}
+<div class="json-inspector-empty">
+  <strong>Select a JSON file</strong>
+  <span>Choose a Raw Stage or Debug Output file, then open it for read-only inspection.</span>
+</div>
+{% endif %}

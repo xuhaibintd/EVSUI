@@ -1,5 +1,23 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
+"""Optional BookRAG reconciliation helpers.
+
+This module is intentionally kept even though the main BookRAG pipeline
+currently bypasses ``reconcile_unstructured_elements`` and builds blocks/nodes
+directly from raw Unstructured elements.
+
+Why keep it:
+- It contains targeted repair logic for known PDF extraction artifacts:
+  table captions split from tables, table notes split into nearby text
+  fragments, and image fragments split from figure captions.
+- Current sampled raw-stage files did not trigger these repairs, so the main
+  pipeline avoids the extra deepcopy/PDF scan cost for now.
+- If future files show broken table/image grouping, this module can be restored
+  behind a BookRAG option without reimplementing the repair logic.
+
+The public entry point remains ``reconcile_unstructured_elements``. It accepts
+``list[dict]`` Unstructured elements and returns a repaired ``list[dict]``.
+"""
 import copy
 import json
 import logging

@@ -8,7 +8,7 @@
     <button class="menu-item {% if not evs.connected %}disabled locked{% endif %}" type="button" data-section="section-create" aria-disabled="{% if not evs.connected %}true{% else %}false{% endif %}" {% if not evs.connected %}disabled{% endif %}>Vector Store Creation</button>
     <button class="menu-item {% if not evs.connected %}disabled locked{% endif %}" type="button" data-section="section-chat" aria-disabled="{% if not evs.connected %}true{% else %}false{% endif %}" {% if not evs.connected %}disabled{% endif %}>Vector Store Retrieval</button>
     <button class="menu-item {% if not evs.connected %}disabled locked{% endif %}" type="button" data-section="section-eval" aria-disabled="{% if not evs.connected %}true{% else %}false{% endif %}" {% if not evs.connected %}disabled{% endif %}>Precision Evaluation</button>
-    <button class="menu-item {% if not evs.connected %}disabled locked{% endif %}" type="button" data-section="section-admin" aria-disabled="{% if not evs.connected %}true{% else %}false{% endif %}" {% if not evs.connected %}disabled{% endif %}>Admin Rules</button>
+    <button class="menu-item {% if not evs.connected %}disabled locked{% endif %}" type="button" data-section="section-admin" aria-disabled="{% if not evs.connected %}true{% else %}false{% endif %}" {% if not evs.connected %}disabled{% endif %}>Administration</button>
     <p id="menu-hint" class="menu-hint muted"></p>
   </aside>
 
@@ -57,7 +57,7 @@
       <div class="wizard-nav">
         <div class="wizard-actions">
           <button type="button" class="ghost wizard-btn" data-target="section-chat">Back</button>
-          <button type="button" class="wizard-btn" data-target="section-admin" data-requires-connected="true" {% if not evs.connected %}disabled{% endif %}>Next: Admin Rules</button>
+          <button type="button" class="wizard-btn" data-target="section-admin" data-requires-connected="true" {% if not evs.connected %}disabled{% endif %}>Next: Administration</button>
           <button type="button" class="ghost wizard-btn" data-target="section-connect">Go to Connect</button>
         </div>
       </div>

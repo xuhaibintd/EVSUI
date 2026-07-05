@@ -47,7 +47,7 @@ class BookRAGApiDummyDataTests(unittest.TestCase):
         self.assertEqual(payload["sample_entities"][3]["name"], "非金利収益")
         self.assertEqual(payload["sample_mapping"][0]["node_id"], "node-demo-001")
         self.assertIn("安定成長局面", payload["sample_match"]["content"])
-        self.assertEqual(payload["sample_match"]["source_block_id"], "block-demo-001")
+        self.assertEqual(payload["sample_match"]["source_element_id"], "block-demo-001")
 
 
 class BookRAGApiAnswerShapeTests(unittest.TestCase):
@@ -64,7 +64,7 @@ class BookRAGApiAnswerShapeTests(unittest.TestCase):
                         "path": "決算短信 > 総括",
                         "page_start": 2,
                         "page_end": 2,
-                        "source_block_id": "block-1",
+                        "source_element_id": "block-1",
                     },
                     "section": {
                         "title": "総括",
@@ -91,7 +91,7 @@ class BookRAGApiAnswerShapeTests(unittest.TestCase):
         )
 
         self.assertEqual(payload["question"], "決算の要点は？")
-        self.assertEqual(len(payload["instructions"]), 4)
+        self.assertEqual(len(payload["instructions"]), 5)
         self.assertEqual(len(payload["evidence"]), 1)
         self.assertEqual(payload["evidence"][0]["title"], "総括")
         self.assertEqual(payload["evidence"][0]["pages"], [2, 2])
@@ -108,7 +108,7 @@ class BookRAGApiAnswerShapeTests(unittest.TestCase):
                     "path": "決算短信 > 総括",
                     "pages": [2, 2],
                     "node_id": "node-1",
-                    "source_block_id": "block-1",
+                    "source_element_id": "block-1",
                 }
             ],
         }
@@ -228,7 +228,7 @@ class BookRAGApiLiveAnswerTests(unittest.TestCase):
                     "title": "総括",
                     "pages": [2, 2],
                     "node_id": "node-1",
-                    "source_block_id": "block-1",
+                    "source_element_id": "block-1",
                     "content": "増収増益だが成長は鈍化。",
                     "path": "決算短信 > 総括",
                 }

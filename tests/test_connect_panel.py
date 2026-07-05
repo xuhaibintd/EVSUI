@@ -96,7 +96,7 @@ class UnstructuredAdminPanelTests(unittest.TestCase):
         self.assertIn("Unstructured IO account saved for the current session.", html)
 
     def test_admin_tabs_are_rendered(self):
-        html = self.template.render(evs=_base_evs(True), unstructured_status=None)
+        html = self.template.render(evs=_base_evs(True), unstructured_status=None, json_inspector={"files": [], "selected_file": "", "summary": None, "error": ""})
 
         self.assertIn("External Account Configuration", html)
         self.assertIn("Business Configuration", html)

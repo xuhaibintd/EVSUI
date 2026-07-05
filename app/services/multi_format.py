@@ -1519,7 +1519,9 @@ def _apply_bookrag_tree_pipeline(
         )
         raw_stage_files.append(str(raw_stage_file))
         staged_raw_elements = load_bookrag_raw_stage_file(raw_stage_file)
-        reconciled_elements = reconcile_unstructured_elements(staged_raw_elements, src=src)
+        # Reconcile is intentionally bypassed for now; keep the implementation
+        # available, but build BookRAG tables from the raw Unstructured elements.
+        reconciled_elements = staged_raw_elements
         filetype = mimetypes.guess_type(src.name)[0] or src.suffix.lower().lstrip(".")
         document_row = build_bookrag_document_row(
             doc_id=doc_id,

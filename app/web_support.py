@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import logging
 import re
@@ -27,6 +27,7 @@ from app.services.doc_modes.constants import DOC_PIPELINE_OPTIONS
 from app.services.doc_modes.ui_fields import build_multi_format_bookrag_ui_fields, build_multi_format_ui_fields
 from app.services.precision_eval import build_precision_eval_panel_context, build_precision_eval_prototype_context
 from app.services.bookrag_section_rules import BOOKRAG_SECTION_RULES_PATH, load_bookrag_section_rules
+from app.services.unstructured_json_inspector import build_unstructured_json_inspector_context
 from app.session_state import (
     activate_session_state,
     current_user,
@@ -595,6 +596,7 @@ def _build_home_context(request: Request, app) -> dict:
         "bookrag_section_rules": bookrag_section_rules,
         "bookrag_section_rules_path": str(BOOKRAG_SECTION_RULES_PATH),
         "bookrag_section_rules_status": None,
+        "json_inspector": build_unstructured_json_inspector_context(),
         "logged_in": _is_logged_in(request, app),
         "username": username,
         "user_initials": _user_initials(username),
@@ -631,4 +633,3 @@ def initialize_app_state(app, templates) -> None:
     app.state.document_uploads = []
     app.state.document_upload_notices = []
     app.state.chat_history = []
-
