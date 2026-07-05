@@ -1,8 +1,8 @@
-# BookRAG Heavyweight Use Cases / BookRAG の重量級ユースケース
+# BookRAG for Industrial-Grade Applications / 産業用途における BookRAG のユースケース
 
-This document summarizes where EVSUI's `multi_format_bookrag` mode is a better fit than plain chunk-based RAG. BookRAG is intended for long, structured, multi-evidence documents where section paths, tables, images, entities, relations, and auditability matter.
+This document summarizes where EVSUI's `multi_format_bookrag` mode is a better fit than plain chunk-based RAG in industrial-grade applications. BookRAG is intended for long, structured, multi-evidence documents where section paths, tables, images, entities, relations, and auditability matter.
 
-本ドキュメントは、EVSUI の `multi_format_bookrag` モードが通常のチャンク型 RAG より有効になる場面を整理したものです。BookRAG は、章構造、表、画像、エンティティ、関係性、根拠追跡が重要な長大かつ構造化された文書を対象にします。
+本ドキュメントは、EVSUI の `multi_format_bookrag` モードが、産業用途において通常のチャンク型 RAG より有効になる場面を整理したものです。BookRAG は、章構造、表、画像、エンティティ、関係性、根拠追跡が重要な、長大かつ構造化された文書を対象にします。
 
 ## English
 
@@ -14,7 +14,7 @@ Plain RAG usually follows this pattern:
 chunk -> embedding -> similarity search -> answer
 ```
 
-BookRAG is designed for a heavier evidence model:
+BookRAG is designed for a more structured evidence model:
 
 ```text
 document -> section tree -> blocks -> entities -> relations -> evidence graph -> retrieval + reasoning
@@ -152,7 +152,7 @@ BookRAG adds processing cost and model complexity. Use it when the document stru
 In EVSUI, use:
 
 - `Multi Format` for standard RAG over ordinary documents.
-- `Multi-Format BookRAG` for heavy documents that require traceable evidence, section paths, table/image handling, entities, relations, and multi-evidence reasoning.
+- `Multi-Format BookRAG` for industrial-grade document workflows that require traceable evidence, section paths, table/image handling, entities, relations, and multi-evidence reasoning.
 
 In short: BookRAG is for audit-grade document question answering and cross-evidence reasoning, especially for financial, legal, medical, technical, and due diligence workflows.
 
@@ -166,7 +166,7 @@ In short: BookRAG is for audit-grade document question answering and cross-evide
 chunk -> embedding -> similarity search -> answer
 ```
 
-BookRAG は、より重い証拠モデルを前提にします。
+BookRAG は、より構造化された証拠モデルを前提にします。
 
 ```text
 document -> section tree -> blocks -> entities -> relations -> evidence graph -> retrieval + reasoning
@@ -304,6 +304,6 @@ BookRAG は処理コストとモデル複雑性を増やします。文書構造
 EVSUI では次の使い分けを想定します。
 
 - `Multi Format`: 通常文書に対する標準的な RAG。
-- `Multi-Format BookRAG`: 根拠追跡、章パス、表・画像処理、エンティティ、関係性、複数根拠の推論が必要な重量級文書。
+- `Multi-Format BookRAG`: 根拠追跡、章パス、表・画像処理、エンティティ、関係性、複数根拠の推論が必要な産業用途の文書ワークフロー。
 
 要するに、BookRAG は監査レベルの文書 QA と複数根拠に基づく推論のためのモードです。特に財務、法務、医療、技術文書、デューデリジェンスのワークフローに適しています。

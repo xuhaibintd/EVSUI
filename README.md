@@ -23,7 +23,7 @@ EVSUI is a `FastAPI + Jinja2 + HTMX` interface for working with Teradata Vector 
 - Built-in parameter sets for `VECTORDISTANCE / KMEANS / HNSW`
 - `Multi Format` mode uses Unstructured Workflow Endpoint on-demand jobs, creates a Teradata table first, and writes processed chunk rows into `<Vector Store Name>_unstructured`.
 - `Multi-Format BookRAG` mode skips `VectorStore.create()` and uses Unstructured Workflow Endpoint on-demand jobs with inline `job_nodes` to collect raw elements into dedicated Teradata tables for traceability. See [BookRAG Pipeline: Data Structures and Processing Flow](docs/bookrag_pipeline_diagram.md) for the visual pipeline and table model.
-- BookRAG is intended for heavyweight, audit-grade document QA where section paths, tables, images, entities, relations, and multi-evidence reasoning matter. See [BookRAG Heavyweight Use Cases / BookRAG の重量級ユースケース](docs/bookrag_heavy_use_cases.md) for English and Japanese scenario guidance.
+- BookRAG is intended for industrial-grade, audit-ready document QA where section paths, tables, images, entities, relations, and multi-evidence reasoning matter. See [BookRAG for Industrial-Grade Applications / 産業用途における BookRAG のユースケース](docs/bookrag_industrial_use_cases.md) for English and Japanese scenario guidance.
 
 ### Vector Store Retrieval
 
