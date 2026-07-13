@@ -159,9 +159,6 @@ def _document_relation_admin_context(
         "source": "database",
     }
     if not selected:
-        context["documents"] = getattr(app.state, "document_uploads", [])
-        context["relations"] = getattr(app.state, "document_relation_drafts", [])
-        context["source"] = "upload"
         return context
     try:
         schema_name = _document_relation_schema_name(app)
@@ -540,7 +537,6 @@ async def evs_reset(request: Request):
     request.app.state.create_form_values = default_create_values()
     request.app.state.last_create_operation = None
     request.app.state.document_uploads = []
-    request.app.state.document_relation_drafts = []
     request.app.state.document_upload_notices = []
     request.app.state.chat_history = []
     _persist_active_session_state(request, request.app)
@@ -577,9 +573,6 @@ async def upload_documents_for_create(request: Request):
 
     if saved:
         request.app.state.document_uploads = saved
-        from app.services.bookrag_document_relations import suggest_document_relations
-
-        request.app.state.document_relation_drafts = suggest_document_relations(saved)
     request.app.state.document_upload_notices = notices
 
     _persist_active_session_state(request, request.app)
@@ -588,7 +581,6 @@ async def upload_documents_for_create(request: Request):
         "partials/selected_documents.html",
         {
             "document_uploads": request.app.state.document_uploads,
-            "document_relation_drafts": request.app.state.document_relation_drafts,
             "document_upload_error": upload_error,
             "document_upload_notices": notices,
         },

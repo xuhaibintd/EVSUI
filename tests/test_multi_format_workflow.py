@@ -971,6 +971,7 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
             raw_batch_sizes: list[int] = []
             block_batch_sizes: list[int] = []
             node_batch_sizes: list[int] = []
+            document_relation_rows: list[dict] = []
 
             def _run_job(client=None, *, src, **kwargs):
                 payload = raw_payload_by_name[src.name]
@@ -992,6 +993,27 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
             def _persist_nodes(*, nodes, **kwargs):
                 node_batch_sizes.append(len(nodes))
                 return len(nodes)
+
+            def _suggest_relations(documents):
+                newer, older = documents
+                return [
+                    {
+                        "from_doc_id": newer["doc_id"],
+                        "from_filename": newer["filename"],
+                        "relation_type": "next_issue_of",
+                        "to_doc_id": older["doc_id"],
+                        "to_filename": older["filename"],
+                        "relation_description": "Filename rule created an initial relationship.",
+                        "source_type": "rule",
+                        "confidence": 1.0,
+                        "is_active": 0,
+                        "confirmed": False,
+                    }
+                ]
+
+            def _persist_relations(*, relations, **kwargs):
+                document_relation_rows.extend(relations)
+                return len(relations)
 
             with contextlib.ExitStack() as stack:
                 stack.enter_context(mock.patch.dict('os.environ', {'BOOKRAG_UNSTRUCTURED_WORKERS': '2'}))
@@ -1015,6 +1037,8 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
                 stack.enter_context(mock.patch('app.services.multi_format.persist_bookrag_raw_rows', side_effect=_persist_raw))
                 stack.enter_context(mock.patch('app.services.multi_format.persist_bookrag_blocks', side_effect=_persist_blocks))
                 stack.enter_context(mock.patch('app.services.multi_format.persist_bookrag_nodes', side_effect=_persist_nodes))
+                stack.enter_context(mock.patch('app.services.multi_format.suggest_document_relations', side_effect=_suggest_relations))
+                stack.enter_context(mock.patch('app.services.multi_format.persist_document_relations', side_effect=_persist_relations))
                 stack.enter_context(mock.patch('app.services.multi_format._count_teradata_rows', return_value=2))
 
                 _, summary = multi_format._apply_bookrag_tree_pipeline(
@@ -1041,6 +1065,11 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
         self.assertEqual(raw_batch_sizes, [1, 1])
         self.assertEqual(block_batch_sizes, [1, 1])
         self.assertEqual(node_batch_sizes, [2, 2])
+        self.assertEqual(summary['document_relation_count'], 1)
+        self.assertEqual(summary['document_relation_rule_count'], 1)
+        self.assertEqual(len(document_relation_rows), 1)
+        self.assertEqual(document_relation_rows[0]['is_active'], 0)
+        self.assertTrue(document_relation_rows[0]['confirmed'])
 
 
 if __name__ == '__main__':

@@ -60,6 +60,9 @@ class BookRAGDocumentRelationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(("spring", "next_issue_of", "autumn"), keys)
         self.assertIn(("summer", "next_issue_of", "spring"), keys)
         self.assertTrue(all(row["confirmed"] is False for row in rows))
+        self.assertTrue(all(row["is_active"] == 0 for row in rows))
+        self.assertTrue(all(row["from_filename"] and row["to_filename"] for row in rows))
+        self.assertTrue(all(row["relation_description"] for row in rows))
 
     def test_validation_uses_doc_id_as_key_and_canonical_filename_as_snapshot(self) -> None:
         documents = [

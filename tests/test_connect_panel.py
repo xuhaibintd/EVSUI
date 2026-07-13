@@ -52,6 +52,13 @@ class CreatePanelBookRAGToggleTests(unittest.TestCase):
         self.assertNotIn('name="multi_format_bookrag_generate_entity_links"', source)
         self.assertNotIn('name="multi_format_bookrag_generate_entity_relations"', source)
 
+    def test_upload_panel_is_file_only(self):
+        source = (TEMPLATES_DIR / "partials" / "selected_documents.html").read_text(encoding="utf-8")
+
+        self.assertNotIn("Document Relationships", source)
+        self.assertNotIn("document_relations_json", source)
+        self.assertNotIn("data-document-relation-editor", source)
+
 
 class ConnectPanelTemplateTests(unittest.TestCase):
     @classmethod

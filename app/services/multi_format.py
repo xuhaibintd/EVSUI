@@ -42,7 +42,10 @@ from app.services.unstructured_runtime import (
 from app.services.bookrag_reconcile import reconcile_unstructured_elements  # noqa: F401 - legacy patch point
 from app.services.bookrag_graph import build_bookrag_entities
 from app.services.bookrag_integrity import validate_bookrag_dataset_relationships
-from app.services.bookrag_document_relations import persist_document_relations
+from app.services.bookrag_document_relations import (
+    persist_document_relations,
+    suggest_document_relations,
+)
 from app.services.bookrag_schema import (
     build_bookrag_table_targets,
     prepare_bookrag_block_table,
@@ -1821,17 +1824,40 @@ def _apply_bookrag_tree_pipeline(
             )
 
     document_relation_count = 0
+    document_relation_rule_count = 0
     raw_document_relations = exec_payload.get("document_relations")
-    if (
-        table_generation["document_relations"]
-        and isinstance(raw_document_relations, list)
-        and raw_document_relations
-    ):
+    document_relations_to_persist = [
+        item
+        for item in (raw_document_relations if isinstance(raw_document_relations, list) else [])
+        if isinstance(item, dict)
+    ]
+    existing_relation_keys = {
+        (
+            str(item.get("from_doc_id") or "").strip(),
+            str(item.get("relation_type") or "").strip(),
+            str(item.get("to_doc_id") or "").strip(),
+        )
+        for item in document_relations_to_persist
+    }
+    if table_generation["document_relations"]:
+        for suggestion in suggest_document_relations(persisted_documents):
+            key = (
+                str(suggestion.get("from_doc_id") or "").strip(),
+                str(suggestion.get("relation_type") or "").strip(),
+                str(suggestion.get("to_doc_id") or "").strip(),
+            )
+            if key in existing_relation_keys:
+                continue
+            existing_relation_keys.add(key)
+            document_relations_to_persist.append({**suggestion, "confirmed": True})
+            document_relation_rule_count += 1
+
+    if table_generation["document_relations"] and document_relations_to_persist:
         relation_started = time.perf_counter()
         document_relation_count = persist_document_relations(
             vector_store_name=vector_store_name,
             schema_name=effective_schema_name,
-            relations=[item for item in raw_document_relations if isinstance(item, dict)],
+            relations=document_relations_to_persist,
             documents=persisted_documents,
             execute_sql_fn=execute_sql_fn,
             username=str((connection_params or {}).get("username") or ""),
@@ -1848,6 +1874,11 @@ def _apply_bookrag_tree_pipeline(
                 ),
             }
         )
+        if document_relation_rule_count:
+            partition_warnings.append(
+                f"Created {document_relation_rule_count} inactive bdrel suggestion(s) from filename rules; "
+                "review and activate them in Administration > Business Configuration."
+            )
 
     persisted_table_row_counts: dict[str, Any] = {}
     for table_key in BOOKRAG_TABLE_TOGGLE_ORDER:
@@ -1907,6 +1938,7 @@ def _apply_bookrag_tree_pipeline(
         "entity_relation_count": entity_relation_count,
         "document_count": document_count,
         "document_relation_count": document_relation_count,
+        "document_relation_rule_count": document_relation_rule_count,
         "job_id": job_ids[-1] if job_ids else "",
         "job_ids": job_ids,
         "workflow_id": workflow_ids[-1] if workflow_ids else "",

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Optional BookRAG reconciliation helpers.
 
 This module is intentionally kept even though the main BookRAG pipeline
@@ -18,6 +16,9 @@ Why keep it:
 The public entry point remains ``reconcile_unstructured_elements``. It accepts
 ``list[dict]`` Unstructured elements and returns a repaired ``list[dict]``.
 """
+
+from __future__ import annotations
+
 import copy
 import json
 import logging

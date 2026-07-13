@@ -9,6 +9,26 @@ from typing import Any
 import httpx
 
 
+UNSTRUCTURED_JOB_SUBMIT_MAX_ATTEMPTS = 6
+UNSTRUCTURED_JOB_SUBMIT_RETRY_MARGIN_SECONDS = 0.35
+
+
+def _job_submit_retry_after_seconds(response: httpx.Response, attempt: int) -> float:
+    candidates: list[Any] = [response.headers.get("retry-after")]
+    try:
+        payload = response.json()
+    except Exception:
+        payload = None
+    if isinstance(payload, dict):
+        candidates.append(payload.get("retry_after"))
+    for value in candidates:
+        try:
+            return max(1.0, float(value)) + UNSTRUCTURED_JOB_SUBMIT_RETRY_MARGIN_SECONDS
+        except (TypeError, ValueError):
+            continue
+    return 1.0 + UNSTRUCTURED_JOB_SUBMIT_RETRY_MARGIN_SECONDS + (max(1, attempt) - 1) * 0.5
+
+
 def create_unstructured_client(*, api_key: str, api_url: str, timeout_ms: int | None = None):
     from unstructured_client import UnstructuredClient
 
@@ -29,18 +49,26 @@ def create_unstructured_on_demand_job(
     content_type = mimetypes.guess_type(src.name)[0] or "application/octet-stream"
     endpoint = f"{api_url.rstrip('/')}" + "/jobs/"
     request_data = json.dumps({"job_nodes": request_parameters.get("workflow_nodes", [])}, ensure_ascii=False)
-    response = httpx.post(
-        endpoint,
-        headers={
-            "unstructured-api-key": api_key,
-            "accept": "application/json",
-        },
-        files=[
-            ("request_data", (None, request_data, "application/json")),
-            ("input_files", (src.name, src.read_bytes(), content_type)),
-        ],
-        timeout=120.0,
-    )
+    source_bytes = src.read_bytes()
+    response: httpx.Response | None = None
+    for attempt in range(1, UNSTRUCTURED_JOB_SUBMIT_MAX_ATTEMPTS + 1):
+        response = httpx.post(
+            endpoint,
+            headers={
+                "unstructured-api-key": api_key,
+                "accept": "application/json",
+            },
+            files=[
+                ("request_data", (None, request_data, "application/json")),
+                ("input_files", (src.name, source_bytes, content_type)),
+            ],
+            timeout=120.0,
+        )
+        if response.status_code != 429 or attempt >= UNSTRUCTURED_JOB_SUBMIT_MAX_ATTEMPTS:
+            break
+        time.sleep(_job_submit_retry_after_seconds(response, attempt))
+    if response is None:
+        raise RuntimeError("Unstructured create_job returned no response.")
     if response.status_code >= 400:
         raise RuntimeError(f"Unstructured create_job failed. status={response.status_code} body={response.text}")
     try:
@@ -121,7 +149,7 @@ def extract_elements_from_unstructured_job_output(payload: Any) -> list[dict[str
     raise RuntimeError("Unsupported Unstructured workflow output format; expected a JSON array or object containing an elements array.")
 
 
-def enforce_unstructured_job_submission_spacing(last_submitted_at: float | None, *, minimum_spacing_seconds: float = 1.1) -> float:
+def enforce_unstructured_job_submission_spacing(last_submitted_at: float | None, *, minimum_spacing_seconds: float = 1.35) -> float:
     now = time.time()
     if last_submitted_at is not None:
         remaining = minimum_spacing_seconds - (now - last_submitted_at)

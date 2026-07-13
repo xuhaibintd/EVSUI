@@ -6,6 +6,7 @@ from typing import Any
 
 from app.services.teradata_sql import (
     ExecuteSqlFn,
+    _count_teradata_rows,
     _qualified_table_sql,
     _sql_literal,
     _teradata_table_exists,
@@ -449,10 +450,27 @@ def _ensure_table(
         raise RuntimeError("teradataml.execute_sql is unavailable.")
     qualified_table = _qualified_table_sql(schema_name, table_name)
     if _teradata_table_exists(qualified_table, execute_sql_fn):
-        raise RuntimeError(
-            f"BookRAG target table already exists: {qualified_table}. "
-            "Use a new vector_store_name to create a new table set."
-        )
+        row_count = _count_teradata_rows(schema_name, table_name, execute_sql_fn)
+        if row_count is None:
+            raise RuntimeError(
+                f"BookRAG target table already exists, but its row count could not be verified: "
+                f"{qualified_table}. Refusing to reuse it."
+            )
+        if row_count > 0:
+            raise RuntimeError(
+                f"BookRAG target table already exists and contains {row_count} row(s): "
+                f"{qualified_table}. Use a new vector_store_name to create a new table set."
+            )
+
+        quoted_columns = ", ".join(f'"{name}"' for name, _ in columns)
+        try:
+            execute_sql_fn(f"SELECT {quoted_columns} FROM {qualified_table} WHERE 1 = 0")
+        except Exception as ex:
+            raise RuntimeError(
+                f"BookRAG target table already exists and is empty, but its columns are "
+                f"incompatible with the current schema: {qualified_table}. Refusing to reuse it."
+            ) from ex
+        return [f"Reused empty BookRAG target table after schema validation: {qualified_table}."]
     execute_sql_fn(_build_table_ddl(qualified_table, columns))
     return []
 

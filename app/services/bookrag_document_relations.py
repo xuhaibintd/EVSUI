@@ -184,7 +184,7 @@ def _draft_relation(
         "relation_description": description,
         "source_type": "rule",
         "confidence": 1.0,
-        "is_active": 1,
+        "is_active": 0,
         "confirmed": False,
     }
 

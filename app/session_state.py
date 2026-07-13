@@ -124,7 +124,6 @@ def new_session_scope(username: str, default_evs_state_fn: Callable[[], dict], d
         "create_form_values": default_create_values_fn(),
         "last_create_operation": None,
         "document_uploads": [],
-        "document_relation_drafts": [],
         "document_upload_notices": [],
         "chat_history": [],
     }
@@ -162,7 +161,6 @@ def activate_session_state(
     app.state.create_form_values = scope["create_form_values"]
     app.state.last_create_operation = scope["last_create_operation"]
     app.state.document_uploads = scope["document_uploads"]
-    app.state.document_relation_drafts = scope.get("document_relation_drafts", [])
     app.state.document_upload_notices = scope["document_upload_notices"]
     app.state.chat_history = scope["chat_history"]
     return scope
@@ -179,7 +177,6 @@ def persist_active_session_state(request: Request, app, session_cookie_name: str
     scope["create_form_values"] = app.state.create_form_values
     scope["last_create_operation"] = app.state.last_create_operation
     scope["document_uploads"] = app.state.document_uploads
-    scope["document_relation_drafts"] = app.state.document_relation_drafts
     scope["document_upload_notices"] = app.state.document_upload_notices
     scope["chat_history"] = app.state.chat_history
 

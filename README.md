@@ -269,22 +269,28 @@ Columns:
 
 Relationship direction is meaningful. For example, `A summary_of B` means A is the summary and B is the full report; `A next_issue_of B` means A is the newer issue and B is the preceding issue. A row cannot point to itself. Duplicate `(from_doc_id, relation_type, to_doc_id)` values are rejected.
 
-Filename-based suggestions are deliberately conservative:
+Create-time filename initialization is deliberately conservative:
 
 - `②` summary and `①` full report with the same issue become a proposed `summary_of` relationship.
 - `①` full reports, `②` summaries, and `③/④` monthly updates are ordered by the issue date and become proposed `next_issue_of` relationships.
 - Spot (`⑤`) and Topics (`⑥`) reports are not assigned semantic relationships automatically; a person must classify them.
-- Every suggestion starts as unconfirmed. Only rows explicitly confirmed in the upload editor enter the create payload and are persisted.
+- The upload panel remains file-only. After `bdoc` is complete, valid rule suggestions are inserted into `bdrel` with both document IDs, both canonical filenames, a relationship description, `source_type=rule`, and `is_active=0`.
+- Inactive rule rows are visible in Administration but are excluded from normal retrieval until a person reviews and activates them.
+- A document with no defensible relationship remains only in `bdoc`; the pipeline never creates a self-relation or another placeholder relationship merely to give every document a `bdrel` row.
 
 ### Creation and Persistence Flow
 
 1. Upload saves each file under its UUID `doc_id` and records `{doc_id, filename, saved_path}` in the document manifest.
-2. The UI builds conservative document-relationship drafts from filenames. A user reviews, edits, confirms, or removes each draft.
+2. The upload UI stops at the file catalog; it does not render or submit document relationships.
 3. Unstructured jobs run concurrently (worker count is controlled by `BOOKRAG_UNSTRUCTURED_WORKERS`). Each completed job immediately writes its per-file raw JSON stage file.
 4. Completed files are consumed in completion order. EVSUI transforms one JSON result into `bdoc`, `braw`, `bblk`, `bnode`, and optional Graph rows, validates all within-document relationships, and writes per-file/per-table UTF-8 CSV stage files.
 5. Each complete CSV is loaded into its target table before the next completed file is persisted. This avoids building one very large CSV for all documents and isolates failures by `doc_id`.
-6. After all documents exist in `bdoc`, confirmed cross-document rows are validated against the persisted document catalog and inserted into `bdrel`.
+6. After all documents exist in `bdoc`, the pipeline creates `bdrel` like the other Core tables, derives conservative filename-rule relationships, validates both endpoints against `bdoc`, and inserts the suggestions as inactive rows for administrative review.
 7. When the embedding option is enabled, `VectorStore.create()` uses the physical `bnode` table, `content` as data, and `(doc_id, node_id)` as its composite key. When disabled, table preprocessing completes without vector creation.
+
+Unstructured processing is concurrent, but job submission is rate-limited separately. EVSUI spaces submissions by 1.35 seconds and, when the service returns HTTP 429, follows `retry_after` with an additional safety margin and retries up to six times. A transient submission limit must not fail the complete multi-file run.
+
+If preprocessing fails after BookRAG tables have been created but before any rows are inserted, retrying with the same vector store name reuses each empty table after validating that all columns required by the current table contract are present. A table with existing rows, an unverifiable row count, or incompatible columns is never reused; choose a new vector store name in those cases.
 
 CSV loading uses native Teradata driver protocols. A CSV with fewer than `BOOKRAG_CSV_FASTLOAD_MIN_ROWS` rows (default `100000`) uses the driver's `teradata_read_csv` path; larger CSVs use `teradataml.read_csv(..., use_fastload=True)`. The application term “batch” refers only to one completed per-file flush and is not a Teradata product/protocol name.
 
@@ -302,8 +308,8 @@ For external MCP/SQL applications, call `GET /api/bookrag/schema?vector_store_na
 
 ### Administration and Migration
 
-- During upload, edit document relationships in **Vector Store Creation -> Upload PDF / Documents**. Suggestions do not become data until confirmed.
-- For an existing vector store, use **Administration -> Business Configuration -> Document Relationships** to load, add, edit, activate/deactivate, delete, import, or export rows.
+- **Vector Store Creation -> Upload PDF / Documents** is file upload only. `bdrel` is created during Create together with `bdoc`, `bblk`, and `bnode`.
+- Create-time filename-rule rows begin inactive. Use **Administration -> Business Configuration -> Document Relationships** to load, review, add, edit, activate/deactivate, delete, import, or export rows.
 - If an older vector store has `bdoc` but no `bdrel`, click **Initialize bdrel**. This only creates the empty table after verifying that `bdoc` contains documents; it does not invent or activate relationships.
 - CSV import may identify endpoints by `doc_id`. A filename-only import is accepted only when that filename is present and unique in `bdoc`; stored filenames are then canonicalized from `bdoc`.
 - Adding or changing `bdrel` rows does not require re-running Unstructured or rebuilding embeddings because document relationships are loaded at retrieval time.
