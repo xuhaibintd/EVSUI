@@ -23,6 +23,31 @@ def preprocess_create_payload(**kwargs) -> tuple[dict, dict | None]:
     )
 
 
+def _insert_timing_message(summary: dict) -> str:
+    timing_items: list[str] = []
+    for label, summary_key in (
+        ("bdoc", "bookrag_document_insert_stats"),
+        ("braw", "bookrag_raw_insert_stats"),
+        ("bblk", "bookrag_block_insert_stats"),
+        ("bnode", "bookrag_node_insert_stats"),
+    ):
+        stats = summary.get(summary_key)
+        if not isinstance(stats, dict) or not stats:
+            continue
+        methods: list[str] = []
+        if int(stats.get("native_csv_batch_calls", 0) or 0) > 0:
+            methods.append("csv-batch")
+        if int(stats.get("native_csv_fastload_calls", 0) or 0) > 0:
+            methods.append("fastload-csv")
+        method_label = "->".join(methods) or str(stats.get("insert_mode") or "unknown")
+        row_count = int(stats.get("input_rows", 0) or 0)
+        elapsed = float(stats.get("insert_total_seconds", 0.0) or 0.0)
+        timing_items.append(f"{label}={elapsed:.2f}s/{row_count}rows/{method_label}")
+    if not timing_items:
+        return ""
+    return "BookRAG insert timing: " + ", ".join(timing_items) + "."
+
+
 def append_success_message(message: str, summary: dict | None) -> str:
     if not summary:
         return message
@@ -45,7 +70,10 @@ def append_success_message(message: str, summary: dict | None) -> str:
             detail.append(f"relations={entity_relation_count}")
         if detail:
             parts.append("BookRAG graph: " + ", ".join(detail) + ".")
-    parts.append("VectorStore.create() uses bnode.content with key_columns=node_id.")
+    timing_message = _insert_timing_message(summary)
+    if timing_message:
+        parts.append(timing_message)
+    parts.append("VectorStore.create() uses bnode.content with key_columns=doc_id,node_id.")
     return " ".join(parts)
 
 
@@ -60,6 +88,7 @@ def build_skip_create_message(summary: dict | None) -> str:
     entities_table_name = str(summary.get("entities_table_name") or "").strip()
     entity_links_table_name = str(summary.get("entity_links_table_name") or "").strip()
     entity_relations_table_name = str(summary.get("entity_relations_table_name") or "").strip()
+    document_relations_table_name = str(summary.get("document_relations_table_name") or "").strip()
     raw_element_count = summary.get("raw_element_count")
     document_count = summary.get("document_count")
     block_count = summary.get("block_count")
@@ -67,6 +96,7 @@ def build_skip_create_message(summary: dict | None) -> str:
     entity_count = summary.get("entity_count")
     entity_link_count = summary.get("entity_link_count")
     entity_relation_count = summary.get("entity_relation_count")
+    document_relation_count = summary.get("document_relation_count")
 
     run_embedding_step = bool(summary.get("run_embedding_step"))
     parts = ["Step 2 completed. BookRAG selected tables finished."]
@@ -79,6 +109,8 @@ def build_skip_create_message(summary: dict | None) -> str:
         table_parts.append(f"bblk={blocks_table_name}")
     if nodes_table_name:
         table_parts.append(f"bnode={nodes_table_name}")
+    if document_relations_table_name:
+        table_parts.append(f"bdrel={document_relations_table_name}")
     if entities_table_name:
         table_parts.append(f"bent={entities_table_name}")
     if entity_links_table_name:
@@ -103,7 +135,12 @@ def build_skip_create_message(summary: dict | None) -> str:
         count_parts.append(f"entity_links={entity_link_count}")
     if entity_relation_count is not None:
         count_parts.append(f"relations={entity_relation_count}")
+    if document_relation_count is not None:
+        count_parts.append(f"document_relations={document_relation_count}")
     if count_parts:
         parts.append("Counts: " + ", ".join(count_parts) + ".")
+    timing_message = _insert_timing_message(summary)
+    if timing_message:
+        parts.append(timing_message)
     parts.append("Embedding: enabled." if run_embedding_step else "Embedding: skipped.")
     return " ".join(parts)

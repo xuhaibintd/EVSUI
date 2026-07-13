@@ -263,5 +263,57 @@ class BookragGraphTests(unittest.TestCase):
         self.assertTrue(relations[0]["from_entity_id"])
         self.assertTrue(relations[0]["to_entity_id"])
 
+    def test_build_bookrag_entities_skips_relation_without_core_source_node(self) -> None:
+        document_row = {"doc_id": "doc-1"}
+        raw_elements = [
+            {
+                "element_id": "filtered-element",
+                "text": "Filtered source.",
+                "metadata": {
+                    "entities": {
+                        "relationships": [
+                            {"from": "Entity A", "relationship": "related_to", "to": "Entity B"}
+                        ]
+                    }
+                },
+            }
+        ]
+
+        entities, links, relations = build_bookrag_entities(document_row, raw_elements, nodes=[])
+
+        self.assertEqual(entities, [])
+        self.assertEqual(links, [])
+        self.assertEqual(relations, [])
+
+    def test_build_bookrag_entities_skips_relation_with_unresolved_endpoint(self) -> None:
+        document_row = {"doc_id": "doc-1"}
+        raw_elements = [
+            {
+                "element_id": "blk-1",
+                "text": "Invalid endpoint.",
+                "metadata": {
+                    "entities": {
+                        "relationships": [
+                            {"from": "(1)", "relationship": "related_to", "to": "Entity B"}
+                        ]
+                    }
+                },
+            }
+        ]
+        nodes = [
+            {
+                "node_id": "leaf-1",
+                "doc_id": "doc-1",
+                "source_block_id": "blk-1",
+                "parent_node_id": None,
+                "node_type": "text",
+            }
+        ]
+
+        entities, _, relations = build_bookrag_entities(document_row, raw_elements, nodes)
+
+        self.assertEqual(entities, [])
+        self.assertEqual(relations, [])
+
 if __name__ == "__main__":
     unittest.main()

@@ -63,7 +63,9 @@
       </form>
     </section>
 
-    <section class="admin-rule-tab-panel admin-rule-panel-business" aria-label="Business Configuration"></section>
+    <section class="admin-rule-tab-panel admin-rule-panel-business" aria-label="Business Configuration">
+      {% include "partials/document_relation_admin.html" %}
+    </section>
 
     <section class="admin-rule-tab-panel admin-rule-panel-json" aria-label="Unstructured JSON Inspector">
       {% set inspector = json_inspector | default({"files": [], "selected_file": "", "summary": none, "error": ""}) %}

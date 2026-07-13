@@ -57,6 +57,7 @@ class DestroyFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('DROP VIEW "USECASES_JAPAN"."demo_vs_bk_bleaf"', actions)
         self.assertIn('DROP TABLE "USECASES_JAPAN"."demo_vs_bk_bnode"', actions)
         self.assertIn('DROP TABLE "USECASES_JAPAN"."demo_vs_bk_brel"', actions)
+        self.assertIn('DROP TABLE "USECASES_JAPAN"."demo_vs_bk_bdrel"', actions)
         self.assertEqual(state["destroy_status"], "ok")
 
     async def test_non_bookrag_destroy_skips_bookrag_cleanup(self):

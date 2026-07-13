@@ -195,4 +195,51 @@ button.ghost {
   color: #a7c0e7;
   font-weight: 600;
 }
+.document-relation-drafts {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line, #dfe5ee);
+}
 
+.document-relation-drafts-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.document-relation-drafts-head p {
+  margin: 0.2rem 0 0;
+}
+
+.document-relation-list {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.65rem;
+}
+
+.document-relation-row {
+  display: grid;
+  grid-template-columns: minmax(10rem, 1fr) minmax(8rem, 0.55fr) minmax(10rem, 1fr) minmax(12rem, 1.2fr) auto auto;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.document-relation-row select,
+.document-relation-row input[type="text"] {
+  min-width: 0;
+  width: 100%;
+}
+
+.document-relation-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  white-space: nowrap;
+}
+
+@media (max-width: 1100px) {
+  .document-relation-row {
+    grid-template-columns: 1fr 1fr;
+  }
+}

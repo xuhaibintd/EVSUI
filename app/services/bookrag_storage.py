@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import csv
-from concurrent.futures import ThreadPoolExecutor
 import json
+import os
 import re
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -15,8 +16,6 @@ from app.services.bookrag_schema import (
     BOOKRAG_ENTITY_COLUMNS,
     BOOKRAG_ENTITY_LINK_COLUMNS,
     BOOKRAG_ENTITY_RELATION_COLUMNS,
-    BOOKRAG_INSERT_BATCH_MAX_ROWS,
-    BOOKRAG_INSERT_BATCH_MAX_SQL_CHARS,
     BOOKRAG_NODE_COLUMNS,
     BOOKRAG_RAW_COLUMNS,
 )
@@ -24,51 +23,72 @@ from app.services.teradata_sql import (
     ExecuteSqlFn,
     _qualified_table_sql,
     _sanitize_teradata_text,
-    _sql_literal,
-    _sql_typed_literal,
 )
 
 
 
-def _fastload_rows(
-    schema_name: str | None,
-    table_name: str,
-    rows: list[dict[str, Any]],
-    columns: list[tuple[str, str]],
-) -> int:
-    from teradataml import fastload
-
-    frame = _rows_to_pandas_frame(rows, columns)
-    fastload(
-        frame,
-        table_name=table_name,
-        schema_name=schema_name,
-        if_exists="append",
-        index=False,
-    )
-    return len(rows)
+BOOKRAG_CSV_FASTLOAD_MIN_ROWS_DEFAULT = 100000
 
 
-def _rows_to_pandas_frame(rows: list[dict[str, Any]], columns: list[tuple[str, str]]):
-    import pandas as pd
+def _resolve_csv_fastload_min_rows() -> int:
+    raw_value = str(
+        os.getenv(
+            "BOOKRAG_CSV_FASTLOAD_MIN_ROWS",
+            str(BOOKRAG_CSV_FASTLOAD_MIN_ROWS_DEFAULT),
+        )
+        or ""
+    ).strip()
+    try:
+        return max(1, int(raw_value))
+    except (TypeError, ValueError):
+        return BOOKRAG_CSV_FASTLOAD_MIN_ROWS_DEFAULT
 
-    column_names = [name for name, _ in columns]
-    frame = pd.DataFrame([{name: row.get(name) for name in column_names} for row in rows], columns=column_names)
-    for name, column_type in columns:
-        normalized = column_type.upper()
-        if "BYTEINT" in normalized:
-            frame[name] = pd.array(frame[name], dtype="Int8")
-        elif "INTEGER" in normalized:
-            frame[name] = pd.array(frame[name], dtype="Int64")
-    return frame
 
 
-def _csv_safe_value(value: Any) -> str:
+
+def _record_elapsed(stats: dict[str, Any] | None, key: str, started_at: float) -> None:
+    if stats is None:
+        return
+    elapsed = max(0.0, time.perf_counter() - started_at)
+    stats[key] = round(float(stats.get(key, 0.0) or 0.0) + elapsed, 6)
+
+
+def _replace_flag_emoji(text: str) -> tuple[str, int]:
+    """Replace regional-indicator flag pairs with searchable ASCII labels."""
+    output: list[str] = []
+    replaced = 0
+    index = 0
+    while index < len(text):
+        first = ord(text[index])
+        if 0x1F1E6 <= first <= 0x1F1FF and index + 1 < len(text):
+            second = ord(text[index + 1])
+            if 0x1F1E6 <= second <= 0x1F1FF:
+                country_code = chr(ord("A") + first - 0x1F1E6) + chr(ord("A") + second - 0x1F1E6)
+                output.append(f"[{country_code}]")
+                replaced += 2
+                index += 2
+                continue
+        output.append(text[index])
+        index += 1
+    return "".join(output), replaced
+
+
+def _csv_safe_value(value: Any) -> tuple[str, int, int]:
     if value is None:
-        return ""
+        return "", 0, 0
     if isinstance(value, (dict, list, tuple)):
-        return json.dumps(value, ensure_ascii=False)
-    return str(value)
+        text = json.dumps(value, ensure_ascii=False)
+    else:
+        text = str(value)
+    with_flags, flag_characters = _replace_flag_emoji(text)
+    normalized = _sanitize_teradata_text(with_flags)
+    removed_characters = max(0, len(with_flags) - len(normalized))
+    return normalized, flag_characters, removed_characters
+
+
+def _column_text_limit(column_type: str) -> int | None:
+    match = re.search(r"\b(?:VAR)?CHAR\((\d+)\)", str(column_type), flags=re.IGNORECASE)
+    return int(match.group(1)) if match else None
 
 
 def _write_rows_csv(
@@ -76,90 +96,107 @@ def _write_rows_csv(
     table_name: str,
     rows: list[dict[str, Any]],
     columns: list[tuple[str, str]],
+    stats: dict[str, Any] | None = None,
 ) -> str | None:
     if csv_stage_dir is None or not rows:
         return None
     csv_stage_dir.mkdir(parents=True, exist_ok=True)
     path = csv_stage_dir / f"{table_name}.csv"
+    if path.exists():
+        for index in range(2, 100000):
+            candidate = csv_stage_dir / f"{table_name}_{index}.csv"
+            if not candidate.exists():
+                path = candidate
+                break
     column_names = [name for name, _ in columns]
+    flag_characters = 0
+    unsupported_characters = 0
+    truncated_characters = 0
+    started_at = time.perf_counter()
     with path.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=column_names)
         writer.writeheader()
         for row in rows:
-            writer.writerow({name: _csv_safe_value(row.get(name)) for name in column_names})
+            csv_row: dict[str, str] = {}
+            for name, column_type in columns:
+                normalized, replaced_flags, removed_unsupported = _csv_safe_value(row.get(name))
+                text_limit = _column_text_limit(column_type)
+                if text_limit is not None and len(normalized) > text_limit:
+                    truncated_characters += len(normalized) - text_limit
+                    normalized = normalized[:text_limit]
+                csv_row[name] = normalized
+                flag_characters += replaced_flags
+                unsupported_characters += removed_unsupported
+            writer.writerow(csv_row)
+    if stats is not None:
+        _record_elapsed(stats, "csv_write_seconds", started_at)
+        stats["csv_flag_characters_replaced"] = int(stats.get("csv_flag_characters_replaced", 0) or 0) + flag_characters
+        stats["csv_unsupported_characters_removed"] = int(stats.get("csv_unsupported_characters_removed", 0) or 0) + unsupported_characters
+        stats["csv_truncated_characters"] = int(stats.get("csv_truncated_characters", 0) or 0) + truncated_characters
+        stats["csv_bytes"] = int(stats.get("csv_bytes", 0) or 0) + path.stat().st_size
     return str(path)
 
 
-def _copy_rows_to_sql(
+def _csv_header(csv_path: str) -> list[str]:
+    with Path(csv_path).open("r", encoding="utf-8-sig", newline="") as handle:
+        header = next(csv.reader(handle), None)
+    if not header:
+        raise RuntimeError(f"BookRAG CSV has no header: {csv_path}")
+    return [str(name) for name in header]
+
+
+def _load_csv_to_teradata(
     schema_name: str | None,
     table_name: str,
-    rows: list[dict[str, Any]],
-    columns: list[tuple[str, str]],
+    csv_path: str,
+    row_count: int,
+    stats: dict[str, Any] | None = None,
 ) -> int:
-    from teradataml import copy_to_sql
+    """Load one complete CSV with native Teradata driver protocols."""
+    use_fastload = row_count >= _resolve_csv_fastload_min_rows()
+    resolved_path = str(Path(csv_path).resolve())
+    if any(character in resolved_path for character in "\r\n{}"):
+        raise RuntimeError(f"Unsupported character in BookRAG CSV path: {resolved_path!r}")
 
-    frame = _rows_to_pandas_frame(rows, columns)
-    copy_to_sql(
-        frame,
-        table_name=table_name,
-        schema_name=schema_name,
-        if_exists="append",
-        index=False,
-        chunksize=min(max(len(rows), 1), 16383),
-        match_column_order=True,
-    )
-    return len(rows)
+    load_started = time.perf_counter()
+    try:
+        if use_fastload:
+            from teradataml import read_csv
 
+            result = read_csv(
+                filepath=resolved_path,
+                table_name=table_name,
+                schema_name=schema_name,
+                if_exists="append",
+                use_fastload=True,
+                catch_errors_warnings=True,
+            )
+            if isinstance(result, tuple) and len(result) > 1:
+                details = result[1]
+                errors = details.get("errors_dataframe") if isinstance(details, dict) else None
+                if errors is not None and not errors.empty:
+                    raise RuntimeError(f"Teradata FastLoadCSV rejected {len(errors.index)} CSV row(s).")
+        else:
+            from teradataml import get_connection
 
-def _single_insert_sql(
-    qualified_table: str,
-    column_names: list[str],
-    row: dict[str, Any],
-) -> str:
-    quoted_cols = ", ".join(f'"{name}"' for name in column_names)
-    values_sql = ", ".join(_sql_literal(row.get(col)) for col in column_names)
-    return f"INSERT INTO {qualified_table} ({quoted_cols}) VALUES ({values_sql})"
+            qualified_table = _qualified_table_sql(schema_name, table_name)
+            placeholders = ", ".join("?" for _ in range(len(_csv_header(csv_path))))
+            statement = f"{{fn teradata_read_csv({resolved_path})}}INSERT INTO {qualified_table} VALUES ({placeholders})"
+            driver_connection = get_connection().connection.driver_connection
+            cursor = driver_connection.cursor()
+            try:
+                cursor.execute(statement)
+            finally:
+                cursor.close()
+    finally:
+        _record_elapsed(stats, "native_csv_load_seconds", load_started)
 
-
-def _batch_insert_sql(
-    qualified_table: str,
-    rows: list[dict[str, Any]],
-    columns: list[tuple[str, str]],
-) -> str:
-    quoted_cols = ", ".join(f'"{name}"' for name, _ in columns)
-    select_sql: list[str] = []
-    for row in rows:
-        typed_values = ", ".join(_sql_typed_literal(row.get(name), column_type) for name, column_type in columns)
-        select_sql.append(f"SELECT {typed_values}")
-    return f"INSERT INTO {qualified_table} ({quoted_cols})\n" + "\nUNION ALL\n".join(select_sql)
-
-
-def _iter_insert_batches(
-    rows: list[dict[str, Any]],
-    columns: list[tuple[str, str]],
-    *,
-    max_rows: int = BOOKRAG_INSERT_BATCH_MAX_ROWS,
-    max_sql_chars: int = BOOKRAG_INSERT_BATCH_MAX_SQL_CHARS,
-) -> list[list[dict[str, Any]]]:
-    batches: list[list[dict[str, Any]]] = []
-    current_batch: list[dict[str, Any]] = []
-    current_size = 0
-    per_row_overhead = len("SELECT ") + len("\nUNION ALL\n")
-
-    for row in rows:
-        row_sql_size = per_row_overhead
-        for name, column_type in columns:
-            row_sql_size += len(_sql_typed_literal(row.get(name), column_type)) + 2
-        if current_batch and (len(current_batch) >= max_rows or current_size + row_sql_size > max_sql_chars):
-            batches.append(current_batch)
-            current_batch = []
-            current_size = 0
-        current_batch.append(row)
-        current_size += row_sql_size
-
-    if current_batch:
-        batches.append(current_batch)
-    return batches
+    if stats is not None:
+        stats["native_csv_calls"] = int(stats.get("native_csv_calls", 0) or 0) + 1
+        stats["native_csv_rows"] = int(stats.get("native_csv_rows", 0) or 0) + row_count
+        counter = "native_csv_fastload_calls" if use_fastload else "native_csv_batch_calls"
+        stats[counter] = int(stats.get(counter, 0) or 0) + 1
+    return row_count
 
 
 def _metadata_dict(element: dict[str, Any]) -> dict[str, Any]:
@@ -516,25 +553,6 @@ def build_bookrag_chunk_rows_from_raw_elements(
     return rows
 
 
-def _supports_fastload(columns: list[tuple[str, str]]) -> bool:
-    for _, column_type in columns:
-        normalized = column_type.upper()
-        if "CLOB" in normalized or "BLOB" in normalized:
-            return False
-    return True
-
-
-def _record_csv_future_result(csv_future, stats: dict[str, int] | None) -> None:
-    csv_file = None
-    try:
-        csv_file = csv_future.result()
-    except Exception:
-        if stats is not None:
-            stats["csv_write_failures"] += 1
-    if stats is not None and csv_file and csv_file not in stats["csv_files"]:
-        stats["csv_files"].append(csv_file)
-
-
 def _insert_rows(
     schema_name: str | None,
     table_name: str,
@@ -542,103 +560,58 @@ def _insert_rows(
     columns: list[tuple[str, str]],
     execute_sql_fn: ExecuteSqlFn | None,
     csv_stage_dir: Path | None = None,
-    stats: dict[str, int] | None = None,
-    csv_executor: ThreadPoolExecutor | None = None,
-    pending_csv_futures: list[Any] | None = None,
+    stats: dict[str, Any] | None = None,
 ) -> int:
     if execute_sql_fn is None:
         raise RuntimeError("teradataml.execute_sql is unavailable.")
     if not rows:
         return 0
-    qualified_table = _qualified_table_sql(schema_name, table_name)
-    column_names = [name for name, _ in columns]
-    inserted = 0
-    active_csv_executor = csv_executor
-    owned_csv_executor = False
-    csv_future = None
+    if csv_stage_dir is None:
+        raise RuntimeError("BookRAG native CSV loading requires csv_stage_dir.")
 
+    insert_started = time.perf_counter()
     if stats is not None:
-        stats.setdefault("fastload_calls", 0)
-        stats.setdefault("fastload_rows", 0)
-        stats.setdefault("fastload_fallbacks", 0)
-        stats.setdefault("fastload_skipped", 0)
-        stats.setdefault("copy_to_sql_calls", 0)
-        stats.setdefault("copy_to_sql_rows", 0)
-        stats.setdefault("copy_to_sql_fallbacks", 0)
-        stats.setdefault("single_row_statements", 0)
-        stats.setdefault("batch_statements", 0)
-        stats.setdefault("batch_rows", 0)
-        stats.setdefault("fallback_rows", 0)
-        stats.setdefault("fallback_batches", 0)
+        stats["insert_mode"] = "native_csv"
+        stats["table_name"] = table_name
+        stats["input_rows"] = int(stats.get("input_rows", 0) or 0) + len(rows)
         stats.setdefault("csv_files", [])
-        stats.setdefault("csv_write_failures", 0)
-        stats.setdefault("csv_parallel_calls", 0)
-
-    if csv_stage_dir is not None:
-        if active_csv_executor is None:
-            active_csv_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="bookrag-csv")
-            owned_csv_executor = True
-        csv_future = active_csv_executor.submit(_write_rows_csv, csv_stage_dir, table_name, rows, columns)
-        if stats is not None:
-            stats["csv_parallel_calls"] += 1
+        stats.setdefault("csv_write_seconds", 0.0)
+        stats.setdefault("csv_flag_characters_replaced", 0)
+        stats.setdefault("csv_unsupported_characters_removed", 0)
+        stats.setdefault("csv_truncated_characters", 0)
+        stats.setdefault("csv_bytes", 0)
+        stats.setdefault("native_csv_calls", 0)
+        stats.setdefault("native_csv_rows", 0)
+        stats.setdefault("native_csv_batch_calls", 0)
+        stats.setdefault("native_csv_fastload_calls", 0)
+        stats.setdefault("native_csv_load_seconds", 0.0)
+        stats.setdefault("insert_total_seconds", 0.0)
 
     try:
-        if _supports_fastload(columns):
-            try:
-                inserted += _fastload_rows(schema_name, table_name, rows, columns)
-                if stats is not None:
-                    stats["fastload_calls"] += 1
-                    stats["fastload_rows"] += len(rows)
-            except Exception:
-                if stats is not None:
-                    stats["fastload_fallbacks"] += 1
-        elif stats is not None:
-            stats["fastload_skipped"] += 1
-
-        if inserted == 0 and len(rows) > 1:
-            try:
-                inserted += _copy_rows_to_sql(schema_name, table_name, rows, columns)
-                if stats is not None:
-                    stats["copy_to_sql_calls"] += 1
-                    stats["copy_to_sql_rows"] += len(rows)
-            except Exception:
-                if stats is not None:
-                    stats["copy_to_sql_fallbacks"] += 1
-
-        if inserted == 0:
-            for batch in _iter_insert_batches(rows, columns):
-                if len(batch) == 1:
-                    execute_sql_fn(_single_insert_sql(qualified_table, column_names, batch[0]))
-                    inserted += 1
-                    if stats is not None:
-                        stats["single_row_statements"] += 1
-                    continue
-                try:
-                    execute_sql_fn(_batch_insert_sql(qualified_table, batch, columns))
-                    inserted += len(batch)
-                    if stats is not None:
-                        stats["batch_statements"] += 1
-                        stats["batch_rows"] += len(batch)
-                except Exception:
-                    if stats is not None:
-                        stats["fallback_batches"] += 1
-                        stats["fallback_rows"] += len(batch)
-                    for row in batch:
-                        execute_sql_fn(_single_insert_sql(qualified_table, column_names, row))
-                        inserted += 1
-                        if stats is not None:
-                            stats["single_row_statements"] += 1
+        csv_path = _write_rows_csv(
+            csv_stage_dir,
+            table_name,
+            rows,
+            columns,
+            stats=stats,
+        )
+        if not csv_path:
+            raise RuntimeError(f"BookRAG CSV generation produced no file for {table_name}.")
+        if stats is not None and csv_path not in stats["csv_files"]:
+            stats["csv_files"].append(csv_path)
+        return _load_csv_to_teradata(
+            schema_name,
+            table_name,
+            csv_path,
+            len(rows),
+            stats=stats,
+        )
+    except Exception as ex:
+        if stats is not None:
+            stats["native_csv_last_error"] = _sanitize_teradata_text(str(ex))[:2000]
+        raise
     finally:
-        if csv_future is not None:
-            if pending_csv_futures is not None and not owned_csv_executor:
-                pending_csv_futures.append(csv_future)
-            else:
-                try:
-                    _record_csv_future_result(csv_future, stats)
-                finally:
-                    if owned_csv_executor and active_csv_executor is not None:
-                        active_csv_executor.shutdown(wait=False)
-    return inserted
+        _record_elapsed(stats, "insert_total_seconds", insert_started)
 
 
 def persist_bookrag_tree(
@@ -653,7 +626,7 @@ def persist_bookrag_tree(
     entity_relations: list[dict[str, Any]],
     execute_sql_fn: ExecuteSqlFn | None,
     csv_stage_dir: Path | None = None,
-    stats: dict[str, int] | None = None,
+    stats: dict[str, Any] | None = None,
 ) -> int:
     return persist_bookrag_dataset(
         schema_name=schema_name,
@@ -682,85 +655,27 @@ def persist_bookrag_dataset(
     entity_relations: list[dict[str, Any]],
     execute_sql_fn: ExecuteSqlFn | None,
     csv_stage_dir: Path | None = None,
-    stats: dict[str, int] | None = None,
+    stats: dict[str, Any] | None = None,
 ) -> int:
     inserted = 0
-    csv_executor: ThreadPoolExecutor | None = None
-    pending_csv_futures: list[Any] = []
-    if csv_stage_dir is not None:
-        csv_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="bookrag-csv")
-    try:
+    datasets = (
+        ("documents", document_rows, BOOKRAG_DOCUMENT_COLUMNS),
+        ("nodes", nodes, BOOKRAG_NODE_COLUMNS),
+        ("entities", entities, BOOKRAG_ENTITY_COLUMNS),
+        ("entity_links", entity_links, BOOKRAG_ENTITY_LINK_COLUMNS),
+        ("entity_relations", entity_relations, BOOKRAG_ENTITY_RELATION_COLUMNS),
+        ("blocks", blocks, BOOKRAG_BLOCK_COLUMNS),
+    )
+    for table_key, rows, columns in datasets:
         inserted += _insert_rows(
             schema_name,
-            table_targets["documents"],
-            document_rows,
-            BOOKRAG_DOCUMENT_COLUMNS,
+            table_targets[table_key],
+            rows,
+            columns,
             execute_sql_fn,
             csv_stage_dir=csv_stage_dir,
             stats=stats,
-            csv_executor=csv_executor,
-            pending_csv_futures=pending_csv_futures,
         )
-        inserted += _insert_rows(
-            schema_name,
-            table_targets["nodes"],
-            nodes,
-            BOOKRAG_NODE_COLUMNS,
-            execute_sql_fn,
-            csv_stage_dir=csv_stage_dir,
-            stats=stats,
-            csv_executor=csv_executor,
-            pending_csv_futures=pending_csv_futures,
-        )
-        inserted += _insert_rows(
-            schema_name,
-            table_targets["entities"],
-            entities,
-            BOOKRAG_ENTITY_COLUMNS,
-            execute_sql_fn,
-            csv_stage_dir=csv_stage_dir,
-            stats=stats,
-            csv_executor=csv_executor,
-            pending_csv_futures=pending_csv_futures,
-        )
-        inserted += _insert_rows(
-            schema_name,
-            table_targets["entity_links"],
-            entity_links,
-            BOOKRAG_ENTITY_LINK_COLUMNS,
-            execute_sql_fn,
-            csv_stage_dir=csv_stage_dir,
-            stats=stats,
-            csv_executor=csv_executor,
-            pending_csv_futures=pending_csv_futures,
-        )
-        inserted += _insert_rows(
-            schema_name,
-            table_targets["entity_relations"],
-            entity_relations,
-            BOOKRAG_ENTITY_RELATION_COLUMNS,
-            execute_sql_fn,
-            csv_stage_dir=csv_stage_dir,
-            stats=stats,
-            csv_executor=csv_executor,
-            pending_csv_futures=pending_csv_futures,
-        )
-        inserted += _insert_rows(
-            schema_name,
-            table_targets["blocks"],
-            blocks,
-            BOOKRAG_BLOCK_COLUMNS,
-            execute_sql_fn,
-            csv_stage_dir=csv_stage_dir,
-            stats=stats,
-            csv_executor=csv_executor,
-            pending_csv_futures=pending_csv_futures,
-        )
-    finally:
-        for csv_future in pending_csv_futures:
-            _record_csv_future_result(csv_future, stats)
-        if csv_executor is not None:
-            csv_executor.shutdown(wait=False)
     return inserted
 
 
@@ -771,7 +686,7 @@ def persist_bookrag_blocks(
     blocks: list[dict[str, Any]],
     execute_sql_fn: ExecuteSqlFn | None,
     csv_stage_dir: Path | None = None,
-    stats: dict[str, int] | None = None,
+    stats: dict[str, Any] | None = None,
 ) -> int:
     return _insert_rows(
         schema_name,
@@ -791,7 +706,7 @@ def persist_bookrag_nodes(
     nodes: list[dict[str, Any]],
     execute_sql_fn: ExecuteSqlFn | None,
     csv_stage_dir: Path | None = None,
-    stats: dict[str, int] | None = None,
+    stats: dict[str, Any] | None = None,
 ) -> int:
     return _insert_rows(
         schema_name,
@@ -811,7 +726,7 @@ def persist_bookrag_entities(
     entities: list[dict[str, Any]],
     execute_sql_fn: ExecuteSqlFn | None,
     csv_stage_dir: Path | None = None,
-    stats: dict[str, int] | None = None,
+    stats: dict[str, Any] | None = None,
 ) -> int:
     return _insert_rows(
         schema_name,
@@ -831,7 +746,7 @@ def persist_bookrag_entity_links(
     entity_links: list[dict[str, Any]],
     execute_sql_fn: ExecuteSqlFn | None,
     csv_stage_dir: Path | None = None,
-    stats: dict[str, int] | None = None,
+    stats: dict[str, Any] | None = None,
 ) -> int:
     return _insert_rows(
         schema_name,
@@ -851,7 +766,7 @@ def persist_bookrag_entity_relations(
     entity_relations: list[dict[str, Any]],
     execute_sql_fn: ExecuteSqlFn | None,
     csv_stage_dir: Path | None = None,
-    stats: dict[str, int] | None = None,
+    stats: dict[str, Any] | None = None,
 ) -> int:
     return _insert_rows(
         schema_name,
@@ -871,7 +786,7 @@ def persist_bookrag_documents(
     rows: list[dict[str, Any]],
     execute_sql_fn: ExecuteSqlFn | None,
     csv_stage_dir: Path | None = None,
-    stats: dict[str, int] | None = None,
+    stats: dict[str, Any] | None = None,
 ) -> int:
     return _insert_rows(
         schema_name,
@@ -891,7 +806,7 @@ def persist_bookrag_raw_rows(
     rows: list[dict[str, Any]],
     execute_sql_fn: ExecuteSqlFn | None,
     csv_stage_dir: Path | None = None,
-    stats: dict[str, int] | None = None,
+    stats: dict[str, Any] | None = None,
 ) -> int:
     return _insert_rows(
         schema_name,
@@ -911,7 +826,7 @@ def persist_bookrag_chunks(
     rows: list[dict[str, Any]],
     execute_sql_fn: ExecuteSqlFn | None,
     csv_stage_dir: Path | None = None,
-    stats: dict[str, int] | None = None,
+    stats: dict[str, Any] | None = None,
 ) -> int:
     return _insert_rows(
         schema_name,

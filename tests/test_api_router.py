@@ -16,6 +16,7 @@ from app.routers.api import (
     _has_valid_external_api_token,
     api_bookrag_answer_get,
     api_bookrag_retrieve_get,
+    api_bookrag_schema,
 )
 
 
@@ -78,6 +79,14 @@ class BookRAGApiAnswerShapeTests(unittest.TestCase):
                         "image_caption": None,
                         "image_context": None,
                     },
+                    "document": {"filename": "2026夏号.pdf"},
+                    "document_relations": [
+                        {
+                            "direction": "outgoing",
+                            "relation_type": "next_issue_of",
+                            "related_filename": "2026春号.pdf",
+                        }
+                    ],
                 }
             ]
         }
@@ -95,6 +104,11 @@ class BookRAGApiAnswerShapeTests(unittest.TestCase):
         self.assertEqual(len(payload["evidence"]), 1)
         self.assertEqual(payload["evidence"][0]["title"], "総括")
         self.assertEqual(payload["evidence"][0]["pages"], [2, 2])
+        self.assertEqual(payload["document"]["filename"], "2026夏号.pdf")
+        self.assertEqual(
+            payload["evidence"][0]["document_relations"][0]["related_filename"],
+            "2026春号.pdf",
+        )
 
     def test_dummy_answer_contains_citations(self) -> None:
         llm_input = {
@@ -136,6 +150,19 @@ def _build_request(*, headers: dict[str, str] | None = None, cookies: dict[str, 
 
 
 class BookRAGApiAccessTests(unittest.IsolatedAsyncioTestCase):
+    async def test_schema_endpoint_exposes_document_relation_contract(self) -> None:
+        request = _build_request(headers={"x-api-key": "secret-token"})
+        with patch.dict(os.environ, {"EVSUI_API_TOKEN": "secret-token"}, clear=False):
+            payload = await api_bookrag_schema(
+                request,
+                vector_store_name="demo_vs",
+                schema_name="demo_schema",
+            )
+        self.assertIn("document_relations", payload["contract"]["tables"])
+        names = {row["name"] for row in payload["contract"]["relationships"]}
+        self.assertIn("document_relation_source", names)
+        self.assertIn("document_relation_target", names)
+
     def test_external_api_token_accepts_bearer_and_x_api_key(self) -> None:
         with patch.dict(os.environ, {"EVSUI_API_TOKEN": "secret-token"}, clear=False):
             bearer_request = _build_request(headers={"authorization": "Bearer secret-token"})

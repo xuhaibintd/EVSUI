@@ -1,0 +1,134 @@
+{% set relation_admin = document_relation_admin|default({}) %}
+<div id="document-relation-admin" class="document-relation-admin">
+  {% if relation_admin.status %}
+  <div class="admin-rule-status {{ relation_admin.status.kind }}" role="status" aria-live="polite">
+    <strong>{{ relation_admin.status.title }}</strong>
+    <span>{{ relation_admin.status.detail }}</span>
+  </div>
+  {% endif %}
+
+  <section class="admin-rule-card">
+    <div class="admin-rule-card-head">
+      <div>
+        <h4>Document Relationships</h4>
+        <p class="muted">Core table: bdoc + bblk + bnode + bdrel</p>
+      </div>
+    </div>
+    <form class="document-relation-toolbar" hx-get="/ui/admin/document-relations" hx-target="#document-relation-admin" hx-swap="outerHTML">
+      <label class="field">
+        <span>Vector Store</span>
+        <select name="vector_store_name" required>
+          <option value="">Select a Vector Store</option>
+          {% for name in relation_admin.vector_store_options|default([]) %}
+          <option value="{{ name }}" {% if name == relation_admin.selected_vector_store %}selected{% endif %}>{{ name }}</option>
+          {% endfor %}
+          {% if relation_admin.selected_vector_store and relation_admin.selected_vector_store not in relation_admin.vector_store_options|default([]) %}
+          <option value="{{ relation_admin.selected_vector_store }}" selected>{{ relation_admin.selected_vector_store }}</option>
+          {% endif %}
+        </select>
+      </label>
+      <button type="submit" class="wizard-btn">Load</button>
+      {% if relation_admin.selected_vector_store and not relation_admin.table_initialized %}
+      <button type="button" class="ghost wizard-btn" hx-post="/ui/admin/document-relations/initialize" hx-vals='{"vector_store_name":"{{ relation_admin.selected_vector_store }}"}' hx-target="#document-relation-admin" hx-swap="outerHTML">Initialize bdrel</button>
+      {% endif %}
+    </form>
+    {% if relation_admin.selected_vector_store and relation_admin.table_initialized %}
+    <div class="document-relation-import-export">
+      <a class="ghost wizard-btn" href="/ui/admin/document-relations/export?vector_store_name={{ relation_admin.selected_vector_store|urlencode }}">Export CSV</a>
+      <form
+        enctype="multipart/form-data"
+        hx-post="/ui/admin/document-relations/import"
+        hx-target="#document-relation-admin"
+        hx-swap="outerHTML"
+      >
+        <input type="hidden" name="vector_store_name" value="{{ relation_admin.selected_vector_store }}" />
+        <input type="file" name="relation_csv" accept=".csv,text/csv" required />
+        <button type="submit" class="ghost wizard-btn">Import CSV</button>
+      </form>
+    </div>
+    {% endif %}
+  </section>
+
+  {% if relation_admin.documents|default([]) %}
+  <section class="admin-rule-card">
+    <div class="admin-rule-card-head"><h4>Add Relationship</h4></div>
+    <form class="document-relation-admin-form" hx-post="/ui/admin/document-relations/save" hx-target="#document-relation-admin" hx-swap="outerHTML">
+      <input type="hidden" name="vector_store_name" value="{{ relation_admin.selected_vector_store }}" />
+      <select name="from_doc_id" required aria-label="From document">
+        {% for doc in relation_admin.documents %}<option value="{{ doc.doc_id }}">{{ doc.filename }}</option>{% endfor %}
+      </select>
+      <select name="relation_type" required aria-label="Relationship type">
+        {% for relation_type in relation_admin.relation_types %}<option value="{{ relation_type }}">{{ relation_type }}</option>{% endfor %}
+      </select>
+      <select name="to_doc_id" required aria-label="To document">
+        {% for doc in relation_admin.documents %}<option value="{{ doc.doc_id }}">{{ doc.filename }}</option>{% endfor %}
+      </select>
+      <input type="text" name="relation_description" placeholder="Relationship description" />
+      <label class="document-relation-confirm"><input type="checkbox" name="is_active" value="1" checked /> Active</label>
+      <button type="submit" class="wizard-btn">Save</button>
+    </form>
+  </section>
+  {% endif %}
+
+  <section class="admin-rule-card">
+    <div class="admin-rule-card-head">
+      <h4>Relationships ({{ relation_admin.relations|default([])|length }})</h4>
+      <span class="muted">Source: {{ relation_admin.source|default('database') }}</span>
+    </div>
+    {% if relation_admin.relations|default([]) %}
+    <div class="document-relation-admin-table-wrap">
+      <table class="document-relation-admin-table">
+        <thead><tr><th>From Filename</th><th>Relationship</th><th>To Filename</th><th>Description</th><th>Source</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody>
+        {% for row in relation_admin.relations %}
+          <tr>
+            <td>{{ row.from_filename }}</td>
+            <td>{{ row.relation_type }}</td>
+            <td>{{ row.to_filename }}</td>
+            <td>{{ row.relation_description|default('', true) }}</td>
+            <td>{{ row.source_type|default('human', true) }}</td>
+            <td>{% if row.confirmed is defined and not row.confirmed %}Suggested{% elif row.is_active|default(1) %}Active{% else %}Inactive{% endif %}</td>
+            <td>
+              {% if relation_admin.table_initialized %}
+              <details class="document-relation-edit-details">
+                <summary>Edit</summary>
+                <form hx-post="/ui/admin/document-relations/save" hx-target="#document-relation-admin" hx-swap="outerHTML">
+                  <input type="hidden" name="vector_store_name" value="{{ relation_admin.selected_vector_store }}" />
+                  <input type="hidden" name="original_from_doc_id" value="{{ row.from_doc_id }}" />
+                  <input type="hidden" name="original_relation_type" value="{{ row.relation_type }}" />
+                  <input type="hidden" name="original_to_doc_id" value="{{ row.to_doc_id }}" />
+                  <select name="from_doc_id" aria-label="From document">
+                    {% for doc in relation_admin.documents %}<option value="{{ doc.doc_id }}" {% if doc.doc_id == row.from_doc_id %}selected{% endif %}>{{ doc.filename }}</option>{% endfor %}
+                  </select>
+                  <select name="relation_type" aria-label="Relationship type">
+                    {% for relation_type in relation_admin.relation_types %}<option value="{{ relation_type }}" {% if relation_type == row.relation_type %}selected{% endif %}>{{ relation_type }}</option>{% endfor %}
+                  </select>
+                  <select name="to_doc_id" aria-label="To document">
+                    {% for doc in relation_admin.documents %}<option value="{{ doc.doc_id }}" {% if doc.doc_id == row.to_doc_id %}selected{% endif %}>{{ doc.filename }}</option>{% endfor %}
+                  </select>
+                  <input type="text" name="relation_description" value="{{ row.relation_description|default('', true) }}" placeholder="Relationship description" />
+                  <label><input type="checkbox" name="is_active" value="1" {% if row.is_active|default(1) %}checked{% endif %} /> Active</label>
+                  <button type="submit" class="wizard-btn">Update</button>
+                </form>
+              </details>
+              <button
+                type="button"
+                class="ghost"
+                hx-post="/ui/admin/document-relations/delete"
+                hx-vals='{"vector_store_name":"{{ relation_admin.selected_vector_store }}","from_doc_id":"{{ row.from_doc_id }}","relation_type":"{{ row.relation_type }}","to_doc_id":"{{ row.to_doc_id }}"}'
+                hx-confirm="Delete this document relationship?"
+                hx-target="#document-relation-admin"
+                hx-swap="outerHTML"
+              >Delete</button>
+              {% else %}Draft{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="muted">No document relationships configured.</p>
+    {% endif %}
+  </section>
+</div>

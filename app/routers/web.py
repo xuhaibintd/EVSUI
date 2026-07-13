@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import csv
+import io
 import uuid
-from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, File, Form, Request, UploadFile
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from app.runtime import (
     DEBUG_UPLOAD_DIR,
@@ -24,6 +25,16 @@ from app.services.bookrag_section_rules import (
     save_bookrag_section_rules,
 )
 from app.services.unstructured_json_inspector import build_unstructured_json_inspector_context
+from app.services.bookrag_document_relations import (
+    BOOKRAG_DOCUMENT_RELATION_TYPES,
+    delete_document_relation,
+    document_relation_table_exists,
+    ensure_document_relation_table,
+    fetch_bookrag_documents,
+    fetch_document_relations,
+    save_document_relation,
+    validate_document_relations,
+)
 from app.services.create_config import default_create_values
 from app.teradata_runtime import (
     TERADATA_IMPORT_ERROR,
@@ -56,7 +67,6 @@ from app.web_support import (
     _is_poc_auth_configured,
     _is_valid_poc_login,
     _is_vectorstore_already_exists_error,
-    _load_auth_users,
     _mask_token,
     _new_connect_step,
     _new_session_scope,
@@ -108,6 +118,78 @@ def _build_unstructured_admin_context(app, status: dict | None = None) -> dict:
         "unstructured_status": status,
         "json_inspector": build_unstructured_json_inspector_context(),
     }
+
+
+def _document_relation_schema_name(app) -> str | None:
+    create_values = getattr(app.state, "create_form_values", {}) or {}
+    state = getattr(app.state, "evs_state", {}) or {}
+    params = state.get("actual_params") or state.get("params") or {}
+    return str(create_values.get("target_database") or params.get("username") or "").strip() or None
+
+
+def _document_relation_admin_context(
+    app,
+    *,
+    vector_store_name: str = "",
+    status: dict | None = None,
+) -> dict:
+    state = app.state.evs_state
+    options = list(dict.fromkeys(
+        str(item).strip()
+        for item in (
+            list(state.get("chat_vs_options") or [])
+            + [state.get("last_created_vs_name"), state.get("selected_vs_name")]
+        )
+        if str(item or "").strip()
+    ))
+    selected = str(
+        vector_store_name
+        or state.get("last_created_vs_name")
+        or state.get("selected_vs_name")
+        or ""
+    ).strip()
+    context = {
+        "vector_store_options": options,
+        "selected_vector_store": selected,
+        "documents": [],
+        "relations": [],
+        "relation_types": list(BOOKRAG_DOCUMENT_RELATION_TYPES),
+        "table_initialized": False,
+        "status": status,
+        "source": "database",
+    }
+    if not selected:
+        context["documents"] = getattr(app.state, "document_uploads", [])
+        context["relations"] = getattr(app.state, "document_relation_drafts", [])
+        context["source"] = "upload"
+        return context
+    try:
+        schema_name = _document_relation_schema_name(app)
+        context["documents"] = fetch_bookrag_documents(
+            vector_store_name=selected,
+            schema_name=schema_name,
+            execute_sql_fn=execute_sql,
+        )
+        context["table_initialized"] = document_relation_table_exists(
+            vector_store_name=selected,
+            schema_name=schema_name,
+            execute_sql_fn=execute_sql,
+        )
+        if context["table_initialized"]:
+            context["relations"] = fetch_document_relations(
+                vector_store_name=selected,
+                schema_name=schema_name,
+                execute_sql_fn=execute_sql,
+                active_only=False,
+            )
+    except Exception as ex:
+        if status is None:
+            context["status"] = {
+                "kind": "error",
+                "title": "Document Relationship Load Failed",
+                "detail": str(ex),
+            }
+    return context
 
 @router.get("/", response_class=HTMLResponse)
 async def home(request: Request):
@@ -458,6 +540,7 @@ async def evs_reset(request: Request):
     request.app.state.create_form_values = default_create_values()
     request.app.state.last_create_operation = None
     request.app.state.document_uploads = []
+    request.app.state.document_relation_drafts = []
     request.app.state.document_upload_notices = []
     request.app.state.chat_history = []
     _persist_active_session_state(request, request.app)
@@ -494,6 +577,9 @@ async def upload_documents_for_create(request: Request):
 
     if saved:
         request.app.state.document_uploads = saved
+        from app.services.bookrag_document_relations import suggest_document_relations
+
+        request.app.state.document_relation_drafts = suggest_document_relations(saved)
     request.app.state.document_upload_notices = notices
 
     _persist_active_session_state(request, request.app)
@@ -502,6 +588,7 @@ async def upload_documents_for_create(request: Request):
         "partials/selected_documents.html",
         {
             "document_uploads": request.app.state.document_uploads,
+            "document_relation_drafts": request.app.state.document_relation_drafts,
             "document_upload_error": upload_error,
             "document_upload_notices": notices,
         },
@@ -766,7 +853,7 @@ async def chat_reset(request: Request):
     if not _is_logged_in(request, request.app):
         return HTMLResponse("Unauthorized", status_code=401)
     _activate_session_state(request, request.app)
-    response = await handle_chat_reset(request, app, templates)
+    response = await handle_chat_reset(request, request.app, request.app.state.templates)
     _persist_active_session_state(request, request.app)
     return response
 
@@ -902,6 +989,266 @@ async def update_bookrag_section_rules_panel(request: Request):
         context,
     )
 
+
+
+@router.get("/ui/admin/document-relations", response_class=HTMLResponse)
+async def load_document_relations_admin(request: Request, vector_store_name: str = ""):
+    if not _is_logged_in(request, request.app):
+        return HTMLResponse("Unauthorized", status_code=401)
+    _activate_session_state(request, request.app)
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "partials/document_relation_admin.html",
+        {"document_relation_admin": _document_relation_admin_context(
+            request.app,
+            vector_store_name=vector_store_name,
+        )},
+    )
+
+
+@router.post("/ui/admin/document-relations/initialize", response_class=HTMLResponse)
+async def initialize_document_relations_admin(
+    request: Request,
+    vector_store_name: str = Form(default=""),
+):
+    if not _is_logged_in(request, request.app):
+        return HTMLResponse("Unauthorized", status_code=401)
+    _activate_session_state(request, request.app)
+    selected = vector_store_name.strip()
+    try:
+        schema_name = _document_relation_schema_name(request.app)
+        documents = fetch_bookrag_documents(
+            vector_store_name=selected,
+            schema_name=schema_name,
+            execute_sql_fn=execute_sql,
+        )
+        if not documents:
+            raise RuntimeError("bdoc contains no documents; bdrel was not initialized.")
+        created = ensure_document_relation_table(
+            vector_store_name=selected,
+            schema_name=schema_name,
+            execute_sql_fn=execute_sql,
+        )
+        status = {
+            "kind": "ok",
+            "title": "bdrel Ready",
+            "detail": "Created the document relationship table." if created else "The document relationship table already exists.",
+        }
+    except Exception as ex:
+        status = {"kind": "error", "title": "bdrel Initialization Failed", "detail": str(ex)}
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "partials/document_relation_admin.html",
+        {"document_relation_admin": _document_relation_admin_context(
+            request.app,
+            vector_store_name=selected,
+            status=status,
+        )},
+    )
+
+
+@router.post("/ui/admin/document-relations/save", response_class=HTMLResponse)
+async def save_document_relations_admin(
+    request: Request,
+    vector_store_name: str = Form(default=""),
+    from_doc_id: str = Form(default=""),
+    relation_type: str = Form(default=""),
+    to_doc_id: str = Form(default=""),
+    relation_description: str = Form(default=""),
+    is_active: str = Form(default=""),
+    original_from_doc_id: str = Form(default=""),
+    original_relation_type: str = Form(default=""),
+    original_to_doc_id: str = Form(default=""),
+):
+    if not _is_logged_in(request, request.app):
+        return HTMLResponse("Unauthorized", status_code=401)
+    _activate_session_state(request, request.app)
+    selected = vector_store_name.strip()
+    try:
+        schema_name = _document_relation_schema_name(request.app)
+        documents = fetch_bookrag_documents(
+            vector_store_name=selected,
+            schema_name=schema_name,
+            execute_sql_fn=execute_sql,
+        )
+        saved = save_document_relation(
+            vector_store_name=selected,
+            schema_name=schema_name,
+            relation={
+                "from_doc_id": from_doc_id,
+                "relation_type": relation_type,
+                "to_doc_id": to_doc_id,
+                "relation_description": relation_description,
+                "source_type": "human",
+                "confidence": 1.0,
+                "is_active": is_active,
+                "confirmed": True,
+            },
+            documents=documents,
+            execute_sql_fn=execute_sql,
+            username=str(request.cookies.get("evsui_user", "")),
+            original_key=(
+                original_from_doc_id.strip(),
+                original_relation_type.strip(),
+                original_to_doc_id.strip(),
+            )
+            if all((original_from_doc_id.strip(), original_relation_type.strip(), original_to_doc_id.strip()))
+            else None,
+        )
+        status = {
+            "kind": "ok",
+            "title": "Relationship Saved",
+            "detail": f"Saved {saved['relation_type']} between the selected documents.",
+        }
+    except Exception as ex:
+        status = {"kind": "error", "title": "Relationship Save Failed", "detail": str(ex)}
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "partials/document_relation_admin.html",
+        {"document_relation_admin": _document_relation_admin_context(
+            request.app,
+            vector_store_name=selected,
+            status=status,
+        )},
+    )
+
+
+@router.post("/ui/admin/document-relations/delete", response_class=HTMLResponse)
+async def delete_document_relations_admin(
+    request: Request,
+    vector_store_name: str = Form(default=""),
+    from_doc_id: str = Form(default=""),
+    relation_type: str = Form(default=""),
+    to_doc_id: str = Form(default=""),
+):
+    if not _is_logged_in(request, request.app):
+        return HTMLResponse("Unauthorized", status_code=401)
+    _activate_session_state(request, request.app)
+    selected = vector_store_name.strip()
+    try:
+        delete_document_relation(
+            vector_store_name=selected,
+            schema_name=_document_relation_schema_name(request.app),
+            from_doc_id=from_doc_id.strip(),
+            relation_type=relation_type.strip(),
+            to_doc_id=to_doc_id.strip(),
+            execute_sql_fn=execute_sql,
+        )
+        status = {"kind": "ok", "title": "Relationship Deleted", "detail": "The relationship was deleted."}
+    except Exception as ex:
+        status = {"kind": "error", "title": "Relationship Delete Failed", "detail": str(ex)}
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "partials/document_relation_admin.html",
+        {"document_relation_admin": _document_relation_admin_context(
+            request.app,
+            vector_store_name=selected,
+            status=status,
+        )},
+    )
+
+
+@router.get("/ui/admin/document-relations/export")
+async def export_document_relations_admin(request: Request, vector_store_name: str = ""):
+    if not _is_logged_in(request, request.app):
+        return HTMLResponse("Unauthorized", status_code=401)
+    _activate_session_state(request, request.app)
+    selected = vector_store_name.strip()
+    rows = fetch_document_relations(
+        vector_store_name=selected,
+        schema_name=_document_relation_schema_name(request.app),
+        execute_sql_fn=execute_sql,
+        active_only=False,
+    )
+    fieldnames = [
+        "from_doc_id",
+        "from_filename",
+        "relation_type",
+        "to_doc_id",
+        "to_filename",
+        "relation_description",
+        "source_type",
+        "confidence",
+        "is_active",
+    ]
+    buffer = io.StringIO(newline="")
+    writer = csv.DictWriter(buffer, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(rows)
+    return Response(
+        content="\ufeff" + buffer.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{selected}_bdrel.csv"'},
+    )
+
+
+@router.post("/ui/admin/document-relations/import", response_class=HTMLResponse)
+async def import_document_relations_admin(
+    request: Request,
+    vector_store_name: str = Form(default=""),
+    relation_csv: UploadFile = File(default=None),
+):
+    if not _is_logged_in(request, request.app):
+        return HTMLResponse("Unauthorized", status_code=401)
+    _activate_session_state(request, request.app)
+    selected = vector_store_name.strip()
+    try:
+        if relation_csv is None or not relation_csv.filename:
+            raise ValueError("Select a document relationship CSV file.")
+        payload = (await relation_csv.read()).decode("utf-8-sig")
+        imported = [dict(row) for row in csv.DictReader(io.StringIO(payload))]
+        schema_name = _document_relation_schema_name(request.app)
+        documents = fetch_bookrag_documents(
+            vector_store_name=selected,
+            schema_name=schema_name,
+            execute_sql_fn=execute_sql,
+        )
+        filename_map: dict[str, str] = {}
+        duplicate_filenames: set[str] = set()
+        for document in documents:
+            filename = str(document["filename"])
+            if filename in filename_map:
+                duplicate_filenames.add(filename)
+            filename_map[filename] = str(document["doc_id"])
+        for row in imported:
+            if not str(row.get("from_doc_id") or "").strip():
+                filename = str(row.get("from_filename") or "").strip()
+                if filename in duplicate_filenames or filename not in filename_map:
+                    raise ValueError(f"Source filename is missing or not unique: {filename!r}.")
+                row["from_doc_id"] = filename_map[filename]
+            if not str(row.get("to_doc_id") or "").strip():
+                filename = str(row.get("to_filename") or "").strip()
+                if filename in duplicate_filenames or filename not in filename_map:
+                    raise ValueError(f"Target filename is missing or not unique: {filename!r}.")
+                row["to_doc_id"] = filename_map[filename]
+            row["source_type"] = "import"
+            row["confirmed"] = True
+        normalized_rows = validate_document_relations(imported, documents)
+        for row in normalized_rows:
+            save_document_relation(
+                vector_store_name=selected,
+                schema_name=schema_name,
+                relation={**row, "confirmed": True},
+                documents=documents,
+                execute_sql_fn=execute_sql,
+                username=str(request.cookies.get("evsui_user", "")),
+            )
+        status = {
+            "kind": "ok",
+            "title": "Relationship CSV Imported",
+            "detail": f"Validated and saved {len(normalized_rows)} relationship row(s).",
+        }
+    except Exception as ex:
+        status = {"kind": "error", "title": "Relationship CSV Import Failed", "detail": str(ex)}
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "partials/document_relation_admin.html",
+        {"document_relation_admin": _document_relation_admin_context(
+            request.app,
+            vector_store_name=selected,
+            status=status,
+        )},
+    )
 
 
 @router.get("/ui/admin/json-inspector", response_class=HTMLResponse)

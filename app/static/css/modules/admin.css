@@ -1000,3 +1000,70 @@
     grid-template-columns: 1fr;
   }
 }
+.document-relation-admin {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.document-relation-toolbar,
+.document-relation-admin-form {
+  display: grid;
+  grid-template-columns: minmax(15rem, 1fr) auto auto;
+  gap: 0.6rem;
+  align-items: end;
+}
+
+.document-relation-import-export,
+.document-relation-import-export form {
+  display: flex;
+  gap: 0.55rem;
+  align-items: center;
+  margin-top: 0.65rem;
+}
+
+.document-relation-admin-form {
+  grid-template-columns: minmax(12rem, 1fr) minmax(8rem, 0.55fr) minmax(12rem, 1fr) minmax(12rem, 1fr) auto auto;
+}
+
+.document-relation-admin-form select,
+.document-relation-admin-form input,
+.document-relation-toolbar select {
+  min-width: 0;
+  width: 100%;
+}
+
+.document-relation-admin-table-wrap {
+  overflow: auto;
+}
+
+.document-relation-admin-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.document-relation-admin-table th,
+.document-relation-admin-table td {
+  padding: 0.55rem;
+  border-bottom: 1px solid var(--line, #dfe5ee);
+  text-align: left;
+  vertical-align: top;
+}
+
+.document-relation-edit-details {
+  min-width: 8rem;
+  margin-bottom: 0.4rem;
+}
+
+.document-relation-edit-details form {
+  display: grid;
+  gap: 0.4rem;
+  min-width: 24rem;
+  padding: 0.5rem 0;
+}
+
+@media (max-width: 1100px) {
+  .document-relation-toolbar,
+  .document-relation-admin-form {
+    grid-template-columns: 1fr;
+  }
+}

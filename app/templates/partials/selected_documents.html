@@ -15,7 +15,7 @@
 <p class="uploaded-files-title">Uploaded files ({{ document_uploads|length }})</p>
 <ul class="file-list small limit-3">
   {% for file in document_uploads %}
-  <li>
+  <li data-uploaded-doc-id="{{ file.doc_id|default('') }}">
     <div class="file-main">
       <strong>{{ file.name }}</strong>
       <span>{{ file.size }} bytes</span>
@@ -23,6 +23,19 @@
   </li>
   {% endfor %}
 </ul>
+<section class="document-relation-drafts" data-document-relation-editor>
+  <div class="document-relation-drafts-head">
+    <div>
+      <strong>Document Relationships</strong>
+      <p class="muted">Filename rules create suggestions only. Confirm or edit them before creation.</p>
+    </div>
+    <button type="button" class="ghost" data-add-document-relation>Add Relationship</button>
+  </div>
+  <script type="application/json" data-document-catalog-json>{{ document_uploads|tojson }}</script>
+  <script type="application/json" data-document-relation-initial-json>{{ document_relation_drafts|default([])|tojson }}</script>
+  <div class="document-relation-list" data-document-relation-list></div>
+  <input type="hidden" name="document_relations_json" value="[]" data-document-relations-json />
+</section>
 {% else %}
 <p class="uploaded-files-title">Uploaded files (0)</p>
 <p class="muted">No files uploaded yet.</p>

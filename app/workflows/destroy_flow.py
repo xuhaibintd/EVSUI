@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from fastapi import Form, Request
-from fastapi.responses import HTMLResponse
+from fastapi import Request
 
 from app.services.bookrag_schema import build_bookrag_table_targets
 from app.utils.table_state import (
@@ -35,6 +34,7 @@ def _bookrag_cleanup_targets(headers: list[str], row: list[str] | None, vs_name:
         ("table", "entity_relations", _qualified_identifier(schema_name, targets["entity_relations"])),
         ("table", "entity_links", _qualified_identifier(schema_name, targets["entity_links"])),
         ("table", "entities", _qualified_identifier(schema_name, targets["entities"])),
+        ("table", "document_relations", _qualified_identifier(schema_name, targets["document_relations"])),
         ("table", "nodes", _qualified_identifier(schema_name, targets["nodes"])),
         ("table", "blocks", _qualified_identifier(schema_name, targets["blocks"])),
         ("table", "raw", _qualified_identifier(schema_name, targets["raw"])),

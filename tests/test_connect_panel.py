@@ -40,6 +40,19 @@ def _base_evs(connected):
     }
 
 
+class CreatePanelBookRAGToggleTests(unittest.TestCase):
+    def test_bookrag_uses_grouped_core_audit_graph_controls(self):
+        source = (TEMPLATES_DIR / "partials" / "create_panel.html").read_text(encoding="utf-8")
+
+        self.assertIn("Core (bdoc + bblk + bnode + bdrel)", source)
+        self.assertIn("Audit (braw)", source)
+        self.assertIn("Graph (bent + belnk + brel)", source)
+        self.assertIn('name="multi_format_bookrag_generate_graph"', source)
+        self.assertNotIn('name="multi_format_bookrag_generate_entities"', source)
+        self.assertNotIn('name="multi_format_bookrag_generate_entity_links"', source)
+        self.assertNotIn('name="multi_format_bookrag_generate_entity_relations"', source)
+
+
 class ConnectPanelTemplateTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

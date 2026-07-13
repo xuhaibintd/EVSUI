@@ -16,6 +16,37 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
         values.update(overrides)
         return values
 
+    def test_bookrag_table_groups_keep_core_indivisible_and_graph_all_or_nothing(self) -> None:
+        flags = multi_format._resolve_bookrag_table_generation_flags(
+            self._create_values(
+                multi_format_bookrag_generate_documents="false",
+                multi_format_bookrag_generate_blocks="false",
+                multi_format_bookrag_generate_nodes="false",
+                multi_format_bookrag_generate_raw="false",
+                multi_format_bookrag_generate_graph="true",
+            )
+        )
+
+        self.assertTrue(flags["documents"])
+        self.assertTrue(flags["blocks"])
+        self.assertTrue(flags["nodes"])
+        self.assertFalse(flags["raw"])
+        self.assertTrue(flags["entities"])
+        self.assertTrue(flags["entity_links"])
+        self.assertTrue(flags["entity_relations"])
+
+    def test_bookrag_legacy_graph_toggle_enables_complete_graph_group(self) -> None:
+        flags = multi_format._resolve_bookrag_table_generation_flags(
+            self._create_values(
+                multi_format_bookrag_generate_graph="false",
+                multi_format_bookrag_generate_entity_links="true",
+            )
+        )
+
+        self.assertTrue(flags["entities"])
+        self.assertTrue(flags["entity_links"])
+        self.assertTrue(flags["entity_relations"])
+
     def test_auto_defaults_keep_enrichments_disabled(self) -> None:
         request_parameters, warnings, processing_profile = multi_format._build_multi_format_workflow_definition(
             create_values=dict(DOC_PIPELINE_UI_DEFAULTS),
@@ -698,6 +729,7 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
                 stack.enter_context(mock.patch('app.services.multi_format.prepare_bookrag_document_table', return_value=[]))
                 stack.enter_context(mock.patch('app.services.multi_format.prepare_bookrag_block_table', return_value=[]))
                 stack.enter_context(mock.patch('app.services.multi_format.prepare_bookrag_node_table', return_value=[]))
+                stack.enter_context(mock.patch('app.services.multi_format.prepare_bookrag_document_relation_table', return_value=[]))
                 stack.enter_context(mock.patch('app.services.multi_format.prepare_bookrag_entity_table', return_value=[]))
                 stack.enter_context(mock.patch('app.services.multi_format.prepare_bookrag_entity_link_table', return_value=[]))
                 stack.enter_context(mock.patch('app.services.multi_format.prepare_bookrag_entity_relation_table', return_value=[]))
@@ -829,6 +861,7 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
                 stack.enter_context(mock.patch('app.services.multi_format.prepare_bookrag_document_table', return_value=[]))
                 stack.enter_context(mock.patch('app.services.multi_format.prepare_bookrag_block_table', return_value=[]))
                 stack.enter_context(mock.patch('app.services.multi_format.prepare_bookrag_node_table', return_value=[]))
+                stack.enter_context(mock.patch('app.services.multi_format.prepare_bookrag_document_relation_table', return_value=[]))
                 stack.enter_context(mock.patch('app.services.multi_format.prepare_bookrag_entity_table', return_value=[]))
                 stack.enter_context(mock.patch('app.services.multi_format.prepare_bookrag_entity_link_table', return_value=[]))
                 stack.enter_context(mock.patch('app.services.multi_format.prepare_bookrag_entity_relation_table', return_value=[]))
@@ -853,7 +886,16 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
                 stack.enter_context(mock.patch('app.services.multi_format.persist_bookrag_entity_relations', side_effect=_persist_entity_relations))
                 stack.enter_context(mock.patch('app.services.multi_format._count_teradata_rows', return_value=len(raw_payload)))
                 patched_payload, summary = multi_format._apply_bookrag_tree_pipeline(
-                    exec_payload={'document_files': [str(src)]},
+                    exec_payload={
+                        'document_files': [str(src)],
+                        'document_manifest': [
+                            {
+                                'doc_id': 'upload-doc-id',
+                                'filename': src.name,
+                                'saved_path': str(src),
+                            }
+                        ],
+                    },
                     create_values=create_values,
                     vector_store_name='demo',
                     execute_sql_fn=mock.Mock(),
@@ -875,7 +917,7 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
         self.assertEqual(summary['bookrag_chunking_strategy'], 'disabled_for_tree_debug')
         self.assertEqual(patched_payload['object_names'], 'demo_schema.demo_bk_bnode')
         self.assertEqual(patched_payload['data_columns'], ['content'])
-        self.assertEqual(patched_payload['key_columns'], ['node_id'])
+        self.assertEqual(patched_payload['key_columns'], ['doc_id', 'node_id'])
         self.assertNotIn('vector_column', patched_payload)
         self.assertNotIn('document_files', patched_payload)
         self.assertNotIn('nv_ingestor', patched_payload)
@@ -884,6 +926,7 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
         self.assertIn('unstructured_bookrag_flg', patched_payload['description'])
         self.assertEqual(summary['vectorstore_source_object'], 'demo_schema.demo_bk_bnode')
         self.assertEqual(len(captured['document_rows']), 1)
+        self.assertEqual(captured['document_rows'][0]['doc_id'], 'upload-doc-id')
         self.assertEqual(len(captured['raw_rows']), 2)
         self.assertEqual(len(captured['blocks']), 2)
         self.assertEqual(len(captured['nodes']), 3)
@@ -892,6 +935,112 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
         self.assertEqual(len(captured['entity_relations']), 1)
         self.assertEqual(summary['bookrag_csv_stage_dir'], str(csv_stage_dir))
         self.assertEqual(summary['bookrag_csv_stage_files'], [])
+
+
+    def test_bookrag_pipeline_flushes_after_file_threshold(self) -> None:
+        create_values = self._create_values()
+        raw_payload_by_name = {
+            'sample1.txt': [
+                {
+                    'type': 'NarrativeText',
+                    'element_id': 'text-1',
+                    'text': 'First document text.',
+                    'metadata': {'page_number': 1},
+                },
+            ],
+            'sample2.txt': [
+                {
+                    'type': 'NarrativeText',
+                    'element_id': 'text-2',
+                    'text': 'Second document text.',
+                    'metadata': {'page_number': 1},
+                },
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            sources = [tmp_path / 'sample1.txt', tmp_path / 'sample2.txt']
+            for src in sources:
+                src.write_text('demo', encoding='utf-8')
+            raw_stage_dir = tmp_path / 'raw_stage'
+            csv_stage_dir = tmp_path / 'csv_stage'
+            debug_dir = tmp_path / 'debug'
+            document_batch_sizes: list[int] = []
+            document_csv_dirs: list[Path] = []
+            raw_batch_sizes: list[int] = []
+            block_batch_sizes: list[int] = []
+            node_batch_sizes: list[int] = []
+
+            def _run_job(client=None, *, src, **kwargs):
+                payload = raw_payload_by_name[src.name]
+                return payload, payload, {'workflow_name': 'BookRAG_Test'}, f'job-{src.stem}', 'workflow-1', 'BookRAG_Test'
+
+            def _persist_documents(*, rows, csv_stage_dir=None, **kwargs):
+                document_batch_sizes.append(len(rows))
+                document_csv_dirs.append(Path(csv_stage_dir))
+                return len(rows)
+
+            def _persist_raw(*, rows, **kwargs):
+                raw_batch_sizes.append(len(rows))
+                return len(rows)
+
+            def _persist_blocks(*, blocks, **kwargs):
+                block_batch_sizes.append(len(blocks))
+                return len(blocks)
+
+            def _persist_nodes(*, nodes, **kwargs):
+                node_batch_sizes.append(len(nodes))
+                return len(nodes)
+
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(mock.patch.dict('os.environ', {'BOOKRAG_UNSTRUCTURED_WORKERS': '2'}))
+                stack.enter_context(mock.patch('app.services.multi_format.prepare_bookrag_document_table', return_value=[]))
+                stack.enter_context(mock.patch('app.services.multi_format.prepare_bookrag_block_table', return_value=[]))
+                stack.enter_context(mock.patch('app.services.multi_format.prepare_bookrag_node_table', return_value=[]))
+                stack.enter_context(mock.patch('app.services.multi_format.prepare_bookrag_document_relation_table', return_value=[]))
+                stack.enter_context(mock.patch('app.services.multi_format.prepare_bookrag_raw_table', return_value=[]))
+                stack.enter_context(mock.patch('app.services.multi_format._load_unstructured_runtime_config', return_value=('key', 'https://example.invalid')))
+                stack.enter_context(mock.patch('app.services.multi_format._resolve_unstructured_request_timeout_ms', return_value=120000))
+                stack.enter_context(mock.patch('app.services.multi_format._create_unstructured_client', return_value=object()))
+                stack.enter_context(mock.patch('app.services.multi_format._prepare_unstructured_debug_dir', return_value=debug_dir))
+                stack.enter_context(mock.patch('app.services.multi_format._prepare_bookrag_raw_stage_dir', return_value=raw_stage_dir))
+                stack.enter_context(mock.patch('app.services.multi_format._prepare_bookrag_csv_stage_dir', return_value=csv_stage_dir))
+                stack.enter_context(mock.patch('app.services.multi_format._resolve_bookrag_workflow_poll_config', return_value=(30, 1)))
+                stack.enter_context(mock.patch('app.services.multi_format._enforce_unstructured_job_submission_spacing', side_effect=lambda value: value))
+                stack.enter_context(mock.patch('app.services.multi_format._build_bookrag_reusable_workflow_definition', return_value=('BookRAG_Test', [{'name': 'Partitioner'}], {'workflow_name': 'BookRAG_Test', 'workflow_nodes': [{'name': 'Partitioner'}]}, [], 'partition:vlm:vlm')))
+                stack.enter_context(mock.patch('app.services.multi_format._run_unstructured_workflow_job_for_file', side_effect=_run_job))
+                stack.enter_context(mock.patch('app.services.multi_format._write_unstructured_debug_file', return_value=''))
+                stack.enter_context(mock.patch('app.services.multi_format.persist_bookrag_documents', side_effect=_persist_documents))
+                stack.enter_context(mock.patch('app.services.multi_format.persist_bookrag_raw_rows', side_effect=_persist_raw))
+                stack.enter_context(mock.patch('app.services.multi_format.persist_bookrag_blocks', side_effect=_persist_blocks))
+                stack.enter_context(mock.patch('app.services.multi_format.persist_bookrag_nodes', side_effect=_persist_nodes))
+                stack.enter_context(mock.patch('app.services.multi_format._count_teradata_rows', return_value=2))
+
+                _, summary = multi_format._apply_bookrag_tree_pipeline(
+                    exec_payload={'document_files': [str(src) for src in sources]},
+                    create_values=create_values,
+                    vector_store_name='demo',
+                    execute_sql_fn=mock.Mock(),
+                    resolve_path_hint=lambda value: value,
+                    effective_schema_name='demo_schema',
+                    document_files=[str(src) for src in sources],
+                    partition_strategy='vlm',
+                    ocr_languages=['jpn'],
+                    target_warnings=[],
+                )
+
+        self.assertEqual(summary['document_count'], 2)
+        self.assertEqual(summary['bookrag_flush_config'], {'mode': 'per_file'})
+        self.assertEqual(summary['bookrag_flush_count'], 2)
+        self.assertEqual(summary['bookrag_unstructured_workers'], 2)
+        self.assertEqual(len(set(document_csv_dirs)), 2)
+        self.assertTrue(all(path.parent == csv_stage_dir for path in document_csv_dirs))
+        self.assertEqual([batch['reason'] for batch in summary['bookrag_flush_batches']], ['file_ready', 'file_ready'])
+        self.assertEqual(document_batch_sizes, [1, 1])
+        self.assertEqual(raw_batch_sizes, [1, 1])
+        self.assertEqual(block_batch_sizes, [1, 1])
+        self.assertEqual(node_batch_sizes, [2, 2])
 
 
 if __name__ == '__main__':

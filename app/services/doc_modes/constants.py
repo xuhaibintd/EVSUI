@@ -60,24 +60,14 @@ DOC_PIPELINE_UI_DEFAULTS = {
     "multi_format_bookrag_multipage_sections": "true",
     "multi_format_bookrag_coordinates": "true",
     "multi_format_bookrag_extract_image_block_types": "auto",
-    "multi_format_bookrag_generate_documents": "true",
     "multi_format_bookrag_generate_raw": "true",
-    "multi_format_bookrag_generate_blocks": "true",
-    "multi_format_bookrag_generate_nodes": "true",
-    "multi_format_bookrag_generate_entities": "false",
-    "multi_format_bookrag_generate_entity_links": "false",
-    "multi_format_bookrag_generate_entity_relations": "false",
+    "multi_format_bookrag_generate_graph": "false",
     "multi_format_bookrag_run_embedding": "false",
 }
 
 DOC_PIPELINE_CHECKBOX_FIELDS = {
-    "multi_format_bookrag_generate_documents",
     "multi_format_bookrag_generate_raw",
-    "multi_format_bookrag_generate_blocks",
-    "multi_format_bookrag_generate_nodes",
-    "multi_format_bookrag_generate_entities",
-    "multi_format_bookrag_generate_entity_links",
-    "multi_format_bookrag_generate_entity_relations",
+    "multi_format_bookrag_generate_graph",
     "multi_format_bookrag_run_embedding",
 }
 

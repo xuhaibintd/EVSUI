@@ -6,6 +6,33 @@ from app.services.bookrag_tree import _block_kind, build_bookrag_nodes, elements
 
 
 class BookragTreeTests(unittest.TestCase):
+    def test_node_ids_are_namespaced_by_document(self) -> None:
+        blocks = [
+            {
+                "element_id": "shared-vlm-element-id",
+                "ordinal": 1,
+                "block_type": "text",
+                "text": "Same structural position in two documents.",
+                "page_number": 1,
+            }
+        ]
+
+        nodes_a = build_bookrag_nodes(
+            {"doc_id": "doc-a", "filename": "a.pdf"}, blocks
+        )
+        nodes_b = build_bookrag_nodes(
+            {"doc_id": "doc-b", "filename": "b.pdf"}, blocks
+        )
+
+        self.assertEqual(nodes_a[1]["source_element_id"], "shared-vlm-element-id")
+        self.assertEqual(nodes_b[1]["source_element_id"], "shared-vlm-element-id")
+        self.assertNotEqual(nodes_a[1]["node_id"], nodes_b[1]["node_id"])
+        self.assertTrue(
+            {node["node_id"] for node in nodes_a}.isdisjoint(
+                node["node_id"] for node in nodes_b
+            )
+        )
+
     def test_heading_html_levels_drive_section_nesting_without_title_text_hardcoding(self) -> None:
         raw_elements = [
             {

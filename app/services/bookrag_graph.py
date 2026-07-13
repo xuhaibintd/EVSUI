@@ -373,6 +373,10 @@ def build_bookrag_entities(
         page_number = _as_int(metadata.get("page_number"))
         linked_nodes = list(nodes_by_source_element.get(source_element_id or "") or [])
         primary_node = linked_nodes[0] if linked_nodes else None
+        # A persisted graph relation must have a navigable Core provenance.
+        # Raw-only elements filtered out of bblk/bnode are not graph sources.
+        if primary_node is None or not source_element_id:
+            continue
         section_node = _nearest_section_node(primary_node, node_map) if primary_node else None
         source_node_id = _as_text(primary_node.get("node_id"), max_len=64) if primary_node else None
         page_start = _as_int(primary_node.get("page_start")) if primary_node else page_number
@@ -389,6 +393,12 @@ def build_bookrag_entities(
             relation_key = (ordinal_raw, from_entity_text, relationship, to_entity_text)
             if relation_key in seen_relations:
                 continue
+            from_entity_id = resolve_or_create_relation_entity(from_entity_text)
+            if not from_entity_id:
+                continue
+            to_entity_id = resolve_or_create_relation_entity(to_entity_text)
+            if not to_entity_id:
+                continue
             seen_relations.add(relation_key)
             entity_relations.append(
                 {
@@ -397,10 +407,10 @@ def build_bookrag_entities(
                     "source_element_id": source_element_id,
                     "source_node_id": source_node_id,
                     "section_node_id": section_node_id,
-                    "from_entity_id": resolve_or_create_relation_entity(from_entity_text),
+                    "from_entity_id": from_entity_id,
                     "from_entity_text": from_entity_text,
                     "relationship": relationship,
-                    "to_entity_id": resolve_or_create_relation_entity(to_entity_text),
+                    "to_entity_id": to_entity_id,
                     "to_entity_text": to_entity_text,
                     "page_start": page_start,
                     "page_end": page_end,

@@ -373,6 +373,32 @@ def _stable_fallback_block_id(doc_id: str | None, ordinal: int | None, text: str
     return hashlib.sha1(base.encode("utf-8")).hexdigest()[:32]
 
 
+def _document_scoped_node_id(
+    doc_id: str | None,
+    source_element_id: str | None,
+    *,
+    ordinal: int | None = None,
+    text: str | None = None,
+    segment_index: int | None = None,
+) -> str:
+    """Create a stable node id that is globally unique across documents.
+
+    VLM element ids remain available as ``source_element_id`` because they can
+    repeat in structurally similar files and are not database-global ids.
+    """
+    source_id = _as_text(source_element_id, max_len=64)
+    local_identity = source_id or _stable_fallback_block_id(doc_id, ordinal, text)
+    base = "|".join(
+        (
+            "bookrag-node",
+            str(doc_id or ""),
+            local_identity,
+            str(segment_index or 0),
+        )
+    )
+    return hashlib.sha256(base.encode("utf-8")).hexdigest()[:32]
+
+
 def _build_image_context(
     drafts: list[dict[str, Any]],
     index: int,
@@ -612,7 +638,10 @@ def elements_to_bookrag_blocks(
         drafts.append(
             {
                 "doc_id": doc_id,
-                "element_id": _as_text(element.get("element_id") or element.get("id"), max_len=64),
+                "element_id": (
+                    _as_text(element.get("element_id") or element.get("id"), max_len=64)
+                    or _stable_fallback_block_id(doc_id, index, raw_text)
+                ),
                 "parent_id": _as_text(metadata.get("parent_id"), max_len=64),
                 "category_depth": category_depth,
                 "heading_level": heading_level,
@@ -766,7 +795,12 @@ def build_bookrag_nodes(document_row: dict[str, Any], blocks: list[dict[str, Any
             parent_path = _as_text(parent_node.get("path"), max_len=2000) or ""
             path_text = title if not parent_path else f"{parent_path} > {title}"
             section_node = {
-                "node_id": _block_element_id(block) or _stable_fallback_block_id(document_row.get("doc_id"), _as_int(block.get("ordinal")), block.get("text")),
+                "node_id": _document_scoped_node_id(
+                    document_row.get("doc_id"),
+                    _block_element_id(block),
+                    ordinal=_as_int(block.get("ordinal")),
+                    text=block.get("text"),
+                ),
                 "doc_id": document_row["doc_id"],
                 "source_element_id": _block_element_id(block),
                 "parent_node_id": parent_node.get("node_id"),
@@ -803,7 +837,13 @@ def build_bookrag_nodes(document_row: dict[str, Any], blocks: list[dict[str, Any
             leaf_title = _build_leaf_title(title, segment_index=segment_index, segment_total=segment_total)
             nodes.append(
                 {
-                    "node_id": (_block_element_id(block) or _stable_fallback_block_id(document_row.get("doc_id"), base_ordinal, leaf_content)) if segment_total == 1 else f"{_block_element_id(block) or _stable_fallback_block_id(document_row.get('doc_id'), base_ordinal, leaf_content)}_{segment_index}",
+                    "node_id": _document_scoped_node_id(
+                        document_row.get("doc_id"),
+                        _block_element_id(block),
+                        ordinal=base_ordinal,
+                        text=leaf_content,
+                        segment_index=segment_index if segment_total > 1 else None,
+                    ),
                     "doc_id": document_row["doc_id"],
                     "source_element_id": _block_element_id(block),
                     "parent_node_id": parent_node.get("node_id"),

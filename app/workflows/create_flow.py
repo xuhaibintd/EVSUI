@@ -263,6 +263,37 @@ async def handle_upload_and_prepare_create(
     elif (not saved) and ("document_files" not in create_payload) and app.state.document_uploads:
         create_payload["document_files"] = [item["saved_path"] for item in app.state.document_uploads]
 
+    upload_manifest = saved if saved else app.state.document_uploads
+    if upload_manifest:
+        create_payload["document_manifest"] = [
+            {
+                "doc_id": str(item.get("doc_id") or "").strip(),
+                "filename": str(item.get("filename") or item.get("name") or "").strip(),
+                "saved_path": str(item.get("saved_path") or "").strip(),
+            }
+            for item in upload_manifest
+            if str(item.get("saved_path") or "").strip()
+        ]
+
+    raw_relation_drafts = str(form.get("document_relations_json", "")).strip()
+    if raw_relation_drafts:
+        try:
+            parsed_relation_drafts = json.loads(raw_relation_drafts)
+            if not isinstance(parsed_relation_drafts, list):
+                raise ValueError("document_relations_json must contain a JSON list")
+            app.state.document_relation_drafts = [
+                item for item in parsed_relation_drafts if isinstance(item, dict)
+            ]
+        except (TypeError, ValueError, json.JSONDecodeError) as ex:
+            warnings.append(f"Document relationship drafts were ignored: {ex}")
+    relation_drafts = getattr(app.state, "document_relation_drafts", [])
+    if relation_drafts:
+        create_payload["document_relations"] = [
+            dict(item)
+            for item in relation_drafts
+            if bool(item.get("confirmed"))
+        ]
+
     apply_create_preset(create_payload, create_preset, vector_store_name)
     create_values["object_names"] = (
         ",".join(create_payload["object_names"])

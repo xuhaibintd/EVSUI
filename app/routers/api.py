@@ -10,11 +10,12 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.services.bookrag_retrieval import retrieve_bookrag_evidence
+from app.services.bookrag_schema import build_bookrag_relationship_contract
 from app.runtime import DEFAULT_EVSUI_API_TOKEN
 from app.teradata_runtime import TERADATA_IMPORT_ERROR, VectorStore, execute_sql
 from app.utils.table_state import format_preview
 from app.web_support import (
-    _activate_session_state,
+    _activate_session_state,  # noqa: F401 - compatibility patch point for API tests/hosts
     _build_bookrag_chat_reply,
     _ensure_connected_runtime_for_session,
     _is_logged_in,
@@ -175,6 +176,36 @@ class BookRAGSectionChainItemResponse(BaseModel):
     page_end: int | None = None
 
 
+class BookRAGDocumentResponse(BaseModel):
+    doc_id: str | None = None
+    vector_store_name: str | None = None
+    workflow_id: str | None = None
+    workflow_name: str | None = None
+    job_id: str | None = None
+    processing_profile: str | None = None
+    source_file: str | None = None
+    filename: str | None = None
+    filetype: str | None = None
+    filesize_bytes: int | None = None
+    page_count: int | None = None
+    language_hint: str | None = None
+    created_at: str | None = None
+
+
+class BookRAGDocumentRelationResponse(BaseModel):
+    from_doc_id: str | None = None
+    from_filename: str | None = None
+    relation_type: str | None = None
+    to_doc_id: str | None = None
+    to_filename: str | None = None
+    relation_description: str | None = None
+    source_type: str | None = None
+    confidence: float | None = None
+    direction: str | None = None
+    related_doc_id: str | None = None
+    related_filename: str | None = None
+
+
 class BookRAGEvidencePackageResponse(BaseModel):
     rank: int
     score: float | None = None
@@ -184,6 +215,8 @@ class BookRAGEvidencePackageResponse(BaseModel):
     section: BookRAGEvidenceSectionResponse | None = None
     section_chain: list[BookRAGSectionChainItemResponse] = Field(default_factory=list)
     block: BookRAGEvidenceBlockResponse | None = None
+    document: BookRAGDocumentResponse | None = None
+    document_relations: list[BookRAGDocumentRelationResponse] = Field(default_factory=list)
     entities: list[BookRAGEvidenceEntityResponse] = Field(default_factory=list)
     mapping: list[BookRAGEvidenceMappingResponse] = Field(default_factory=list)
     relations: list[BookRAGEvidenceRelationResponse] = Field(default_factory=list)
@@ -254,6 +287,8 @@ class BookRAGLLMEvidenceItemResponse(BaseModel):
     entities: list[dict[str, Any]] = Field(default_factory=list)
     mapping: list[dict[str, Any]] = Field(default_factory=list)
     relations: list[dict[str, Any]] = Field(default_factory=list)
+    document: dict[str, Any] = Field(default_factory=dict)
+    document_relations: list[dict[str, Any]] = Field(default_factory=list)
     why_selected: str | None = None
 
 
@@ -549,12 +584,14 @@ def _build_bookrag_llm_input(
     limited_packages = packages[:_clamp_top_k(top_k)]
     first_package = limited_packages[0] if limited_packages else {}
     first_match = (first_package.get("match") if isinstance(first_package, dict) else {}) or {}
+    first_document = (first_package.get("document") if isinstance(first_package, dict) else {}) or {}
 
     evidence_items: list[dict[str, object]] = []
     for package in limited_packages:
         match = package.get("match") or {}
         block = package.get("block") or {}
         section = package.get("section") or {}
+        document = package.get("document") or {}
         page_start = match.get("page_start") if match.get("page_start") is not None else section.get("page_start")
         page_end = match.get("page_end") if match.get("page_end") is not None else section.get("page_end")
         section_path = section.get("path") or match.get("path")
@@ -586,6 +623,8 @@ def _build_bookrag_llm_input(
             "node_id": match.get("node_id"),
             "source_element_id": match.get("source_element_id"),
             "why_selected": why_selected,
+            "document": document,
+            "document_relations": package.get("document_relations") or [],
         }
         if include_entities:
             item["entities"] = package.get("entities") or []
@@ -601,8 +640,8 @@ def _build_bookrag_llm_input(
             "doc_id": payload.get("doc_id") or first_match.get("doc_id"),
             "vector_store_name": payload.get("vector_store_name"),
             "schema_name": payload.get("schema_name"),
-            "filename": payload.get("filename"),
-            "source_file": payload.get("source_file"),
+            "filename": payload.get("filename") or first_document.get("filename"),
+            "source_file": payload.get("source_file") or first_document.get("source_file"),
             "document_type": payload.get("document_type") or "bookrag_document",
             "language": payload.get("language") or "ja",
             "reporting_period": payload.get("reporting_period"),
@@ -708,6 +747,7 @@ def _build_bookrag_llm_prompt(llm_input: dict[str, object]) -> str:
             content = content[:1800] + " ..."
         entity_items = list(item.get("entities") or [])
         relation_items = list(item.get("relations") or [])
+        document_relation_items = list(item.get("document_relations") or [])
         entity_preview = ", ".join(
             str(entity.get("display_name") or entity.get("canonical_name") or entity.get("entity_id") or "").strip()
             for entity in entity_items[:8]
@@ -733,6 +773,19 @@ def _build_bookrag_llm_prompt(llm_input: dict[str, object]) -> str:
             lines.append(f"Entities: {entity_preview}")
         if relation_preview:
             lines.append(f"Relations: {relation_preview}")
+        for document_relation in document_relation_items[:8]:
+            related_filename = str(
+                document_relation.get("related_filename")
+                or document_relation.get("related_doc_id")
+                or ""
+            ).strip()
+            relation_type = str(document_relation.get("relation_type") or "related_to").strip()
+            direction = str(document_relation.get("direction") or "outgoing").strip()
+            description = str(document_relation.get("relation_description") or "").strip()
+            line = f"Document Relationship ({direction}): {relation_type} -> {related_filename}"
+            if description:
+                line += f" — {description}"
+            lines.append(line)
         evidence_lines.append("\n".join(lines))
     prompt_parts = [
         "You are a grounded BookRAG answerer.",
@@ -796,6 +849,27 @@ def _build_bookrag_live_answer_or_raise(*, question: str, vector_store_name: str
         "grounded": bool(citations),
         "text": answer_text,
         "citations": citations,
+    }
+
+
+@router.get("/api/bookrag/schema")
+async def api_bookrag_schema(
+    request: Request,
+    vector_store_name: str,
+    schema_name: str | None = None,
+):
+    auth_context = _require_api_access(request)
+    if auth_context.get("mode") == "session":
+        _ensure_connected_runtime_for_session(request, request.app)
+    selected = str(vector_store_name or "").strip()
+    if not selected:
+        raise HTTPException(status_code=422, detail="vector_store_name is required")
+    return {
+        "api": "bookrag.schema",
+        "version": BOOKRAG_API_VERSION,
+        "vector_store_name": selected,
+        "schema_name": _normalize_optional_text(schema_name),
+        "contract": build_bookrag_relationship_contract(selected),
     }
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import uuid
 from pathlib import Path
 from typing import Callable
 
@@ -44,6 +45,7 @@ async def save_document_uploads(
 ) -> tuple[list[dict], list[str]]:
     uploaded_items: list[dict] = []
     notices: list[str] = []
+    seen_names: set[str] = set()
     for file in files:
         if not file.filename:
             continue
@@ -51,8 +53,14 @@ async def save_document_uploads(
         safe_name = Path(file.filename).name
         if not safe_name:
             continue
+        if safe_name in seen_names:
+            notices.append(f"Skipped duplicate filename in upload selection: {safe_name}")
+            continue
+        seen_names.add(safe_name)
 
-        target = document_upload_dir / safe_name
+        doc_id = uuid.uuid4().hex
+        target = document_upload_dir / doc_id / safe_name
+        target.parent.mkdir(parents=True, exist_ok=True)
         relative_path = str(target.relative_to(project_dir))
         existed_before = target.exists()
 
@@ -60,7 +68,9 @@ async def save_document_uploads(
         target.write_bytes(payload)
         uploaded_items.append(
             {
+                "doc_id": doc_id,
                 "name": safe_name,
+                "filename": safe_name,
                 "saved_path": relative_path,
                 "size": len(payload),
                 "time": now_ts(),

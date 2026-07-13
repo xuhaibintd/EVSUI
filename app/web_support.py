@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import re
 from datetime import datetime
-from pathlib import Path
 
 from fastapi import Request, UploadFile
 
@@ -63,7 +62,6 @@ from app.utils.table_state import (
     find_list_row_for_vs,
     find_vs_row_by_name,
     format_preview,
-    guess_latest_vs_name,
     is_content_based_vs_row,
     normalize_header_key,
     row_value_by_header,
@@ -588,6 +586,33 @@ def _build_home_context(request: Request, app) -> dict:
         "doc_pipeline_options": DOC_PIPELINE_OPTIONS,
         "create_result": app.state.last_create_operation,
         "document_uploads": app.state.document_uploads,
+        "document_relation_drafts": app.state.document_relation_drafts,
+        "document_relation_admin": {
+            "vector_store_options": list(state.get("chat_vs_options") or []),
+            "selected_vector_store": str(
+                state.get("last_created_vs_name") or state.get("selected_vs_name") or ""
+            ).strip(),
+            "documents": [
+                {
+                    "doc_id": str(item.get("doc_id") or ""),
+                    "filename": str(item.get("filename") or item.get("name") or ""),
+                }
+                for item in app.state.document_uploads
+            ],
+            "relations": app.state.document_relation_drafts,
+            "relation_types": [
+                "summary_of",
+                "next_issue_of",
+                "updates",
+                "supplement_to",
+                "follow_up_to",
+                "references",
+                "related_to",
+            ],
+            "table_initialized": False,
+            "status": None,
+            "source": "upload",
+        },
         "document_upload_error": "",
         "document_upload_notices": app.state.document_upload_notices,
         "eval_panel": build_precision_eval_panel_context(document_root=DOCUMENT_UPLOAD_DIR, debug_root=DEBUG_UPLOAD_DIR),
@@ -631,5 +656,6 @@ def initialize_app_state(app, templates) -> None:
     app.state.create_form_values = default_create_values()
     app.state.last_create_operation = None
     app.state.document_uploads = []
+    app.state.document_relation_drafts = []
     app.state.document_upload_notices = []
     app.state.chat_history = []

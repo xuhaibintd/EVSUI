@@ -8,15 +8,12 @@ from app.services.teradata_sql import (
     ExecuteSqlFn,
     _qualified_table_sql,
     _sql_literal,
-    _sql_typed_literal,
     _teradata_table_exists,
 )
 
 BOOKRAG_EMBEDDING_NODE_TYPES = ("text", "table", "image")
 
 TERADATA_IDENTIFIER_MAX_LEN = 30
-BOOKRAG_INSERT_BATCH_MAX_ROWS = 32
-BOOKRAG_INSERT_BATCH_MAX_SQL_CHARS = 180000
 
 BOOKRAG_DOCUMENT_COLUMNS: list[tuple[str, str]] = [
     ("doc_id", 'VARCHAR(64) NOT NULL'),
@@ -111,9 +108,9 @@ BOOKRAG_ENTITY_COLUMNS: list[tuple[str, str]] = [
 
 BOOKRAG_ENTITY_LINK_COLUMNS: list[tuple[str, str]] = [
     ("link_id", 'VARCHAR(64) NOT NULL'),
-    ("entity_id", "VARCHAR(64)"),
+    ("entity_id", "VARCHAR(64) NOT NULL"),
     ("doc_id", "VARCHAR(64)"),
-    ("node_id", "VARCHAR(64)"),
+    ("node_id", "VARCHAR(64) NOT NULL"),
     ("section_node_id", "VARCHAR(64)"),
     ("source_field", "VARCHAR(50)"),
     ("mention_text", "VARCHAR(1000) CHARACTER SET UNICODE"),
@@ -126,13 +123,13 @@ BOOKRAG_ENTITY_LINK_COLUMNS: list[tuple[str, str]] = [
 BOOKRAG_ENTITY_RELATION_COLUMNS: list[tuple[str, str]] = [
     ("relation_id", 'VARCHAR(64) NOT NULL'),
     ("doc_id", "VARCHAR(64)"),
-    ("source_element_id", "VARCHAR(64)"),
-    ("source_node_id", "VARCHAR(64)"),
+    ("source_element_id", "VARCHAR(64) NOT NULL"),
+    ("source_node_id", "VARCHAR(64) NOT NULL"),
     ("section_node_id", "VARCHAR(64)"),
-    ("from_entity_id", "VARCHAR(64)"),
+    ("from_entity_id", "VARCHAR(64) NOT NULL"),
     ("from_entity_text", "VARCHAR(1000) CHARACTER SET UNICODE"),
-    ("relationship", "VARCHAR(100) CHARACTER SET UNICODE"),
-    ("to_entity_id", "VARCHAR(64)"),
+    ("relationship", "VARCHAR(100) CHARACTER SET UNICODE NOT NULL"),
+    ("to_entity_id", "VARCHAR(64) NOT NULL"),
     ("to_entity_text", "VARCHAR(1000) CHARACTER SET UNICODE"),
     ("page_start", "INTEGER"),
     ("page_end", "INTEGER"),
@@ -140,6 +137,220 @@ BOOKRAG_ENTITY_RELATION_COLUMNS: list[tuple[str, str]] = [
     ("section_path", "VARCHAR(2000) CHARACTER SET UNICODE"),
 ]
 
+BOOKRAG_DOCUMENT_RELATION_COLUMNS: list[tuple[str, str]] = [
+    ("from_doc_id", "VARCHAR(64) NOT NULL"),
+    ("from_filename", "VARCHAR(255) CHARACTER SET UNICODE NOT NULL"),
+    ("relation_type", "VARCHAR(64) NOT NULL"),
+    ("to_doc_id", "VARCHAR(64) NOT NULL"),
+    ("to_filename", "VARCHAR(255) CHARACTER SET UNICODE NOT NULL"),
+    ("relation_description", "VARCHAR(4000) CHARACTER SET UNICODE"),
+    ("source_type", "VARCHAR(32) NOT NULL"),
+    ("confidence", "DECIMAL(5,4)"),
+    ("is_active", "BYTEINT NOT NULL"),
+    ("created_by", "VARCHAR(128) CHARACTER SET UNICODE"),
+    ("created_at", "TIMESTAMP(6)"),
+    ("updated_by", "VARCHAR(128) CHARACTER SET UNICODE"),
+    ("updated_at", "TIMESTAMP(6)"),
+]
+
+
+BOOKRAG_PRIMARY_KEYS: dict[tuple[str, ...], tuple[str, ...]] = {
+    tuple(name for name, _ in BOOKRAG_DOCUMENT_COLUMNS): ("doc_id",),
+    tuple(name for name, _ in BOOKRAG_BLOCK_COLUMNS): ("doc_id", "element_id"),
+    tuple(name for name, _ in BOOKRAG_RAW_COLUMNS): ("doc_id", "ordinal_raw"),
+    tuple(name for name, _ in BOOKRAG_CHUNK_COLUMNS): ("doc_id", "chunk_id"),
+    tuple(name for name, _ in BOOKRAG_NODE_COLUMNS): ("doc_id", "node_id"),
+    tuple(name for name, _ in BOOKRAG_ENTITY_COLUMNS): ("doc_id", "entity_id"),
+    tuple(name for name, _ in BOOKRAG_ENTITY_LINK_COLUMNS): ("doc_id", "link_id"),
+    tuple(name for name, _ in BOOKRAG_ENTITY_RELATION_COLUMNS): ("doc_id", "relation_id"),
+    tuple(name for name, _ in BOOKRAG_DOCUMENT_RELATION_COLUMNS): (
+        "from_doc_id",
+        "relation_type",
+        "to_doc_id",
+    ),
+}
+
+
+BOOKRAG_QUERY_TABLE_PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
+    "documents": ("doc_id",),
+    "blocks": ("doc_id", "element_id"),
+    "nodes": ("doc_id", "node_id"),
+    "document_relations": ("from_doc_id", "relation_type", "to_doc_id"),
+    "entities": ("doc_id", "entity_id"),
+    "entity_links": ("doc_id", "link_id"),
+    "entity_relations": ("doc_id", "relation_id"),
+}
+
+BOOKRAG_QUERY_TABLE_ROLES: dict[str, str] = {
+    "documents": "core",
+    "blocks": "core",
+    "nodes": "core",
+    "document_relations": "core",
+    "entities": "graph",
+    "entity_links": "graph",
+    "entity_relations": "graph",
+}
+
+# Logical foreign-key contract used by both the EVSUI query chain and MCP clients.
+# Teradata does not need to enforce these as physical FK constraints for the
+# relationship to be mandatory at the application boundary.
+BOOKRAG_RELATIONSHIP_SPECS: tuple[dict[str, Any], ...] = (
+    {
+        "name": "document_relation_source",
+        "from_table": "document_relations",
+        "from_columns": ("from_doc_id",),
+        "to_table": "documents",
+        "to_columns": ("doc_id",),
+        "nullable": False,
+        "strength": "required",
+    },
+    {
+        "name": "document_relation_target",
+        "from_table": "document_relations",
+        "from_columns": ("to_doc_id",),
+        "to_table": "documents",
+        "to_columns": ("doc_id",),
+        "nullable": False,
+        "strength": "required",
+    },
+    {
+        "name": "block_document",
+        "from_table": "blocks",
+        "from_columns": ("doc_id",),
+        "to_table": "documents",
+        "to_columns": ("doc_id",),
+        "nullable": False,
+        "strength": "required",
+    },
+    {
+        "name": "node_document",
+        "from_table": "nodes",
+        "from_columns": ("doc_id",),
+        "to_table": "documents",
+        "to_columns": ("doc_id",),
+        "nullable": False,
+        "strength": "required",
+    },
+    {
+        "name": "node_parent",
+        "from_table": "nodes",
+        "from_columns": ("doc_id", "parent_node_id"),
+        "to_table": "nodes",
+        "to_columns": ("doc_id", "node_id"),
+        "nullable": True,
+        "nullable_when": "node_type=document",
+        "strength": "required",
+    },
+    {
+        "name": "node_source_block",
+        "from_table": "nodes",
+        "from_columns": ("doc_id", "source_element_id"),
+        "to_table": "blocks",
+        "to_columns": ("doc_id", "element_id"),
+        "nullable": True,
+        "nullable_when": "node_type=document",
+        "strength": "required",
+    },
+    {
+        "name": "entity_document",
+        "from_table": "entities",
+        "from_columns": ("doc_id",),
+        "to_table": "documents",
+        "to_columns": ("doc_id",),
+        "nullable": False,
+        "strength": "required",
+    },
+    {
+        "name": "entity_link_document",
+        "from_table": "entity_links",
+        "from_columns": ("doc_id",),
+        "to_table": "documents",
+        "to_columns": ("doc_id",),
+        "nullable": False,
+        "strength": "required",
+    },
+    {
+        "name": "entity_link_node",
+        "from_table": "entity_links",
+        "from_columns": ("doc_id", "node_id"),
+        "to_table": "nodes",
+        "to_columns": ("doc_id", "node_id"),
+        "nullable": False,
+        "strength": "required",
+    },
+    {
+        "name": "entity_link_section",
+        "from_table": "entity_links",
+        "from_columns": ("doc_id", "section_node_id"),
+        "to_table": "nodes",
+        "to_columns": ("doc_id", "node_id"),
+        "nullable": True,
+        "strength": "optional",
+    },
+    {
+        "name": "entity_link_entity",
+        "from_table": "entity_links",
+        "from_columns": ("doc_id", "entity_id"),
+        "to_table": "entities",
+        "to_columns": ("doc_id", "entity_id"),
+        "nullable": False,
+        "strength": "required",
+    },
+    {
+        "name": "relation_document",
+        "from_table": "entity_relations",
+        "from_columns": ("doc_id",),
+        "to_table": "documents",
+        "to_columns": ("doc_id",),
+        "nullable": False,
+        "strength": "required",
+    },
+    {
+        "name": "relation_source_block",
+        "from_table": "entity_relations",
+        "from_columns": ("doc_id", "source_element_id"),
+        "to_table": "blocks",
+        "to_columns": ("doc_id", "element_id"),
+        "nullable": False,
+        "strength": "required",
+    },
+    {
+        "name": "relation_source_node",
+        "from_table": "entity_relations",
+        "from_columns": ("doc_id", "source_node_id"),
+        "to_table": "nodes",
+        "to_columns": ("doc_id", "node_id"),
+        "nullable": False,
+        "strength": "required",
+    },
+    {
+        "name": "relation_section",
+        "from_table": "entity_relations",
+        "from_columns": ("doc_id", "section_node_id"),
+        "to_table": "nodes",
+        "to_columns": ("doc_id", "node_id"),
+        "nullable": True,
+        "strength": "optional",
+    },
+    {
+        "name": "relation_from_entity",
+        "from_table": "entity_relations",
+        "from_columns": ("doc_id", "from_entity_id"),
+        "to_table": "entities",
+        "to_columns": ("doc_id", "entity_id"),
+        "nullable": False,
+        "strength": "required",
+    },
+    {
+        "name": "relation_to_entity",
+        "from_table": "entity_relations",
+        "from_columns": ("doc_id", "to_entity_id"),
+        "to_table": "entities",
+        "to_columns": ("doc_id", "entity_id"),
+        "nullable": False,
+        "strength": "required",
+    },
+)
 
 def _sanitize_identifier(raw: str, fallback: str) -> str:
     candidate = re.sub(r"[^0-9A-Za-z_]", "_", str(raw or "").strip())
@@ -173,6 +384,7 @@ def build_bookrag_table_targets(vector_store_name: str) -> dict[str, str]:
         "raw": _with_suffix(base_name, "braw"),
         "chunks": _with_suffix(base_name, "bchk"),
         "nodes": _with_suffix(base_name, "bnode"),
+        "document_relations": _with_suffix(base_name, "bdrel"),
         "entities": _with_suffix(base_name, "bent"),
         "entity_links": _with_suffix(base_name, "belnk"),
         "entity_relations": _with_suffix(base_name, "brel"),
@@ -180,13 +392,45 @@ def build_bookrag_table_targets(vector_store_name: str) -> dict[str, str]:
     }
 
 
+def build_bookrag_relationship_contract(vector_store_name: str) -> dict[str, Any]:
+    """Return physical table names plus the document-scoped join contract."""
+    targets = build_bookrag_table_targets(vector_store_name)
+    return {
+        "tables": {
+            table_key: {
+                "name": targets[table_key],
+                "primary_key": list(primary_key),
+                "role": BOOKRAG_QUERY_TABLE_ROLES[table_key],
+            }
+            for table_key, primary_key in BOOKRAG_QUERY_TABLE_PRIMARY_KEYS.items()
+        },
+        "relationships": [
+            {
+                **spec,
+                "from_table_key": spec["from_table"],
+                "to_table_key": spec["to_table"],
+                "from_table": targets[str(spec["from_table"])],
+                "to_table": targets[str(spec["to_table"])],
+                "from_columns": list(spec["from_columns"]),
+                "to_columns": list(spec["to_columns"]),
+            }
+            for spec in BOOKRAG_RELATIONSHIP_SPECS
+        ],
+    }
+
 def _build_table_ddl(qualified_table: str, columns: list[tuple[str, str]]) -> str:
-    first_name, first_type = columns[0]
-    column_lines: list[str] = [f'  "{first_name}" {first_type}']
-    if re.search(r"\bNOT\s+NULL\b", first_type, flags=re.IGNORECASE):
-        column_lines.append(f'  PRIMARY KEY ("{first_name}")')
-    for name, col_type in columns[1:]:
-        column_lines.append(f'  "{name}" {col_type}')
+    column_signature = tuple(name for name, _ in columns)
+    primary_key = BOOKRAG_PRIMARY_KEYS.get(column_signature)
+    if not primary_key:
+        raise RuntimeError(f"BookRAG primary key is undefined for table {qualified_table}.")
+    column_lines: list[str] = []
+    for name, column_type in columns:
+        effective_type = column_type
+        if name in primary_key and not re.search(r"\bNOT\s+NULL\b", effective_type, flags=re.IGNORECASE):
+            effective_type = f"{effective_type} NOT NULL"
+        column_lines.append(f'  "{name}" {effective_type}')
+    quoted_keys = ", ".join(f'"{name}"' for name in primary_key)
+    column_lines.append(f"  PRIMARY KEY ({quoted_keys})")
     ddl_body = ",\n".join(column_lines)
     return f"""
 CREATE SET TABLE {qualified_table} (
@@ -222,6 +466,14 @@ def prepare_bookrag_tables(
     warnings.extend(_ensure_table(schema_name, table_targets["documents"], BOOKRAG_DOCUMENT_COLUMNS, execute_sql_fn))
     warnings.extend(_ensure_table(schema_name, table_targets["blocks"], BOOKRAG_BLOCK_COLUMNS, execute_sql_fn))
     warnings.extend(_ensure_table(schema_name, table_targets["nodes"], BOOKRAG_NODE_COLUMNS, execute_sql_fn))
+    warnings.extend(
+        _ensure_table(
+            schema_name,
+            table_targets["document_relations"],
+            BOOKRAG_DOCUMENT_RELATION_COLUMNS,
+            execute_sql_fn,
+        )
+    )
     warnings.extend(_ensure_table(schema_name, table_targets["entities"], BOOKRAG_ENTITY_COLUMNS, execute_sql_fn))
     warnings.extend(_ensure_table(schema_name, table_targets["entity_links"], BOOKRAG_ENTITY_LINK_COLUMNS, execute_sql_fn))
     warnings.extend(_ensure_table(schema_name, table_targets["entity_relations"], BOOKRAG_ENTITY_RELATION_COLUMNS, execute_sql_fn))
@@ -245,6 +497,23 @@ def prepare_bookrag_node_table(
 ) -> list[str]:
     warnings: list[str] = []
     warnings.extend(_ensure_table(schema_name, table_targets["nodes"], BOOKRAG_NODE_COLUMNS, execute_sql_fn))
+    return warnings
+
+
+def prepare_bookrag_document_relation_table(
+    schema_name: str | None,
+    table_targets: dict[str, str],
+    execute_sql_fn: ExecuteSqlFn | None,
+) -> list[str]:
+    warnings: list[str] = []
+    warnings.extend(
+        _ensure_table(
+            schema_name,
+            table_targets["document_relations"],
+            BOOKRAG_DOCUMENT_RELATION_COLUMNS,
+            execute_sql_fn,
+        )
+    )
     return warnings
 
 
