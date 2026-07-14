@@ -1,0 +1,48 @@
+<div
+  id="bookrag-csv-load-panel"
+  class="bookrag-parse-panel bookrag-csv-panel"
+  {% if bookrag_load_panel_oob %}hx-swap-oob="outerHTML"{% endif %}
+>
+  <div>
+    <strong>Load CSV to Tables</strong>
+    <p>Load every CSV in a ready run into its target tables, then verify the persisted row counts.</p>
+  </div>
+  <div class="bookrag-csv-actions bookrag-csv-load-actions">
+    <label>
+      <span>CSV run</span>
+      <select name="bookrag_csv_run_id" data-bookrag-csv-run-select>
+        {% if bookrag_load_csv_runs %}
+          {% for run in bookrag_load_csv_runs %}
+          <option
+            value="{{ run.csv_run_id }}"
+            {% if bookrag_selected_load_csv_run_id == run.csv_run_id %}selected{% endif %}
+          >
+            {{ run.created_at }} · {{ run.vector_store_name }} · {{ run.csv_file_count or run.csv_files_created }} CSV
+          </option>
+          {% endfor %}
+        {% else %}
+          <option value="">No ready CSV run</option>
+        {% endif %}
+      </select>
+    </label>
+    <button
+      type="button"
+      class="ghost progress-btn bookrag-parse-btn"
+      data-progress-button
+      data-progress-show-seconds
+      data-bookrag-load-button
+      hx-post="/ui/create/load-csv-tables"
+      hx-include="closest form"
+      hx-target="#bookrag-csv-load-result"
+      hx-swap="innerHTML"
+      hx-disabled-elt="this"
+      {% if not evs.connected or not bookrag_load_csv_runs %}disabled{% endif %}
+    >
+      <span class="progress-btn-label">Load Tables</span>
+      <span class="progress-btn-loading">
+        <span class="progress-btn-spinner" aria-hidden="true"></span>
+        <span data-progress-loading-text>Loading...</span>
+      </span>
+    </button>
+  </div>
+</div>

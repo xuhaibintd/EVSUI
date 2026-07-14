@@ -12,12 +12,24 @@
   <p>
     Workers: {{ bookrag_csv_generation.workers }} ·
     CSV files: {{ bookrag_csv_generation.csv_files_created }} ·
-    Elapsed: {{ '%.2f'|format(bookrag_csv_generation.elapsed_seconds) }}s ·
+    Elapsed: {{ '%.2f'|format(bookrag_csv_generation.elapsed_seconds / 60) }} min ·
     Database writes: 0
+  </p>
+  <p>
+    Per document: Core/Audit/Graph CSV ·
+    Run-level bdrel CSV: {{ bookrag_csv_generation.run_csv_files|length }} ·
+    Document relations: {{ bookrag_csv_generation.document_relation_count }}
+  </p>
+  {% if bookrag_csv_generation.run_error %}
+  <p class="bookrag-parse-error">Run-level CSV: {{ bookrag_csv_generation.run_error }}</p>
+  {% endif %}
+  <p>
+    Target Vector Store: <strong>{{ bookrag_csv_generation.vector_store_name }}</strong> ·
+    Target Database: <strong>{{ bookrag_csv_generation.target_database }}</strong>
   </p>
   <p class="muted">CSV directory: {{ bookrag_csv_generation.csv_stage_dir }}</p>
   <p class="muted">Manifest: {{ bookrag_csv_generation.manifest_path }}</p>
-  <div class="bookrag-parse-file-list">
+  <div class="bookrag-parse-file-list{% if bookrag_csv_generation.files|length > 10 %} is-scrollable{% endif %}">
     {% for file in bookrag_csv_generation.files %}
     <div class="bookrag-parse-file-row {% if file.status == 'failed' %}is-failed{% endif %}">
       <span class="bookrag-parse-file-status">{% if file.status == 'success' %}OK{% else %}FAILED{% endif %}</span>
@@ -31,4 +43,7 @@
     {% endfor %}
   </div>
 </div>
+{% if bookrag_csv_generation.status == 'ready' %}
+{% include "partials/bookrag_csv_load_panel.html" %}
+{% endif %}
 {% endif %}

@@ -222,7 +222,8 @@ The UI groups the active tables as follows:
 
 - Core: `bdoc + bblk + bnode + bdrel` (always enabled together by the current pipeline contract).
 - Audit: `braw` (independent optional table, enabled by default).
-- Graph: `bent + belnk + brel` (one UI switch controls all three; disabled by default).
+- Graph: `bent + belnk + brel` (always enabled together by the current pipeline contract).
+- Mandatory tables still produce a header-only CSV when their row count is zero. The load stage creates and verifies the empty table without sending that CSV to the Teradata batch loader.
 
 ### Logical Join Contract
 
@@ -282,7 +283,11 @@ Create-time filename initialization is deliberately conservative:
 
 The **Document Parsing** action below **3. Enrichment Nodes** submits the current BookRAG parsing settings and all uploaded documents, runs the concurrent Unstructured-to-JSON stage, and reports per-file success, element count, and elapsed time. It stores a `manifest.json` beside the per-document JSON files with stable document metadata and JSON checksums. The generated raw JSON is the reusable source artifact for later CSV generation; this stage does not create CSV files, prepare Teradata tables, or write database rows.
 
-The **Generate CSV from JSON** action can select any locally stored parsing manifest in `ready` status. It verifies every JSON checksum and runs the shared JSON-to-table-row algorithm concurrently for all documents. Each generation creates a new CSV run directory and manifest, so rerunning after an algorithm change never overwrites an earlier result. A CSV run is marked `ready` only when every document succeeds; this stage never invokes Unstructured and never writes database rows.
+The **Generate CSV from JSON** action can select any locally stored parsing manifest in `ready` status and requires an explicit target Vector Store name and target database. It verifies every JSON checksum and runs the shared JSON-to-table-row algorithm concurrently for all documents. Every document produces Core/Audit/Graph CSV files, including header-only Graph files when no entity rows exist. After every document finishes, the stage creates exactly one run-level `bdrel` CSV from cross-document relationship rules, also header-only when no relationships exist. Each generation creates a new CSV run directory and manifest containing the target name, schema, and complete physical-table mapping, so rerunning after an algorithm change never overwrites an earlier result. A CSV run is marked `ready` only when every document and the run-level CSV succeed; this stage never invokes Unstructured and never writes database rows.
+
+The **Load CSV to Tables** action accepts only a `ready` CSV manifest. It validates every CSV path, checksum, table key, row count, and header before creating the mapped BookRAG tables. CSV files load concurrently, and persisted table counts must match the manifest before the run is marked table-ready. This stage never creates a Vector Store.
+
+The separate **Create Vector Store** action accepts only a CSV run whose table load is `ready`. It reads the verified load summary without loading CSV again, then uses the manifest's target name and qualified `bnode` table as `object_names`, with `content` as the data column and `doc_id,node_id` as key columns. A CSV load or row-count failure therefore prevents the create action from becoming available.
 
 1. Upload saves each file under its UUID `doc_id` and records `{doc_id, filename, saved_path}` in the document manifest.
 2. The upload UI stops at the file catalog; it does not render or submit document relationships.

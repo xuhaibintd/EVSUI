@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import os
 import re
+import shutil
 import time
 import uuid
 from pathlib import Path
@@ -13,6 +15,7 @@ from app.services.bookrag_schema import (
     BOOKRAG_BLOCK_COLUMNS,
     BOOKRAG_CHUNK_COLUMNS,
     BOOKRAG_DOCUMENT_COLUMNS,
+    BOOKRAG_DOCUMENT_RELATION_COLUMNS,
     BOOKRAG_ENTITY_COLUMNS,
     BOOKRAG_ENTITY_LINK_COLUMNS,
     BOOKRAG_ENTITY_RELATION_COLUMNS,
@@ -34,6 +37,7 @@ BOOKRAG_TABLE_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "raw": BOOKRAG_RAW_COLUMNS,
     "blocks": BOOKRAG_BLOCK_COLUMNS,
     "nodes": BOOKRAG_NODE_COLUMNS,
+    "document_relations": BOOKRAG_DOCUMENT_RELATION_COLUMNS,
     "entities": BOOKRAG_ENTITY_COLUMNS,
     "entity_links": BOOKRAG_ENTITY_LINK_COLUMNS,
     "entity_relations": BOOKRAG_ENTITY_RELATION_COLUMNS,
@@ -138,7 +142,7 @@ def _write_rows_csv(
     columns: list[tuple[str, str]],
     stats: dict[str, Any] | None = None,
 ) -> str | None:
-    if csv_stage_dir is None or not rows:
+    if csv_stage_dir is None:
         return None
     csv_stage_dir.mkdir(parents=True, exist_ok=True)
     path = csv_stage_dir / f"{table_name}.csv"
@@ -185,6 +189,60 @@ def _csv_header(csv_path: str) -> list[str]:
     return [str(name) for name in header]
 
 
+_DRIVER_CSV_PATH_BREAKERS = ("--", "/*", "*/", "{", "}", "(", ")")
+
+
+def _driver_csv_path_requires_alias(path: Path) -> bool:
+    normalized = str(path.resolve())
+    return any(token in normalized for token in _DRIVER_CSV_PATH_BREAKERS)
+
+
+def _prepare_driver_csv_path(csv_path: str) -> tuple[str, Path | None, Path | None]:
+    """Return a driver-safe path, aliasing names that break escape-function parsing."""
+    source = Path(csv_path).resolve()
+    if not source.is_file():
+        raise RuntimeError(f"BookRAG CSV file does not exist: {source}")
+    if any(character in str(source) for character in "\r\n"):
+        raise RuntimeError(f"Unsupported character in BookRAG CSV path: {str(source)!r}")
+    if not _driver_csv_path_requires_alias(source):
+        return str(source), None, None
+
+    digest = hashlib.sha256(str(source).encode("utf-8")).hexdigest()[:24]
+    alias_path: Path | None = None
+    alias_dir: Path | None = None
+    for ancestor in source.parents:
+        candidate_dir = ancestor / "_driver_csv"
+        candidate = candidate_dir / f"{digest}.csv"
+        if not _driver_csv_path_requires_alias(candidate):
+            alias_dir = candidate_dir
+            alias_path = candidate
+            break
+    if alias_path is None or alias_dir is None:
+        raise RuntimeError(f"Could not construct a driver-safe alias for CSV path: {source}")
+
+    alias_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        os.link(source, alias_path)
+    except FileExistsError:
+        pass
+    except OSError:
+        shutil.copyfile(source, alias_path)
+    return str(alias_path), alias_path, alias_dir
+
+
+def _cleanup_driver_csv_alias(alias_path: Path | None, alias_dir: Path | None) -> None:
+    if alias_path is not None:
+        try:
+            alias_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+    if alias_dir is not None:
+        try:
+            alias_dir.rmdir()
+        except OSError:
+            pass
+
+
 def _load_csv_to_teradata(
     schema_name: str | None,
     table_name: str,
@@ -194,9 +252,9 @@ def _load_csv_to_teradata(
 ) -> int:
     """Load one complete CSV with native Teradata driver protocols."""
     use_fastload = row_count >= _resolve_csv_fastload_min_rows()
-    resolved_path = str(Path(csv_path).resolve())
-    if any(character in resolved_path for character in "\r\n{}"):
-        raise RuntimeError(f"Unsupported character in BookRAG CSV path: {resolved_path!r}")
+    resolved_path, alias_path, alias_dir = _prepare_driver_csv_path(csv_path)
+    if alias_path is not None and stats is not None:
+        stats["native_csv_driver_path_aliases"] = int(stats.get("native_csv_driver_path_aliases", 0) or 0) + 1
 
     load_started = time.perf_counter()
     try:
@@ -230,6 +288,7 @@ def _load_csv_to_teradata(
                 cursor.close()
     finally:
         _record_elapsed(stats, "native_csv_load_seconds", load_started)
+        _cleanup_driver_csv_alias(alias_path, alias_dir)
 
     if stats is not None:
         stats["native_csv_calls"] = int(stats.get("native_csv_calls", 0) or 0) + 1
@@ -658,9 +717,7 @@ def prepare_bookrag_table_csv(
     csv_stage_dir: Path,
     stats: dict[str, Any] | None = None,
 ) -> str | None:
-    """Generate one existing BookRAG table CSV without loading it."""
-    if not rows:
-        return None
+    """Generate one BookRAG table CSV, including a header-only file for zero rows."""
     try:
         columns = BOOKRAG_TABLE_COLUMNS[table_key]
         table_name = table_targets[table_key]
@@ -687,6 +744,54 @@ def prepare_bookrag_table_csv(
             stats["csv_files"].append(csv_path)
         stats["insert_total_seconds"] = round(float(stats.get("csv_write_seconds", 0.0) or 0.0), 6)
     return csv_path
+
+
+def load_prepared_bookrag_table_csv(
+    *,
+    schema_name: str | None,
+    table_key: str,
+    table_targets: dict[str, str],
+    csv_path: str,
+    row_count: int,
+    stats: dict[str, Any] | None = None,
+) -> int:
+    """Load one already generated BookRAG CSV without rebuilding its rows."""
+    if row_count <= 0:
+        raise RuntimeError(f"BookRAG prepared CSV row count must be positive: {row_count}")
+    try:
+        table_name = table_targets[table_key]
+    except KeyError as ex:
+        raise RuntimeError(f"Unsupported BookRAG prepared CSV table key: {table_key}") from ex
+    validate_prepared_bookrag_table_csv(table_key=table_key, csv_path=csv_path)
+    _initialize_insert_stats(
+        stats,
+        table_name=table_name,
+        row_count=row_count,
+        add_input_rows=False,
+    )
+    if stats is not None:
+        stats["csv_files"].append(str(Path(csv_path)))
+    return _load_csv_to_teradata(
+        schema_name,
+        table_name,
+        csv_path,
+        row_count,
+        stats=stats,
+    )
+
+
+def validate_prepared_bookrag_table_csv(*, table_key: str, csv_path: str) -> None:
+    """Validate the fixed header contract of one generated BookRAG table CSV."""
+    try:
+        expected_columns = [name for name, _ in BOOKRAG_TABLE_COLUMNS[table_key]]
+    except KeyError as ex:
+        raise RuntimeError(f"Unsupported BookRAG prepared CSV table key: {table_key}") from ex
+    actual_columns = _csv_header(csv_path)
+    if actual_columns != expected_columns:
+        raise RuntimeError(
+            f"BookRAG prepared CSV header mismatch for {table_key}: "
+            f"expected={expected_columns}, actual={actual_columns}"
+        )
 
 
 def persist_bookrag_tree(

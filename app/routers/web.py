@@ -36,9 +36,16 @@ from app.services.bookrag_document_relations import (
     save_document_relation,
     validate_document_relations,
 )
-from app.services.create_config import CREATE_FIELD_MAX_LEN, default_create_values
+from app.services.create_config import CORE_CREATE_FIELDS, CREATE_FIELD_MAX_LEN, coerce_create_param, default_create_values
 from app.services.doc_modes.constants import collect_doc_pipeline_ui_values
-from app.services.multi_format import run_bookrag_document_parsing, run_bookrag_json_to_csv
+from app.services.multi_format import (
+    get_ready_bookrag_csv_load_summary,
+    list_bookrag_csv_runs,
+    run_bookrag_csv_load,
+    run_bookrag_document_parsing,
+    run_bookrag_json_to_csv,
+    update_bookrag_csv_vector_store_status,
+)
 from app.teradata_runtime import (
     TERADATA_IMPORT_ERROR,
     VSManager,
@@ -86,7 +93,7 @@ from app.web_support import (
     _verify_vectorstore_exists,
 )
 from app.workflows.chat_flow import handle_chat_reset, handle_chat_send
-from app.workflows.create_flow import handle_upload_and_prepare_create
+from app.workflows.create_flow import _wait_for_vectorstore_ready, handle_upload_and_prepare_create
 from app.workflows.destroy_flow import handle_destroy_selected
 
 router = APIRouter()
@@ -674,6 +681,15 @@ async def generate_csv_for_create(request: Request):
     ).strip()
     create_values = default_create_values()
     create_values.update(collect_doc_pipeline_ui_values(form, field_max_len=CREATE_FIELD_MAX_LEN))
+    vector_store_name = str(form.get("bookrag_csv_vector_store_name") or "").strip()
+    evs_state = getattr(request.app.state, "evs_state", {}) or {}
+    connection_params = dict(evs_state.get("params") or {})
+    target_database = str(
+        form.get("bookrag_csv_target_database")
+        or form.get("target_database")
+        or connection_params.get("username")
+        or ""
+    ).strip()
 
     summary = None
     error = ""
@@ -682,6 +698,8 @@ async def generate_csv_for_create(request: Request):
             run_bookrag_json_to_csv,
             parse_run_id=parse_run_id,
             create_values=create_values,
+            vector_store_name=vector_store_name,
+            target_database=target_database,
         )
     except Exception as ex:
         error = str(ex)
@@ -692,6 +710,193 @@ async def generate_csv_for_create(request: Request):
         {
             "bookrag_csv_generation": summary,
             "bookrag_csv_generation_error": error,
+            "bookrag_load_csv_runs": [summary] if summary and summary.get("status") == "ready" else [],
+            "bookrag_selected_load_csv_run_id": str(summary.get("csv_run_id") or "") if summary else "",
+            "bookrag_load_panel_oob": bool(summary and summary.get("status") == "ready"),
+            "evs": request.app.state.evs_state,
+        },
+    )
+
+
+def _build_csv_vector_store_create_payload(form, load_summary: dict) -> dict:
+    embeddings_model = str(form.get("embeddings_model") or "").strip()
+    if not embeddings_model:
+        raise RuntimeError("Select an embeddings model before creating the Vector Store.")
+    vector_store_name = str(load_summary["vector_store_name"])
+    description = str(form.get("description") or "").strip()
+    marker = "unstructured_bookrag_flg"
+    if marker not in description.lower():
+        description = f"{description} {marker}".strip()
+    payload: dict = {
+        "target_database": str(load_summary["target_database"]),
+        "object_names": str(load_summary["node_table"]),
+        "data_columns": ["content"],
+        "key_columns": ["doc_id", "node_id"],
+        "embeddings_model": embeddings_model,
+        "description": description,
+        "nv_ingestor": None,
+    }
+    excluded = {
+        "document_files",
+        "chunk_size",
+        "optimized_chunking",
+        "header_height",
+        "footer_height",
+        "object_names",
+        "data_columns",
+        "vector_column",
+        "key_columns",
+        "embeddings_model",
+    }
+    for field_name in sorted(CORE_CREATE_FIELDS - excluded):
+        raw = str(form.get(field_name) or "").strip()
+        if not raw:
+            continue
+        try:
+            payload[field_name] = coerce_create_param(field_name, raw)
+        except ValueError as ex:
+            raise RuntimeError(f"Invalid Vector Store field {field_name}: {ex}") from ex
+    if not vector_store_name:
+        raise RuntimeError("CSV load summary contains no target Vector Store name.")
+    return payload
+
+
+@router.post("/ui/create/load-csv-tables", response_class=HTMLResponse)
+async def load_csv_tables(request: Request):
+    if not _is_logged_in(request, request.app):
+        return HTMLResponse("Unauthorized", status_code=401)
+    _activate_session_state(request, request.app)
+    form = await request.form()
+    csv_run_id = str(
+        form.get("bookrag_csv_run_id_current")
+        or form.get("bookrag_csv_run_id")
+        or ""
+    ).strip()
+    summary = None
+    error = ""
+    try:
+        if not request.app.state.evs_state.get("connected"):
+            raise RuntimeError("Connect/authenticate in Step 1 before loading CSV files.")
+        if execute_sql is None:
+            raise RuntimeError(f"Teradata SQL runtime is unavailable: {TERADATA_IMPORT_ERROR}")
+
+        csv_run = next(
+            (item for item in list_bookrag_csv_runs() if item["csv_run_id"] == csv_run_id),
+            None,
+        )
+        if csv_run is None:
+            raise RuntimeError("Select a CSV generation run in ready status.")
+
+        summary = await asyncio.to_thread(
+            run_bookrag_csv_load,
+            csv_run_id=csv_run_id,
+            execute_sql_fn=execute_sql,
+        )
+        request.app.state.evs_state["last_error"] = ""
+        request.app.state.evs_state["last_success"] = (
+            f"CSV run '{csv_run_id}' loaded into verified database tables."
+        )
+        _persist_active_session_state(request, request.app)
+    except Exception as ex:
+        error = str(ex)
+        request.app.state.evs_state["last_success"] = ""
+        request.app.state.evs_state["last_error"] = error
+
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "partials/bookrag_csv_load_result.html",
+        {
+            "bookrag_csv_load": summary,
+            "bookrag_csv_load_error": error,
+            "bookrag_loaded_csv_runs": [summary] if summary else [],
+            "bookrag_selected_csv_run_id": csv_run_id if summary else "",
+            "bookrag_vector_create_panel_oob": bool(summary),
+            "evs": request.app.state.evs_state,
+        },
+    )
+
+
+@router.post("/ui/create/create-vector-store-from-csv", response_class=HTMLResponse)
+async def create_vector_store_from_csv(request: Request):
+    if not _is_logged_in(request, request.app):
+        return HTMLResponse("Unauthorized", status_code=401)
+    _activate_session_state(request, request.app)
+    form = await request.form()
+    csv_run_id = str(
+        form.get("bookrag_vector_create_csv_run_id_current")
+        or form.get("bookrag_vector_create_csv_run_id")
+        or ""
+    ).strip()
+    summary = None
+    error = ""
+    create_started = False
+    try:
+        if not request.app.state.evs_state.get("connected"):
+            raise RuntimeError("Connect/authenticate in Step 1 before creating the Vector Store.")
+        if VectorStore is None:
+            raise RuntimeError(f"Teradata Vector Store runtime is unavailable: {TERADATA_IMPORT_ERROR}")
+
+        load_summary = get_ready_bookrag_csv_load_summary(csv_run_id=csv_run_id)
+        vector_store_name = str(load_summary.get("vector_store_name") or "").strip()
+        exists, exists_detail, exists_error = _verify_vectorstore_exists(
+            vector_store_name,
+            allow_status_fallback=False,
+        )
+        if exists:
+            raise RuntimeError(f"Vector Store '{vector_store_name}' already exists. {exists_detail}")
+
+        create_payload = _build_csv_vector_store_create_payload(form, load_summary)
+        update_bookrag_csv_vector_store_status(
+            csv_run_id=csv_run_id,
+            status="creating",
+            create_payload=create_payload,
+        )
+        create_started = True
+        vector_store = VectorStore(vector_store_name)
+        create_output = await asyncio.to_thread(vector_store.create, **create_payload)
+        ready, status_preview, readiness_error, _ = await _wait_for_vectorstore_ready(vector_store)
+        if not ready:
+            raise RuntimeError(
+                "VectorStore.create() returned, but the Vector Store did not reach Ready: "
+                f"{readiness_error or status_preview or 'unknown status'}"
+            )
+        update_bookrag_csv_vector_store_status(csv_run_id=csv_run_id, status="ready")
+        summary = {
+            **load_summary,
+            "status": "ready",
+            "vector_store_status": "ready",
+            "create_payload": create_payload,
+            "create_output_preview": _format_preview(create_output),
+            "status_preview": status_preview,
+        }
+        if exists_error:
+            summary.setdefault("warnings", []).append(
+                f"Vector Store existence precheck was inconclusive: {exists_error}"
+            )
+        request.app.state.evs_state["last_error"] = ""
+        request.app.state.evs_state["last_success"] = f"Vector Store '{vector_store_name}' is Ready."
+        request.app.state.evs_state["last_created_vs_name"] = vector_store_name
+        _persist_active_session_state(request, request.app)
+    except Exception as ex:
+        error = str(ex)
+        if create_started:
+            try:
+                update_bookrag_csv_vector_store_status(
+                    csv_run_id=csv_run_id,
+                    status="failed",
+                    error=error,
+                )
+            except Exception:
+                pass
+        request.app.state.evs_state["last_success"] = ""
+        request.app.state.evs_state["last_error"] = error
+
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "partials/bookrag_vector_store_create_result.html",
+        {
+            "bookrag_vector_store_create": summary,
+            "bookrag_vector_store_create_error": error,
         },
     )
 

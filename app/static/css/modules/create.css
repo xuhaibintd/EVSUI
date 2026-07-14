@@ -584,24 +584,45 @@
   align-items: flex-end;
 }
 
+.bookrag-csv-panel > div:first-child {
+  flex: 1 1 28rem;
+  min-width: 0;
+}
+
 .bookrag-csv-actions {
-  display: flex;
+  display: grid;
   align-items: flex-end;
   gap: 0.7rem;
-  min-width: min(44rem, 62%);
+  flex: 1 1 58rem;
+  min-width: 0;
+  width: 100%;
+}
+
+.bookrag-csv-generate-actions {
+  grid-template-columns: minmax(14rem, 1.35fr) minmax(11rem, 1fr) minmax(11rem, 1fr) minmax(10rem, 0.72fr);
+}
+
+.bookrag-csv-load-actions {
+  grid-template-columns: minmax(16rem, 1fr) minmax(10rem, 13rem);
 }
 
 .bookrag-csv-actions label {
   display: grid;
-  flex: 1 1 auto;
   gap: 0.3rem;
-  min-width: 16rem;
+  min-width: 0;
   color: #3c4043;
   font-size: 0.76rem;
   font-weight: 600;
 }
 
-.bookrag-csv-actions select {
+.bookrag-csv-actions select,
+.bookrag-csv-actions input {
+  width: 100%;
+  min-width: 0;
+}
+
+.bookrag-csv-actions .bookrag-parse-btn {
+  min-width: 0;
   width: 100%;
 }
 
@@ -650,13 +671,21 @@
 .bookrag-parse-file-list {
   display: grid;
   gap: 0.35rem;
-  max-height: 18rem;
-  overflow: auto;
+}
+
+.bookrag-parse-file-list.is-scrollable {
+  max-height: 23.2rem;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 0.35rem;
+  scrollbar-gutter: stable;
 }
 
 .bookrag-parse-file-row {
   display: grid;
   grid-template-columns: 4.5rem minmax(0, 1fr) minmax(10rem, auto);
+  min-height: 2rem;
+  align-items: center;
   border-top: 1px solid #e5eaf1;
   padding-top: 0.35rem;
   font-size: 0.78rem;
@@ -683,6 +712,23 @@
   padding-left: 1.2rem;
 }
 
+@media (max-width: 1380px) {
+  .bookrag-csv-panel {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .bookrag-csv-actions {
+    width: 100%;
+  }
+}
+
+@media (max-width: 900px) {
+  .bookrag-csv-generate-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 760px) {
   .bookrag-parse-panel,
   .bookrag-parse-result-head {
@@ -696,7 +742,7 @@
 
   .bookrag-csv-actions {
     align-items: stretch;
-    flex-direction: column;
+    grid-template-columns: minmax(0, 1fr);
     min-width: 0;
     width: 100%;
   }

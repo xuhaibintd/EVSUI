@@ -155,17 +155,9 @@
         <span>Audit (braw)</span>
       </label>
       <label class="bookrag-debug-toggle">
-        <input
-          type="checkbox"
-          name="multi_format_bookrag_generate_graph"
-          value="true"
-          {% if create_values.get('multi_format_bookrag_generate_graph', 'false') == 'true'
-                or create_values.get('multi_format_bookrag_generate_entities', 'false') == 'true'
-                or create_values.get('multi_format_bookrag_generate_entity_links', 'false') == 'true'
-                or create_values.get('multi_format_bookrag_generate_entity_relations', 'false') == 'true' %}checked{% endif %}
-          {% if not evs.connected or _doc_pipeline_mode != 'multi_format_bookrag' %}disabled{% endif %}
-        />
-        <span>Graph (bent + belnk + brel)</span>
+        <input type="hidden" name="multi_format_bookrag_generate_graph" value="true" />
+        <input type="checkbox" checked disabled />
+        <span>Graph (bent + belnk + brel, required)</span>
       </label>
       <label class="bookrag-debug-toggle bookrag-debug-toggle-embed">
         <input

@@ -144,6 +144,11 @@
     const uploadInput = createForm.querySelector("input[type='file'][name='files']");
     const uploadedPreview = createForm.querySelector("[data-selected-doc-paths]");
     const parseButton = createForm.querySelector("[data-bookrag-parse-button]");
+    const csvButton = createForm.querySelector("[data-bookrag-csv-button]");
+    const csvVectorStoreName = createForm.querySelector("[data-bookrag-csv-vector-store-name]");
+    const csvTargetDatabase = createForm.querySelector("[data-bookrag-csv-target-database]");
+    const parseRunSelect = createForm.querySelector("[data-bookrag-parse-run-select]");
+    const csvGenerationResult = createForm.querySelector("#bookrag-csv-generation-result");
     const createResult = document.querySelector("#create-result");
 
     const getUploadedCount = () => {
@@ -239,6 +244,10 @@
         const formLocked = createForm.classList.contains("disabled-block");
         parseButton.disabled = formLocked || !isBookrag || isUploadInProgress() || uploadedCount === 0;
       }
+      if (csvButton instanceof HTMLButtonElement && !csvButton.classList.contains("is-loading")) {
+        const hasParseRun = parseRunSelect instanceof HTMLSelectElement && Boolean(parseRunSelect.value.trim());
+        csvButton.disabled = !hasParseRun;
+      }
       if (objectNames instanceof HTMLInputElement) {
         objectNames.required = false;
       }
@@ -247,7 +256,7 @@
       }
     };
 
-    [vectorStoreName, docPipelineMode, embeddingsModel, objectNames, documentFiles, uploadInput].forEach((field) => {
+    [vectorStoreName, docPipelineMode, embeddingsModel, objectNames, documentFiles, uploadInput, csvVectorStoreName, csvTargetDatabase, parseRunSelect].forEach((field) => {
       if (
         field instanceof HTMLInputElement ||
         field instanceof HTMLSelectElement ||
@@ -257,6 +266,73 @@
         field.addEventListener("change", syncConditionalRules);
       }
     });
+
+    if (csvVectorStoreName instanceof HTMLInputElement && vectorStoreName instanceof HTMLInputElement) {
+      csvVectorStoreName.addEventListener("input", () => {
+        csvVectorStoreName.dataset.userEdited = "1";
+      });
+      const syncCsvTargetName = () => {
+        if (csvVectorStoreName.dataset.userEdited !== "1") {
+          csvVectorStoreName.value = vectorStoreName.value;
+          syncConditionalRules();
+        }
+      };
+      vectorStoreName.addEventListener("input", syncCsvTargetName);
+      vectorStoreName.addEventListener("change", syncCsvTargetName);
+    }
+
+    const clearCsvValidationMessage = () => {
+      if (!(csvGenerationResult instanceof HTMLElement)) {
+        return;
+      }
+      if (csvGenerationResult.dataset.clientValidationMessage !== "1") {
+        return;
+      }
+      csvGenerationResult.innerHTML = "";
+      delete csvGenerationResult.dataset.clientValidationMessage;
+    };
+
+    const renderCsvValidationMessage = (message) => {
+      if (!(csvGenerationResult instanceof HTMLElement)) {
+        return;
+      }
+      csvGenerationResult.dataset.clientValidationMessage = "1";
+      csvGenerationResult.innerHTML = `<div class="bookrag-parse-result bookrag-parse-result-error"><p><strong>Cannot generate CSV.</strong> ${app.escapeHtml(message)}</p></div>`;
+    };
+
+    const validateCsvGeneration = () => {
+      if (!(parseRunSelect instanceof HTMLSelectElement) || !parseRunSelect.value.trim()) {
+        renderCsvValidationMessage("Select a completed JSON parsing run.");
+        parseRunSelect?.focus();
+        return false;
+      }
+      if (!(csvVectorStoreName instanceof HTMLInputElement) || !csvVectorStoreName.value.trim()) {
+        renderCsvValidationMessage("Enter the Target Vector Store Name.");
+        csvVectorStoreName?.focus();
+        return false;
+      }
+      if (!(csvTargetDatabase instanceof HTMLInputElement) || !csvTargetDatabase.value.trim()) {
+        renderCsvValidationMessage("Enter the Target Database.");
+        csvTargetDatabase?.focus();
+        return false;
+      }
+      clearCsvValidationMessage();
+      return true;
+    };
+
+    if (csvButton instanceof HTMLButtonElement) {
+      csvButton.addEventListener(
+        "click",
+        (event) => {
+          if (validateCsvGeneration()) {
+            return;
+          }
+          event.preventDefault();
+          event.stopImmediatePropagation();
+        },
+        true
+      );
+    }
 
     const getValidationError = () => {
       syncConditionalRules();

@@ -69,7 +69,9 @@ from app.services.bookrag_storage import (
     persist_bookrag_nodes,
     persist_bookrag_documents,
     persist_bookrag_raw_rows,
+    load_prepared_bookrag_table_csv,
     prepare_bookrag_table_csv,
+    validate_prepared_bookrag_table_csv,
     write_bookrag_raw_stage_file,
 )
 from app.services.unstructured_job_runner import (
@@ -154,9 +156,9 @@ BOOKRAG_TABLE_TOGGLE_DEFAULTS: dict[str, bool] = {
     "blocks": True,
     "nodes": True,
     "document_relations": True,
-    "entities": False,
-    "entity_links": False,
-    "entity_relations": False,
+    "entities": True,
+    "entity_links": True,
+    "entity_relations": True,
 }
 
 BOOKRAG_TABLE_TOGGLE_ORDER: tuple[str, ...] = (
@@ -183,7 +185,9 @@ BOOKRAG_CSV_LOAD_WORKERS_DEFAULT = 5
 BOOKRAG_PARSE_MANIFEST_FILENAME = "manifest.json"
 BOOKRAG_PARSE_MANIFEST_SCHEMA_VERSION = 1
 BOOKRAG_CSV_MANIFEST_SCHEMA_VERSION = 1
+BOOKRAG_CSV_MANIFEST_FILENAME = "manifest.json"
 BOOKRAG_TRANSFORM_VERSION = "bookrag-json-to-csv-v1"
+BOOKRAG_COMPLETE_TABLE_CONTRACT = "core-audit-graph-v1"
 
 
 def _resolve_bookrag_unstructured_workers(file_count: int) -> int:
@@ -244,16 +248,8 @@ CREATE SET TABLE {qualified_table} (
 
 
 def _resolve_bookrag_table_generation_flags(create_values: dict[str, str]) -> dict[str, bool]:
-    # A queryable BookRAG dataset always consists of the complete Core group.
-    # Legacy per-graph-table fields are accepted for saved/API payloads, but
-    # they are expanded into the all-or-nothing Graph group.
-    graph_enabled = _to_bool(
-        create_values.get(BOOKRAG_GRAPH_TOGGLE_FIELD, "false"),
-        default=False,
-    ) or any(
-        _to_bool(create_values.get(field_name, "false"), default=False)
-        for field_name in BOOKRAG_LEGACY_GRAPH_TOGGLE_FIELDS
-    )
+    # Core and Graph are mandatory parts of every new BookRAG CSV contract.
+    # Graph CSV files are still emitted with headers when NER produced no rows.
     raw_enabled = _to_bool(
         create_values.get(BOOKRAG_TABLE_TOGGLE_FIELDS["raw"], "true"),
         default=True,
@@ -264,9 +260,9 @@ def _resolve_bookrag_table_generation_flags(create_values: dict[str, str]) -> di
         "blocks": True,
         "nodes": True,
         "document_relations": True,
-        "entities": graph_enabled,
-        "entity_links": graph_enabled,
-        "entity_relations": graph_enabled,
+        "entities": True,
+        "entity_links": True,
+        "entity_relations": True,
     }
 
 
@@ -831,6 +827,99 @@ def list_bookrag_parse_runs(*, include_incomplete: bool = False) -> list[dict[st
         )
     runs.sort(key=lambda item: (item["created_at"], item["parse_run_id"]), reverse=True)
     return runs
+
+
+def _resolve_bookrag_csv_manifest(csv_run_id: str) -> tuple[Path, dict[str, Any]]:
+    normalized_run_id = str(csv_run_id or "").strip()
+    if not normalized_run_id or Path(normalized_run_id).name != normalized_run_id:
+        raise RuntimeError("Select a valid CSV generation run.")
+    csv_root = BOOKRAG_CSV_STAGE_DIR_DEFAULT.resolve()
+    run_dir = (csv_root / normalized_run_id).resolve()
+    if run_dir.parent != csv_root:
+        raise RuntimeError("CSV generation run is outside the CSV stage directory.")
+    manifest_path = run_dir / BOOKRAG_CSV_MANIFEST_FILENAME
+    if not manifest_path.is_file():
+        raise RuntimeError(f"CSV generation manifest was not found: {normalized_run_id}")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as ex:
+        raise RuntimeError(f"Invalid CSV generation manifest: {manifest_path}: {ex}") from ex
+    if not isinstance(manifest, dict):
+        raise RuntimeError(f"Invalid CSV generation manifest object: {manifest_path}")
+    if manifest.get("artifact_type") != "bookrag_csv_run":
+        raise RuntimeError(f"Unsupported CSV generation manifest type: {manifest_path}")
+    if _to_int(manifest.get("schema_version"), default=0) != BOOKRAG_CSV_MANIFEST_SCHEMA_VERSION:
+        raise RuntimeError(f"Unsupported CSV generation manifest schema version: {manifest_path}")
+    if str(manifest.get("csv_run_id") or "") != normalized_run_id:
+        raise RuntimeError(f"CSV generation manifest run ID does not match its directory: {manifest_path}")
+    return manifest_path, manifest
+
+
+def list_bookrag_csv_runs(*, include_incomplete: bool = False) -> list[dict[str, Any]]:
+    """List locally stored CSV generation manifests available for database loading."""
+    root = BOOKRAG_CSV_STAGE_DIR_DEFAULT
+    if not root.exists():
+        return []
+    runs: list[dict[str, Any]] = []
+    for manifest_path in root.glob(f"*/{BOOKRAG_CSV_MANIFEST_FILENAME}"):
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(manifest, dict):
+            continue
+        if manifest.get("complete_table_contract") != BOOKRAG_COMPLETE_TABLE_CONTRACT:
+            continue
+        status = str(manifest.get("status") or "")
+        if not include_incomplete and status != "ready":
+            continue
+        runs.append(
+            {
+                "csv_run_id": str(manifest.get("csv_run_id") or manifest_path.parent.name),
+                "created_at": str(manifest.get("created_at") or ""),
+                "vector_store_name": str(manifest.get("vector_store_name") or ""),
+                "target_database": str(manifest.get("target_database") or ""),
+                "file_count": _to_int(manifest.get("file_count"), default=0),
+                "csv_file_count": _to_int(manifest.get("csv_file_count"), default=0),
+                "status": status,
+                "load_status": str(manifest.get("load_status") or "not_started"),
+                "vector_store_status": str(manifest.get("vector_store_status") or "not_started"),
+                "manifest_path": str(manifest_path),
+            }
+        )
+    runs.sort(key=lambda item: (item["created_at"], item["csv_run_id"]), reverse=True)
+    return runs
+
+
+def _find_failed_bookrag_csv_runs_for_target(
+    *,
+    vector_store_name: str,
+    target_database: str,
+) -> list[str]:
+    """Identify failed local runs whose partial tables are superseded by a new run."""
+    root = BOOKRAG_CSV_STAGE_DIR_DEFAULT
+    if not root.exists():
+        return []
+    run_ids: list[str] = []
+    for manifest_path in root.glob(f"*/{BOOKRAG_CSV_MANIFEST_FILENAME}"):
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(manifest, dict):
+            continue
+        if str(manifest.get("load_status") or "") != "failed":
+            continue
+        if str(manifest.get("vector_store_status") or "not_started") in {"creating", "ready"}:
+            continue
+        if str(manifest.get("vector_store_name") or "").strip() != vector_store_name:
+            continue
+        if str(manifest.get("target_database") or "").strip().lower() != target_database.lower():
+            continue
+        run_id = str(manifest.get("csv_run_id") or manifest_path.parent.name).strip()
+        if run_id:
+            run_ids.append(run_id)
+    return sorted(set(run_ids))
 
 
 def _write_unstructured_debug_file(
@@ -1803,6 +1892,7 @@ def run_bookrag_json_to_csv(
     parse_run_id: str,
     create_values: dict[str, str],
     vector_store_name: str = "",
+    target_database: str = "",
 ) -> dict[str, Any]:
     """Regenerate per-document/per-table CSV files from a reusable raw JSON parsing run."""
     parse_manifest_path, parse_manifest = _resolve_bookrag_parse_manifest(parse_run_id)
@@ -1814,14 +1904,25 @@ def run_bookrag_json_to_csv(
     if any(not isinstance(item, dict) or item.get("status") != "success" for item in documents):
         raise RuntimeError("CSV generation requires every JSON document in the parsing run to be successful.")
 
-    effective_vector_store_name = (
-        str(vector_store_name or "").strip()
-        or str(parse_manifest.get("vector_store_name") or "").strip()
-        or "bookrag"
+    effective_vector_store_name = str(vector_store_name or "").strip()
+    if not effective_vector_store_name:
+        raise RuntimeError("Target Vector Store Name is required before generating CSV files.")
+    effective_target_database = _sanitize_teradata_identifier(
+        str(target_database or "").strip(), fallback="", allow_empty=True
     )
+    if not effective_target_database:
+        raise RuntimeError("Target Database is required before generating CSV files.")
     table_targets = build_bookrag_table_targets(effective_vector_store_name)
+    qualified_table_targets = {
+        table_key: f"{effective_target_database}.{table_name}"
+        for table_key, table_name in table_targets.items()
+    }
     table_generation = _resolve_bookrag_table_generation_flags(create_values)
     selected_entity_tables = any(table_generation[key] for key in BOOKRAG_ENTITY_TABLE_KEYS)
+    supersedes_failed_csv_run_ids = _find_failed_bookrag_csv_runs_for_target(
+        vector_store_name=effective_vector_store_name,
+        target_database=effective_target_database,
+    )
     processing_profile = str(parse_manifest.get("processing_profile") or "")
     ocr_languages = [str(value) for value in (parse_manifest.get("ocr_languages") or [])]
     parse_run_dir = parse_manifest_path.parent.resolve()
@@ -1843,8 +1944,16 @@ def run_bookrag_json_to_csv(
         "status": "running",
         "created_at": _now_ts(),
         "vector_store_name": effective_vector_store_name,
+        "target_database": effective_target_database,
         "transform_version": BOOKRAG_TRANSFORM_VERSION,
+        "complete_table_contract": BOOKRAG_COMPLETE_TABLE_CONTRACT,
         "table_generation": table_generation,
+        "table_targets": table_targets,
+        "qualified_table_targets": qualified_table_targets,
+        "load_status": "not_started",
+        "vector_store_status": "not_started",
+        "supersedes_failed_csv_run_ids": supersedes_failed_csv_run_ids,
+        "run_csv_files": [],
         "documents": [],
     }
     _write_json_atomic(csv_manifest_path, running_manifest)
@@ -1897,10 +2006,11 @@ def run_bookrag_json_to_csv(
             "entity_relations": table_rows_by_name["entity_relations"],
         }
         safe_stem = re.sub(r"[^0-9A-Za-z._-]", "_", Path(filename).stem).strip("._") or "document"
+        safe_stem = re.sub(r"-{2,}", "_", safe_stem)
         file_csv_stage_dir = csv_stage_dir / f"{safe_stem}_{doc_id}"
         csv_files: list[dict[str, Any]] = []
         for table_key, rows in table_rows.items():
-            if not table_generation[table_key] or not rows:
+            if not table_generation[table_key]:
                 continue
             csv_path = prepare_bookrag_table_csv(
                 table_key=table_key,
@@ -1952,8 +2062,48 @@ def run_bookrag_json_to_csv(
     results.sort(key=lambda value: int(value["source_index"]))
     success_count = sum(1 for item in results if item["status"] == "success")
     failure_count = len(results) - success_count
-    csv_file_count = sum(len(item["csv_files"]) for item in results)
-    final_status = "ready" if failure_count == 0 else "failed"
+    run_csv_files: list[dict[str, Any]] = []
+    run_error = ""
+    document_relation_count = 0
+    if failure_count == 0:
+        try:
+            relation_documents = [
+                {"doc_id": item["doc_id"], "filename": item["filename"]}
+                for item in results
+            ]
+            relation_rows = suggest_document_relations(relation_documents)
+            relation_timestamp = _now_ts()
+            relation_rows = [
+                {
+                    **row,
+                    "created_by": None,
+                    "created_at": relation_timestamp,
+                    "updated_by": None,
+                    "updated_at": relation_timestamp,
+                }
+                for row in relation_rows
+            ]
+            relation_csv_path = prepare_bookrag_table_csv(
+                table_key="document_relations",
+                table_targets=table_targets,
+                rows=relation_rows,
+                csv_stage_dir=csv_stage_dir / "_run",
+            )
+            if not relation_csv_path:
+                raise RuntimeError("Run-level document relation CSV generation produced no file.")
+            document_relation_count = len(relation_rows)
+            run_csv_files.append(
+                {
+                    "table_key": "document_relations",
+                    "row_count": document_relation_count,
+                    "csv_file": str(Path(relation_csv_path).relative_to(csv_stage_dir)),
+                    "csv_sha256": _file_sha256(Path(relation_csv_path)),
+                }
+            )
+        except Exception as ex:
+            run_error = _sanitize_teradata_text(str(ex))[:2000]
+    csv_file_count = sum(len(item["csv_files"]) for item in results) + len(run_csv_files)
+    final_status = "ready" if failure_count == 0 and not run_error else "failed"
     final_manifest = {
         **running_manifest,
         "status": final_status,
@@ -1962,6 +2112,9 @@ def run_bookrag_json_to_csv(
         "success_count": success_count,
         "failure_count": failure_count,
         "csv_file_count": csv_file_count,
+        "document_relation_count": document_relation_count,
+        "run_csv_files": run_csv_files,
+        "run_error": run_error,
         "documents": results,
     }
     _write_json_atomic(csv_manifest_path, final_manifest)
@@ -1971,16 +2124,369 @@ def run_bookrag_json_to_csv(
         "csv_run_id": csv_run_id,
         "manifest_path": str(csv_manifest_path),
         "csv_stage_dir": str(csv_stage_dir),
+        "vector_store_name": effective_vector_store_name,
+        "target_database": effective_target_database,
+        "table_targets": table_targets,
+        "qualified_table_targets": qualified_table_targets,
         "file_count": len(results),
         "success_count": success_count,
         "failure_count": failure_count,
         "csv_files_created": csv_file_count,
+        "document_relation_count": document_relation_count,
+        "run_csv_files": run_csv_files,
+        "run_error": run_error,
         "workers": workers,
         "elapsed_seconds": round(max(0.0, time.perf_counter() - started_at), 6),
         "transform_version": BOOKRAG_TRANSFORM_VERSION,
         "database_writes": 0,
         "files": results,
     }
+
+
+def _cleanup_failed_bookrag_csv_load_tables(
+    *,
+    target_database: str,
+    table_targets: dict[str, str],
+    table_generation: dict[str, Any],
+    execute_sql_fn: ExecuteSqlFn | None,
+) -> list[str]:
+    """Drop only the mapped tables owned by a failed CSV load before a full retry."""
+    if execute_sql_fn is None:
+        raise RuntimeError("Teradata SQL execution is unavailable for failed-load cleanup.")
+    dropped: list[str] = []
+    for table_key in reversed(BOOKRAG_TABLE_TOGGLE_ORDER):
+        if not table_generation.get(table_key):
+            continue
+        table_name = table_targets.get(table_key)
+        if not table_name:
+            continue
+        qualified_table = _qualified_table_sql(target_database, table_name)
+        if not _teradata_table_exists(qualified_table, execute_sql_fn=execute_sql_fn):
+            continue
+        execute_sql_fn(f"DROP TABLE {qualified_table}")
+        dropped.append(f"{target_database}.{table_name}")
+    return dropped
+
+
+def run_bookrag_csv_load(
+    *,
+    csv_run_id: str,
+    execute_sql_fn: ExecuteSqlFn | None,
+) -> dict[str, Any]:
+    """Load every verified CSV in one ready generation run, without creating a Vector Store."""
+    if execute_sql_fn is None:
+        raise RuntimeError("Teradata SQL execution is unavailable.")
+    manifest_path, manifest = _resolve_bookrag_csv_manifest(csv_run_id)
+    if str(manifest.get("status") or "") != "ready":
+        raise RuntimeError("Database loading requires a CSV generation run in ready status.")
+    if manifest.get("complete_table_contract") != BOOKRAG_COMPLETE_TABLE_CONTRACT:
+        raise RuntimeError("Regenerate CSV: this run does not contain the mandatory Graph and bdrel contract.")
+    load_status = str(manifest.get("load_status") or "not_started")
+    if load_status == "ready":
+        stored_summary = manifest.get("load_summary")
+        if not isinstance(stored_summary, dict):
+            raise RuntimeError("CSV manifest says loading is ready but contains no load summary.")
+        return {**stored_summary, "already_loaded": True}
+    if load_status == "loading":
+        raise RuntimeError("This CSV generation run is already being loaded.")
+    recover_failed_load = load_status == "failed"
+
+    vector_store_name = str(manifest.get("vector_store_name") or "").strip()
+    target_database = _sanitize_teradata_identifier(
+        str(manifest.get("target_database") or "").strip(), fallback="", allow_empty=True
+    )
+    if not vector_store_name or not target_database:
+        raise RuntimeError("CSV manifest is missing its target Vector Store name or target database.")
+    expected_table_targets = build_bookrag_table_targets(vector_store_name)
+    manifest_table_targets = manifest.get("table_targets")
+    if manifest_table_targets != expected_table_targets:
+        raise RuntimeError("CSV manifest table mapping does not match its target Vector Store name.")
+    table_generation = manifest.get("table_generation")
+    if not isinstance(table_generation, dict):
+        raise RuntimeError("CSV manifest contains no table generation configuration.")
+    for mandatory_table in (
+        "documents",
+        "blocks",
+        "nodes",
+        "document_relations",
+        "entities",
+        "entity_links",
+        "entity_relations",
+    ):
+        if not table_generation.get(mandatory_table):
+            raise RuntimeError(f"CSV manifest disables mandatory table: {mandatory_table}")
+    documents = manifest.get("documents")
+    if not isinstance(documents, list) or not documents:
+        raise RuntimeError("CSV manifest contains no document outputs.")
+
+    csv_run_dir = manifest_path.parent.resolve()
+    load_tasks: list[dict[str, Any]] = []
+    expected_row_counts: dict[str, int] = {}
+    seen_csv_files: set[str] = set()
+
+    def _register_csv_item(csv_item: dict[str, Any], *, task_id: str) -> str:
+        if not isinstance(csv_item, dict):
+            raise RuntimeError("CSV manifest contains an invalid CSV output entry.")
+        table_key = str(csv_item.get("table_key") or "").strip()
+        relative_csv_file = str(csv_item.get("csv_file") or "").strip()
+        row_count = _to_int(csv_item.get("row_count"), default=0, minimum=0)
+        if table_key not in expected_table_targets or not table_generation.get(table_key):
+            raise RuntimeError(f"CSV manifest contains an unexpected table output: {table_key}")
+        csv_path = (csv_run_dir / relative_csv_file).resolve()
+        if csv_run_dir not in csv_path.parents or not csv_path.is_file():
+            raise RuntimeError(f"CSV file is outside its generation run or missing: {relative_csv_file}")
+        normalized_csv_path = str(csv_path)
+        if normalized_csv_path in seen_csv_files:
+            raise RuntimeError(f"CSV manifest contains a duplicate file: {relative_csv_file}")
+        seen_csv_files.add(normalized_csv_path)
+        expected_sha256 = str(csv_item.get("csv_sha256") or "").strip()
+        if not expected_sha256 or _file_sha256(csv_path) != expected_sha256:
+            raise RuntimeError(f"CSV checksum mismatch: {relative_csv_file}")
+        validate_prepared_bookrag_table_csv(table_key=table_key, csv_path=normalized_csv_path)
+        expected_row_counts[table_key] = expected_row_counts.get(table_key, 0) + row_count
+        if row_count > 0:
+            load_tasks.append(
+                {
+                    "task_id": task_id,
+                    "table_key": table_key,
+                    "csv_path": normalized_csv_path,
+                    "row_count": row_count,
+                }
+            )
+        return table_key
+
+    required_document_tables = {
+        "documents",
+        "blocks",
+        "nodes",
+        "entities",
+        "entity_links",
+        "entity_relations",
+    }
+    if table_generation.get("raw"):
+        required_document_tables.add("raw")
+    for document in documents:
+        if not isinstance(document, dict) or document.get("status") != "success":
+            raise RuntimeError("CSV loading requires every document output to be successful.")
+        csv_files = document.get("csv_files")
+        if not isinstance(csv_files, list):
+            raise RuntimeError(f"CSV output list is missing for document {document.get('filename') or '?'}.")
+        document_table_keys: set[str] = set()
+        for csv_item in csv_files:
+            task_table_key = csv_item.get("table_key", "?") if isinstance(csv_item, dict) else "?"
+            table_key = _register_csv_item(
+                csv_item,
+                task_id=f"{document.get('source_index', 0)}:{task_table_key}",
+            )
+            if table_key in document_table_keys:
+                raise RuntimeError(
+                    f"CSV manifest contains duplicate table output for {document.get('filename') or '?'}: {table_key}"
+                )
+            document_table_keys.add(table_key)
+        missing_document_tables = sorted(required_document_tables - document_table_keys)
+        if missing_document_tables:
+            raise RuntimeError(
+                f"CSV output is incomplete for {document.get('filename') or '?'}: "
+                f"missing {', '.join(missing_document_tables)}"
+            )
+
+    run_csv_files = manifest.get("run_csv_files")
+    if not isinstance(run_csv_files, list):
+        raise RuntimeError("CSV manifest contains no run-level output list.")
+    run_table_keys: set[str] = set()
+    for csv_item in run_csv_files:
+        task_table_key = csv_item.get("table_key", "?") if isinstance(csv_item, dict) else "?"
+        table_key = _register_csv_item(csv_item, task_id=f"run:{task_table_key}")
+        if table_key in run_table_keys:
+            raise RuntimeError(f"CSV manifest contains duplicate run-level table output: {table_key}")
+        run_table_keys.add(table_key)
+    if run_table_keys != {"document_relations"}:
+        raise RuntimeError("CSV manifest must contain exactly one run-level document_relations CSV.")
+    if not load_tasks:
+        raise RuntimeError("CSV manifest contains no loadable files.")
+    for required_table in ("documents", "blocks", "nodes"):
+        if expected_row_counts.get(required_table, 0) <= 0:
+            raise RuntimeError(f"CSV manifest contains no rows for required table: {required_table}")
+
+    warnings: list[str] = []
+    superseded_failed_run_ids = [
+        str(value).strip()
+        for value in (manifest.get("supersedes_failed_csv_run_ids") or [])
+        if str(value).strip()
+    ]
+    if recover_failed_load or superseded_failed_run_ids:
+        vector_store_status = str(manifest.get("vector_store_status") or "not_started")
+        if vector_store_status in {"creating", "ready"}:
+            raise RuntimeError(
+                f"Cannot clean a failed CSV load while Vector Store status is {vector_store_status!r}."
+            )
+        dropped_tables = _cleanup_failed_bookrag_csv_load_tables(
+            target_database=target_database,
+            table_targets=expected_table_targets,
+            table_generation=table_generation,
+            execute_sql_fn=execute_sql_fn,
+        )
+        manifest["load_recovered_at"] = _now_ts()
+        manifest["load_recovered_tables"] = dropped_tables
+        if recover_failed_load:
+            retry_count = _to_int(manifest.get("load_retry_count"), default=0, minimum=0) + 1
+            manifest["load_retry_count"] = retry_count
+            warnings.append(
+                f"Cleaned {len(dropped_tables)} partial target table(s) from failed load before full retry #{retry_count}."
+            )
+        else:
+            manifest["superseded_failed_csv_run_ids_cleaned"] = superseded_failed_run_ids
+            manifest["supersedes_failed_csv_run_ids"] = []
+            warnings.append(
+                f"Cleaned {len(dropped_tables)} partial target table(s) left by "
+                f"{len(superseded_failed_run_ids)} superseded failed CSV run(s)."
+            )
+
+    manifest["load_status"] = "loading"
+    manifest["load_started_at"] = _now_ts()
+    manifest["load_error"] = ""
+    _write_json_atomic(manifest_path, manifest)
+    started_at = time.perf_counter()
+    prepare_functions = {
+        "documents": prepare_bookrag_document_table,
+        "raw": prepare_bookrag_raw_table,
+        "blocks": prepare_bookrag_block_table,
+        "nodes": prepare_bookrag_node_table,
+        "document_relations": prepare_bookrag_document_relation_table,
+        "entities": prepare_bookrag_entity_table,
+        "entity_links": prepare_bookrag_entity_link_table,
+        "entity_relations": prepare_bookrag_entity_relation_table,
+    }
+    try:
+        for table_key in BOOKRAG_TABLE_TOGGLE_ORDER:
+            if not table_generation.get(table_key):
+                continue
+            prepare_fn = prepare_functions[table_key]
+            warnings.extend(
+                prepare_fn(
+                    schema_name=target_database,
+                    table_targets=expected_table_targets,
+                    execute_sql_fn=execute_sql_fn,
+                )
+            )
+
+        workers = _resolve_bookrag_csv_load_workers(len(load_tasks))
+
+        def _load_one(task: dict[str, Any]) -> dict[str, Any]:
+            task_started = time.perf_counter()
+            stats: dict[str, Any] = {}
+            inserted = load_prepared_bookrag_table_csv(
+                schema_name=target_database,
+                table_key=task["table_key"],
+                table_targets=expected_table_targets,
+                csv_path=task["csv_path"],
+                row_count=task["row_count"],
+                stats=stats,
+            )
+            return {
+                **task,
+                "inserted_rows": inserted,
+                "elapsed_seconds": round(max(0.0, time.perf_counter() - task_started), 6),
+                "stats": stats,
+            }
+
+        load_results: list[dict[str, Any]] = []
+        failures: list[str] = []
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="bookrag-manifest-csv-load") as executor:
+            future_map = {executor.submit(_load_one, task): task for task in load_tasks}
+            for future in as_completed(future_map):
+                task = future_map[future]
+                try:
+                    load_results.append(future.result())
+                except Exception as ex:
+                    failures.append(
+                        f"task={task['task_id']}, table={task['table_key']}, csv={task['csv_path']}: {ex}"
+                    )
+        if failures:
+            raise RuntimeError("Parallel CSV loading failed: " + " | ".join(failures))
+
+        persisted_row_counts: dict[str, int] = {}
+        for table_key, expected_count in expected_row_counts.items():
+            actual_count = _count_teradata_rows(
+                schema_name=target_database,
+                table_name=expected_table_targets[table_key],
+                execute_sql_fn=execute_sql_fn,
+            )
+            if actual_count is None:
+                raise RuntimeError(f"Could not verify loaded row count for table: {table_key}")
+            if actual_count != expected_count:
+                raise RuntimeError(
+                    f"Loaded row count mismatch for {table_key}: expected={expected_count}, actual={actual_count}"
+                )
+            persisted_row_counts[table_key] = actual_count
+
+        summary = {
+            "status": "ready",
+            "csv_run_id": csv_run_id,
+            "vector_store_name": vector_store_name,
+            "target_database": target_database,
+            "table_targets": expected_table_targets,
+            "qualified_table_targets": {
+                key: f"{target_database}.{value}" for key, value in expected_table_targets.items()
+            },
+            "task_count": len(load_tasks),
+            "csv_file_count": len(seen_csv_files),
+            "empty_csv_count": len(seen_csv_files) - len(load_tasks),
+            "workers": workers,
+            "inserted_rows": sum(int(result["inserted_rows"]) for result in load_results),
+            "expected_row_counts": expected_row_counts,
+            "persisted_row_counts": persisted_row_counts,
+            "node_table": f"{target_database}.{expected_table_targets['nodes']}",
+            "elapsed_seconds": round(max(0.0, time.perf_counter() - started_at), 6),
+            "warnings": warnings,
+            "already_loaded": False,
+        }
+        manifest["load_status"] = "ready"
+        manifest["load_completed_at"] = _now_ts()
+        manifest["load_summary"] = summary
+        _write_json_atomic(manifest_path, manifest)
+        return summary
+    except Exception as ex:
+        manifest["load_status"] = "failed"
+        manifest["load_completed_at"] = _now_ts()
+        manifest["load_error"] = _sanitize_teradata_text(str(ex))[:4000]
+        _write_json_atomic(manifest_path, manifest)
+        raise
+
+
+def get_ready_bookrag_csv_load_summary(*, csv_run_id: str) -> dict[str, Any]:
+    """Read a verified table-load result without loading CSV or creating a Vector Store."""
+    _, manifest = _resolve_bookrag_csv_manifest(csv_run_id)
+    if str(manifest.get("status") or "") != "ready":
+        raise RuntimeError("Vector Store creation requires a CSV generation run in ready status.")
+    if str(manifest.get("load_status") or "not_started") != "ready":
+        raise RuntimeError("Load the CSV run into database tables before creating the Vector Store.")
+    summary = manifest.get("load_summary")
+    if not isinstance(summary, dict):
+        raise RuntimeError("CSV manifest says table loading is ready but contains no load summary.")
+    required = ("vector_store_name", "target_database", "node_table")
+    missing = [key for key in required if not str(summary.get(key) or "").strip()]
+    if missing:
+        raise RuntimeError(f"CSV table-load summary is missing required fields: {', '.join(missing)}")
+    return {**summary, "already_loaded": True}
+
+
+def update_bookrag_csv_vector_store_status(
+    *,
+    csv_run_id: str,
+    status: str,
+    error: str = "",
+    create_payload: dict[str, Any] | None = None,
+) -> None:
+    if status not in {"creating", "ready", "failed"}:
+        raise RuntimeError(f"Unsupported Vector Store manifest status: {status}")
+    manifest_path, manifest = _resolve_bookrag_csv_manifest(csv_run_id)
+    manifest["vector_store_status"] = status
+    manifest["vector_store_updated_at"] = _now_ts()
+    manifest["vector_store_error"] = _sanitize_teradata_text(error)[:4000]
+    if create_payload is not None:
+        manifest["vector_store_create_payload"] = _json_safe_value(create_payload)
+    _write_json_atomic(manifest_path, manifest)
 
 
 def _apply_bookrag_tree_pipeline(
@@ -2299,6 +2805,7 @@ def _apply_bookrag_tree_pipeline(
             return result
 
         safe_stem = re.sub(r"[^0-9A-Za-z._-]", "_", src.stem).strip("._") or "document"
+        safe_stem = re.sub(r"-{2,}", "_", safe_stem)
         file_csv_stage_dir = csv_stage_dir / f"{safe_stem}_{doc_id}"
         result["file_csv_stage_dir"] = file_csv_stage_dir
         table_rows = {
@@ -2312,7 +2819,7 @@ def _apply_bookrag_tree_pipeline(
         }
         csv_started = time.perf_counter()
         for table_key, rows in table_rows.items():
-            if not table_generation[table_key] or not rows:
+            if not table_generation[table_key]:
                 continue
             task_stats: dict[str, Any] = {}
             csv_path = prepare_bookrag_table_csv(
@@ -2351,7 +2858,12 @@ def _apply_bookrag_tree_pipeline(
         raise RuntimeError("BookRAG parallel JSON-to-CSV processing failed: " + " | ".join(transform_failures))
     transformed_files.sort(key=lambda item: int(item["source_index"]))
 
-    csv_tasks = [task for item in transformed_files for task in item["csv_tasks"]]
+    csv_tasks = [
+        task
+        for item in transformed_files
+        for task in item["csv_tasks"]
+        if task["rows"]
+    ]
     csv_load_workers = _resolve_bookrag_csv_load_workers(len(csv_tasks))
     persist_functions = {
         "documents": (persist_bookrag_documents, "rows"),
@@ -2423,7 +2935,11 @@ def _apply_bookrag_tree_pipeline(
         entities = item["entities"]
         entity_links = item["entity_links"]
         entity_relations = item["entity_relations"]
-        item_load_results = [load_results[task["task_id"]] for task in item["csv_tasks"]]
+        item_load_results = [
+            load_results[task["task_id"]]
+            for task in item["csv_tasks"]
+            if task["task_id"] in load_results
+        ]
         inserted_for_file = sum(int(result["inserted"]) for result in item_load_results)
         persist_seconds = sum(float(result["persist_seconds"]) for result in item_load_results)
         inserted_rows += inserted_for_file

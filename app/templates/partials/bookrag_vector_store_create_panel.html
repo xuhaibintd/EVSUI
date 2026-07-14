@@ -1,0 +1,48 @@
+<div
+  id="bookrag-vector-store-create-panel"
+  class="bookrag-parse-panel bookrag-csv-panel"
+  {% if bookrag_vector_create_panel_oob %}hx-swap-oob="outerHTML"{% endif %}
+>
+  <div>
+    <strong>Create Vector Store</strong>
+    <p>Create the Vector Store from bnode only after all CSV tables have been loaded and verified.</p>
+  </div>
+  <div class="bookrag-csv-actions bookrag-csv-load-actions">
+    <label>
+      <span>Loaded table run</span>
+      <select name="bookrag_vector_create_csv_run_id" data-bookrag-vector-create-run-select>
+        {% if bookrag_loaded_csv_runs %}
+          {% for run in bookrag_loaded_csv_runs %}
+          <option
+            value="{{ run.csv_run_id }}"
+            {% if bookrag_selected_csv_run_id == run.csv_run_id %}selected{% endif %}
+          >
+            {{ run.vector_store_name }} · {{ run.target_database }} · tables ready
+          </option>
+          {% endfor %}
+        {% else %}
+          <option value="">No loaded table run</option>
+        {% endif %}
+      </select>
+    </label>
+    <button
+      type="button"
+      class="ghost progress-btn bookrag-parse-btn"
+      data-progress-button
+      data-progress-show-seconds
+      data-bookrag-vector-create-button
+      hx-post="/ui/create/create-vector-store-from-csv"
+      hx-include="closest form"
+      hx-target="#bookrag-vector-store-create-result"
+      hx-swap="innerHTML"
+      hx-disabled-elt="this"
+      {% if not evs.connected or not bookrag_loaded_csv_runs %}disabled{% endif %}
+    >
+      <span class="progress-btn-label">Create Vector Store</span>
+      <span class="progress-btn-loading">
+        <span class="progress-btn-spinner" aria-hidden="true"></span>
+        <span data-progress-loading-text>Creating...</span>
+      </span>
+    </button>
+  </div>
+</div>

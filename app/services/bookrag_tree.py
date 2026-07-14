@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import hashlib
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,47 @@ BOOKRAG_SECTION_PROFILE_DEFAULT = "jp"
 _IMAGE_CAPTION_MAX_LEN = 4000
 _IMAGE_CONTEXT_MAX_LEN = 32000
 _IMAGE_CONTEXT_NEIGHBOR_WINDOW = 2
+
+
+class _VisibleHTMLTextParser(HTMLParser):
+    """Collect user-visible text while ignoring markup-only containers."""
+
+    _IGNORED_TAGS = {"script", "style", "template"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self._ignored_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        _ = attrs
+        if tag.lower() in self._IGNORED_TAGS:
+            self._ignored_depth += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() in self._IGNORED_TAGS and self._ignored_depth:
+            self._ignored_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if not self._ignored_depth and data:
+            self.parts.append(data)
+
+
+def _html_has_visible_text(value: str | None) -> bool:
+    html_text = _as_text(value, max_len=32000)
+    if not html_text:
+        return False
+    parser = _VisibleHTMLTextParser()
+    try:
+        parser.feed(html_text)
+        parser.close()
+    except Exception:
+        # Keep malformed HTML when it still contains text outside tags.
+        visible_text = re.sub(r"<[^>]*>", " ", html_text)
+    else:
+        visible_text = " ".join(parser.parts)
+    visible_text = visible_text.replace("\u200b", "").replace("\ufeff", "")
+    return bool(visible_text.strip())
 
 
 def _as_text(value: Any, *, max_len: int | None = None) -> str | None:
@@ -633,7 +675,11 @@ def elements_to_bookrag_blocks(
         if _is_header_footer_type(element_type) and not _is_title_like_type(element_type) and heading_level is None:
             continue
         text = image_caption if block_type == "image" and image_caption else raw_text
-        if not text and not text_as_html and block_type != "image":
+        # VLM output can contain empty layout containers such as
+        # ``<section class="Section" />``. They belong in raw JSON/braw for
+        # auditability, but have no searchable content and must not become
+        # bblk/bnode rows (their upstream element ids are not always unique).
+        if not text and not _html_has_visible_text(text_as_html) and block_type != "image":
             continue
         drafts.append(
             {

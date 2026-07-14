@@ -1,0 +1,26 @@
+{% if bookrag_csv_load_error %}
+<div class="bookrag-parse-result bookrag-parse-result-error" role="status">
+  <strong>CSV table loading failed.</strong>
+  <p>{{ bookrag_csv_load_error }}</p>
+</div>
+{% elif bookrag_csv_load %}
+<div class="bookrag-parse-result bookrag-parse-result-ok" role="status">
+  <div class="bookrag-parse-result-head">
+    <strong>Database tables are ready.</strong>
+    <span>{{ bookrag_csv_load.target_database }}</span>
+  </div>
+  <p>
+    Loaded {{ bookrag_csv_load.inserted_rows }} rows from {{ bookrag_csv_load.task_count }} CSV files ·
+    Workers: {{ bookrag_csv_load.workers }} ·
+    Load elapsed: {{ '%.2f'|format(bookrag_csv_load.elapsed_seconds / 60) }} min
+  </p>
+  <p>Node source: <strong>{{ bookrag_csv_load.node_table }}</strong></p>
+  <p>Table loading is complete. Continue with <strong>Create Vector Store</strong> below.</p>
+  {% if bookrag_csv_load.warnings %}
+  <ul class="bookrag-parse-warning-list">
+    {% for warning in bookrag_csv_load.warnings %}<li>{{ warning }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+</div>
+{% include "partials/bookrag_vector_store_create_panel.html" %}
+{% endif %}

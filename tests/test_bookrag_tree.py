@@ -6,6 +6,98 @@ from app.services.bookrag_tree import _block_kind, build_bookrag_nodes, elements
 
 
 class BookragTreeTests(unittest.TestCase):
+    def test_empty_layout_html_is_filtered_without_dropping_children(self) -> None:
+        raw_elements = [
+            {
+                "type": "UncategorizedText",
+                "element_id": "duplicate-layout-id",
+                "text": "",
+                "metadata": {
+                    "page_number": 3,
+                    "text_as_html": '<section class="Section" />',
+                },
+            },
+            {
+                "type": "NarrativeText",
+                "element_id": "child-1",
+                "text": "First child",
+                "metadata": {
+                    "page_number": 3,
+                    "parent_id": "duplicate-layout-id",
+                },
+            },
+            {
+                "type": "UncategorizedText",
+                "element_id": "duplicate-layout-id",
+                "text": "",
+                "metadata": {
+                    "page_number": 31,
+                    "text_as_html": '<div class="Page" data-page-number="31" />',
+                },
+            },
+            {
+                "type": "NarrativeText",
+                "element_id": "child-2",
+                "text": "Second child",
+                "metadata": {
+                    "page_number": 31,
+                    "parent_id": "duplicate-layout-id",
+                },
+            },
+            {
+                "type": "Table",
+                "element_id": "table-1",
+                "text": "",
+                "metadata": {
+                    "page_number": 31,
+                    "text_as_html": "<table><tr><td>Revenue</td><td>100</td></tr></table>",
+                },
+            },
+        ]
+
+        blocks = elements_to_bookrag_blocks(
+            doc_id="doc-1",
+            src=None,
+            content_type="application/pdf",
+            raw_elements=raw_elements,
+        )
+
+        self.assertEqual(
+            [block["element_id"] for block in blocks],
+            ["child-1", "child-2", "table-1"],
+        )
+        self.assertEqual(blocks[0]["parent_id"], "duplicate-layout-id")
+        self.assertEqual(blocks[1]["parent_id"], "duplicate-layout-id")
+        self.assertEqual(blocks[2]["text_as_html"], raw_elements[4]["metadata"]["text_as_html"])
+
+    def test_meaningful_duplicate_element_ids_are_not_silently_rewritten(self) -> None:
+        raw_elements = [
+            {
+                "type": "NarrativeText",
+                "element_id": "duplicate-content-id",
+                "text": "First meaningful block",
+                "metadata": {"page_number": 1},
+            },
+            {
+                "type": "NarrativeText",
+                "element_id": "duplicate-content-id",
+                "text": "Second meaningful block",
+                "metadata": {"page_number": 2},
+            },
+        ]
+
+        blocks = elements_to_bookrag_blocks(
+            doc_id="doc-1",
+            src=None,
+            content_type="application/pdf",
+            raw_elements=raw_elements,
+        )
+
+        self.assertEqual(
+            [block["element_id"] for block in blocks],
+            ["duplicate-content-id", "duplicate-content-id"],
+        )
+
     def test_node_ids_are_namespaced_by_document(self) -> None:
         blocks = [
             {

@@ -61,7 +61,7 @@ DOC_PIPELINE_UI_DEFAULTS = {
     "multi_format_bookrag_coordinates": "true",
     "multi_format_bookrag_extract_image_block_types": "auto",
     "multi_format_bookrag_generate_raw": "true",
-    "multi_format_bookrag_generate_graph": "false",
+    "multi_format_bookrag_generate_graph": "true",
     "multi_format_bookrag_run_embedding": "false",
 }
 

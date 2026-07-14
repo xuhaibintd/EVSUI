@@ -11,7 +11,7 @@
   </div>
   <p>
     Workers: {{ bookrag_document_parsing.workers }} ·
-    Elapsed: {{ '%.2f'|format(bookrag_document_parsing.elapsed_seconds) }}s ·
+    Elapsed: {{ '%.2f'|format(bookrag_document_parsing.elapsed_seconds / 60) }} min ·
     Output: reusable raw JSON
   </p>
   <p class="muted">Raw JSON directory: {{ bookrag_document_parsing.raw_stage_dir }}</p>
@@ -23,7 +23,7 @@
     {% for warning in bookrag_document_parsing.warnings %}<li>{{ warning }}</li>{% endfor %}
   </ul>
   {% endif %}
-  <div class="bookrag-parse-file-list">
+  <div class="bookrag-parse-file-list{% if bookrag_document_parsing.files|length > 10 %} is-scrollable{% endif %}">
     {% for file in bookrag_document_parsing.files %}
     <div class="bookrag-parse-file-row {% if file.status == 'failed' %}is-failed{% endif %}">
       <span class="bookrag-parse-file-status">{% if file.status == 'success' %}OK{% else %}FAILED{% endif %}</span>

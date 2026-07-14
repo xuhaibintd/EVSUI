@@ -47,7 +47,7 @@ class CreatePanelBookRAGToggleTests(unittest.TestCase):
 
         self.assertIn("Core (bdoc + bblk + bnode + bdrel)", source)
         self.assertIn("Audit (braw)", source)
-        self.assertIn("Graph (bent + belnk + brel)", source)
+        self.assertIn("Graph (bent + belnk + brel, required)", source)
         self.assertIn('name="multi_format_bookrag_generate_graph"', source)
         self.assertNotIn('name="multi_format_bookrag_generate_entities"', source)
         self.assertNotIn('name="multi_format_bookrag_generate_entity_links"', source)
@@ -69,7 +69,59 @@ class CreatePanelBookRAGToggleTests(unittest.TestCase):
         self.assertIn('data-bookrag-parse-button', source)
         self.assertIn('hx-post="/ui/create/generate-csv"', source)
         self.assertIn('name="bookrag_parse_run_id"', source)
+        self.assertIn('name="bookrag_csv_vector_store_name"', source)
+        self.assertIn('name="bookrag_csv_target_database"', source)
+        self.assertIn('bookrag-csv-generate-actions', source)
+        self.assertIn('partials/bookrag_csv_load_panel.html', source)
+        self.assertIn('partials/bookrag_vector_store_create_panel.html', source)
+        self.assertLess(source.index('partials/bookrag_csv_load_panel.html'), source.index('partials/bookrag_vector_store_create_panel.html'))
+        load_source = (TEMPLATES_DIR / "partials" / "bookrag_csv_load_panel.html").read_text(encoding="utf-8")
+        self.assertIn('bookrag-csv-load-actions', load_source)
+        self.assertIn('hx-post="/ui/create/load-csv-tables"', load_source)
+        self.assertIn('name="bookrag_csv_run_id"', load_source)
+        create_source = (TEMPLATES_DIR / "partials" / "bookrag_vector_store_create_panel.html").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('hx-post="/ui/create/create-vector-store-from-csv"', create_source)
+        self.assertIn('name="bookrag_vector_create_csv_run_id"', create_source)
         self.assertLess(source.index("Named Entity Recognition"), source.index("Document Parsing"))
+
+    def test_document_parsing_result_scrolls_only_after_ten_files_and_shows_total_minutes(self):
+        template = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR))).get_template(
+            "partials/bookrag_document_parsing_result.html"
+        )
+
+        def render(file_count):
+            files = [
+                {
+                    "status": "success",
+                    "filename": f"file-{index}.pdf",
+                    "element_count": 10,
+                    "elapsed_seconds": 3.5,
+                }
+                for index in range(file_count)
+            ]
+            return template.render(
+                bookrag_document_parsing_error="",
+                bookrag_document_parsing={
+                    "status": "ok",
+                    "success_count": file_count,
+                    "failure_count": 0,
+                    "file_count": file_count,
+                    "workers": 5,
+                    "elapsed_seconds": 120,
+                    "raw_stage_dir": "raw",
+                    "warnings": [],
+                    "files": files,
+                },
+            )
+
+        ten_files = render(10)
+        eleven_files = render(11)
+        self.assertIn("Elapsed: 2.00 min", ten_files)
+        self.assertIn('class="bookrag-parse-file-list"', ten_files)
+        self.assertNotIn("bookrag-parse-file-list is-scrollable", ten_files)
+        self.assertIn('class="bookrag-parse-file-list is-scrollable"', eleven_files)
 
 
 class DocumentParseRouteTests(unittest.IsolatedAsyncioTestCase):
@@ -125,6 +177,8 @@ class DocumentParseRouteTests(unittest.IsolatedAsyncioTestCase):
                 return {
                     "bookrag_parse_run_id": "old-run",
                     "bookrag_parse_run_id_current": "current-run",
+                    "bookrag_csv_vector_store_name": "demo_vs",
+                    "bookrag_csv_target_database": "demo_schema",
                     "multi_format_bookrag_generate_raw": "true",
                 }
 
@@ -136,6 +190,7 @@ class DocumentParseRouteTests(unittest.IsolatedAsyncioTestCase):
 
         app = SimpleNamespace(
             state=SimpleNamespace(
+                evs_state={"params": {"username": "fallback_schema"}},
                 templates=SimpleNamespace(TemplateResponse=template_response),
             )
         )
@@ -150,8 +205,185 @@ class DocumentParseRouteTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response["template"], "partials/bookrag_csv_generation_result.html")
         self.assertEqual(response["context"]["bookrag_csv_generation"], summary)
+        self.assertEqual(response["context"]["bookrag_load_csv_runs"], [summary])
+        self.assertTrue(response["context"]["bookrag_load_panel_oob"])
         self.assertEqual(csv_mock.call_args.kwargs["parse_run_id"], "current-run")
+        self.assertEqual(csv_mock.call_args.kwargs["vector_store_name"], "demo_vs")
+        self.assertEqual(csv_mock.call_args.kwargs["target_database"], "demo_schema")
         self.assertEqual(csv_mock.call_args.kwargs["create_values"]["multi_format_bookrag_generate_raw"], "true")
+
+    async def test_load_route_only_loads_and_verifies_database_tables(self):
+        class Request:
+            def __init__(self, app):
+                self.app = app
+
+            async def form(self):
+                return {
+                    "bookrag_csv_run_id": "csv-run-1",
+                }
+
+        captured_response = {}
+        events = []
+
+        def template_response(request, template_name, context):
+            captured_response.update(template=template_name, context=context)
+            return captured_response
+
+        app = SimpleNamespace(
+            state=SimpleNamespace(
+                evs_state={"connected": True, "params": {}, "last_success": "", "last_error": ""},
+                templates=SimpleNamespace(TemplateResponse=template_response),
+            )
+        )
+        load_summary = {
+            "status": "ready",
+            "csv_run_id": "csv-run-1",
+            "vector_store_name": "demo_vs",
+            "target_database": "demo_schema",
+            "node_table": "demo_schema.demo_vs_bk_bnode",
+            "inserted_rows": 20,
+            "task_count": 4,
+            "workers": 4,
+            "elapsed_seconds": 10,
+            "warnings": [],
+        }
+
+        def run_load(**kwargs):
+            events.append("load")
+            return load_summary
+
+        vector_store_mock = mock.Mock()
+        with mock.patch.object(web_router_module, "_is_logged_in", return_value=True), mock.patch.object(
+            web_router_module, "_activate_session_state"
+        ), mock.patch.object(
+            web_router_module, "list_bookrag_csv_runs", return_value=[{"csv_run_id": "csv-run-1", "vector_store_name": "demo_vs"}]
+        ), mock.patch.object(
+            web_router_module, "run_bookrag_csv_load", side_effect=run_load
+        ), mock.patch.object(
+            web_router_module, "VectorStore", vector_store_mock
+        ), mock.patch.object(
+            web_router_module, "execute_sql", mock.Mock()
+        ), mock.patch.object(
+            web_router_module, "_persist_active_session_state"
+        ):
+            response = await web_router_module.load_csv_tables(Request(app))
+
+        self.assertEqual(events, ["load"])
+        vector_store_mock.assert_not_called()
+        self.assertEqual(response["template"], "partials/bookrag_csv_load_result.html")
+        self.assertEqual(response["context"]["bookrag_csv_load"], load_summary)
+        self.assertEqual(response["context"]["bookrag_loaded_csv_runs"], [load_summary])
+
+    async def test_create_route_uses_loaded_tables_without_loading_csv_again(self):
+        class Request:
+            def __init__(self, app):
+                self.app = app
+
+            async def form(self):
+                return {
+                    "bookrag_vector_create_csv_run_id": "csv-run-1",
+                    "embeddings_model": "text-embedding-3-small",
+                    "search_algorithm": "VECTORDISTANCE",
+                }
+
+        captured_response = {}
+
+        def template_response(request, template_name, context):
+            captured_response.update(template=template_name, context=context)
+            return captured_response
+
+        class FakeVectorStore:
+            def __init__(self, name):
+                self.name = name
+                self.create_kwargs = None
+
+            def create(self, **kwargs):
+                self.create_kwargs = kwargs
+                return {"created": self.name}
+
+        app = SimpleNamespace(
+            state=SimpleNamespace(
+                evs_state={"connected": True, "params": {}, "last_success": "", "last_error": ""},
+                templates=SimpleNamespace(TemplateResponse=template_response),
+            )
+        )
+        load_summary = {
+            "status": "ready",
+            "csv_run_id": "csv-run-1",
+            "vector_store_name": "demo_vs",
+            "target_database": "demo_schema",
+            "node_table": "demo_schema.demo_vs_bk_bnode",
+            "warnings": [],
+        }
+        fake_store = FakeVectorStore("demo_vs")
+        load_mock = mock.Mock()
+        with mock.patch.object(web_router_module, "_is_logged_in", return_value=True), mock.patch.object(
+            web_router_module, "_activate_session_state"
+        ), mock.patch.object(
+            web_router_module, "get_ready_bookrag_csv_load_summary", return_value=load_summary
+        ), mock.patch.object(
+            web_router_module, "run_bookrag_csv_load", load_mock
+        ), mock.patch.object(
+            web_router_module, "_verify_vectorstore_exists", return_value=(False, "", "")
+        ), mock.patch.object(
+            web_router_module, "VectorStore", return_value=fake_store
+        ), mock.patch.object(
+            web_router_module, "_wait_for_vectorstore_ready", new=mock.AsyncMock(return_value=(True, "Ready", "", "Ready"))
+        ), mock.patch.object(
+            web_router_module, "update_bookrag_csv_vector_store_status"
+        ) as status_mock, mock.patch.object(
+            web_router_module, "_persist_active_session_state"
+        ):
+            response = await web_router_module.create_vector_store_from_csv(Request(app))
+
+        load_mock.assert_not_called()
+        self.assertEqual(response["template"], "partials/bookrag_vector_store_create_result.html")
+        self.assertEqual(response["context"]["bookrag_vector_store_create"]["vector_store_status"], "ready")
+        self.assertEqual(fake_store.create_kwargs["object_names"], "demo_schema.demo_vs_bk_bnode")
+        self.assertEqual(fake_store.create_kwargs["data_columns"], ["content"])
+        self.assertEqual(fake_store.create_kwargs["key_columns"], ["doc_id", "node_id"])
+        self.assertEqual(status_mock.call_args_list[-1].kwargs["status"], "ready")
+
+    async def test_load_route_never_creates_vector_store_when_csv_loading_fails(self):
+        class Request:
+            def __init__(self, app):
+                self.app = app
+
+            async def form(self):
+                return {
+                    "bookrag_csv_run_id": "csv-run-1",
+                    "embeddings_model": "text-embedding-3-small",
+                }
+
+        captured_response = {}
+
+        def template_response(request, template_name, context):
+            captured_response.update(template=template_name, context=context)
+            return captured_response
+
+        app = SimpleNamespace(
+            state=SimpleNamespace(
+                evs_state={"connected": True, "params": {}, "last_success": "", "last_error": ""},
+                templates=SimpleNamespace(TemplateResponse=template_response),
+            )
+        )
+        vector_store_mock = mock.Mock()
+        with mock.patch.object(web_router_module, "_is_logged_in", return_value=True), mock.patch.object(
+            web_router_module, "_activate_session_state"
+        ), mock.patch.object(
+            web_router_module, "list_bookrag_csv_runs", return_value=[{"csv_run_id": "csv-run-1", "vector_store_name": "demo_vs"}]
+        ), mock.patch.object(
+            web_router_module, "run_bookrag_csv_load", side_effect=RuntimeError("one CSV failed")
+        ), mock.patch.object(
+            web_router_module, "VectorStore", vector_store_mock
+        ), mock.patch.object(
+            web_router_module, "execute_sql", mock.Mock()
+        ):
+            response = await web_router_module.load_csv_tables(Request(app))
+
+        vector_store_mock.assert_not_called()
+        self.assertEqual(response["template"], "partials/bookrag_csv_load_result.html")
+        self.assertIn("one CSV failed", response["context"]["bookrag_csv_load_error"])
 
 
 class ConnectPanelTemplateTests(unittest.TestCase):

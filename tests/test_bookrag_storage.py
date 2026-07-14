@@ -21,6 +21,7 @@ from app.services.bookrag_storage import (
     build_bookrag_raw_rows,
     persist_bookrag_dataset,
     prepare_bookrag_table_csv,
+    validate_prepared_bookrag_table_csv,
 )
 
 
@@ -161,6 +162,51 @@ class BookragRawStorageTests(unittest.TestCase):
             stats=stats,
         )
 
+    def test_prepared_csv_header_is_rejected_before_database_loading(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            csv_path = Path(tmpdir) / "bad.csv"
+            csv_path.write_text("doc_id,unexpected\ndoc1,value\n", encoding="utf-8-sig")
+
+            with self.assertRaisesRegex(RuntimeError, "header mismatch"):
+                validate_prepared_bookrag_table_csv(
+                    table_key="documents",
+                    csv_path=str(csv_path),
+                )
+
+    def test_prepare_empty_table_csv_writes_header_only_file(self) -> None:
+        table_targets = {"entities": "demo_bent"}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            csv_path = prepare_bookrag_table_csv(
+                table_key="entities",
+                table_targets=table_targets,
+                rows=[],
+                csv_stage_dir=Path(tmpdir),
+            )
+            self.assertIsNotNone(csv_path)
+            lines = Path(csv_path).read_text(encoding="utf-8-sig").splitlines()
+            validate_prepared_bookrag_table_csv(table_key="entities", csv_path=str(csv_path))
+
+        self.assertEqual(len(lines), 1)
+        self.assertIn("entity_id", lines[0])
+
+    def test_prepare_empty_document_relation_csv_writes_header_only_file(self) -> None:
+        table_targets = {"document_relations": "demo_bdrel"}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            csv_path = prepare_bookrag_table_csv(
+                table_key="document_relations",
+                table_targets=table_targets,
+                rows=[],
+                csv_stage_dir=Path(tmpdir),
+            )
+            self.assertIsNotNone(csv_path)
+            lines = Path(csv_path).read_text(encoding="utf-8-sig").splitlines()
+            validate_prepared_bookrag_table_csv(
+                table_key="document_relations", csv_path=str(csv_path)
+            )
+
+        self.assertEqual(len(lines), 1)
+        self.assertIn("from_doc_id", lines[0])
+
     def test_native_csv_loader_uses_batch_for_small_csv(self) -> None:
         stats: dict[str, object] = {}
         cursor = mock.Mock()
@@ -187,6 +233,36 @@ class BookragRawStorageTests(unittest.TestCase):
         self.assertIn('INSERT INTO "demo_schema"."demo_bdoc" VALUES (?)', statement)
         cursor.close.assert_called_once()
         self.assertEqual(stats["native_csv_batch_calls"], 1)
+
+    def test_native_csv_loader_aliases_path_that_breaks_driver_escape_syntax(self) -> None:
+        stats: dict[str, object] = {}
+        cursor = mock.Mock()
+        connection = mock.Mock()
+        connection.connection.driver_connection.cursor.return_value = cursor
+        with tempfile.TemporaryDirectory() as tmpdir:
+            unsafe_dir = Path(tmpdir) / "report--MS"
+            unsafe_dir.mkdir()
+            csv_path = unsafe_dir / "rows.csv"
+            csv_path.write_text("doc_id\ndoc1\n", encoding="utf-8-sig")
+            with mock.patch.dict("os.environ", {"BOOKRAG_CSV_FASTLOAD_MIN_ROWS": "100000"}), mock.patch(
+                "teradataml.get_connection",
+                return_value=connection,
+            ):
+                inserted = _load_csv_to_teradata(
+                    "demo_schema",
+                    "demo_bdoc",
+                    str(csv_path),
+                    1,
+                    stats=stats,
+                )
+
+            statement = cursor.execute.call_args.args[0]
+            driver_path = statement.split("{fn teradata_read_csv(", 1)[1].split(")}", 1)[0]
+            self.assertNotIn("--MS", driver_path)
+            self.assertFalse(Path(driver_path).exists())
+
+        self.assertEqual(inserted, 1)
+        self.assertEqual(stats["native_csv_driver_path_aliases"], 1)
 
     def test_native_csv_loader_uses_fastloadcsv_for_large_csv(self) -> None:
         stats: dict[str, object] = {}

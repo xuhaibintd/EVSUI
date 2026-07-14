@@ -188,22 +188,181 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
                 first = multi_format.run_bookrag_json_to_csv(
                     parse_run_id=parse_run_id,
                     create_values=self._create_values(),
+                    vector_store_name="demo",
+                    target_database="demo_schema",
                 )
                 transform_barrier.reset()
                 second = multi_format.run_bookrag_json_to_csv(
                     parse_run_id=parse_run_id,
                     create_values=self._create_values(),
+                    vector_store_name="demo",
+                    target_database="demo_schema",
                 )
 
             parse_mock.assert_not_called()
             self.assertEqual(first["status"], "ready")
             self.assertEqual(first["success_count"], 2)
-            self.assertEqual(first["csv_files_created"], 8)
+            self.assertEqual(first["csv_files_created"], 15)
+            self.assertEqual(len(first["run_csv_files"]), 1)
+            self.assertEqual(first["run_csv_files"][0]["table_key"], "document_relations")
+            first_manifest = multi_format.json.loads(Path(first["manifest_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(first_manifest["complete_table_contract"], multi_format.BOOKRAG_COMPLETE_TABLE_CONTRACT)
+            self.assertTrue(all(len(item["csv_files"]) == 7 for item in first_manifest["documents"]))
             self.assertEqual(first["database_writes"], 0)
+            self.assertEqual(first["vector_store_name"], "demo")
+            self.assertEqual(first["target_database"], "demo_schema")
+            self.assertEqual(first["table_targets"], multi_format.build_bookrag_table_targets("demo"))
             self.assertNotEqual(first["csv_run_id"], second["csv_run_id"])
             self.assertNotEqual(first["csv_stage_dir"], second["csv_stage_dir"])
             self.assertTrue(Path(first["manifest_path"]).is_file())
             self.assertTrue(Path(second["manifest_path"]).is_file())
+
+    def test_ready_csv_manifest_loads_all_tables_concurrently_before_becoming_ready(self) -> None:
+        load_barrier = threading.Barrier(3)
+        table_targets = multi_format.build_bookrag_table_targets("demo_vs")
+
+        def _load_csv(*, table_key, row_count, **kwargs):
+            load_barrier.wait(timeout=5)
+            return row_count
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            csv_root = Path(tmpdir) / "csv"
+            csv_run_id = "demo_csv_run"
+            run_dir = csv_root / csv_run_id
+            run_dir.mkdir(parents=True)
+            csv_items = []
+            expected_counts = {
+                "documents": 1,
+                "blocks": 2,
+                "nodes": 3,
+                "document_relations": 0,
+                "entities": 0,
+                "entity_links": 0,
+                "entity_relations": 0,
+            }
+            for table_key, row_count in {
+                key: value for key, value in expected_counts.items() if key != "document_relations"
+            }.items():
+                csv_path = run_dir / f"{table_key}.csv"
+                csv_path.write_text("header\n" + ("value\n" if row_count else ""), encoding="utf-8")
+                csv_items.append(
+                    {
+                        "table_key": table_key,
+                        "row_count": row_count,
+                        "csv_file": csv_path.name,
+                        "csv_sha256": multi_format._file_sha256(csv_path),
+                    }
+                )
+            relation_csv_path = run_dir / "document_relations.csv"
+            relation_csv_path.write_text("header\n", encoding="utf-8")
+            run_csv_files = [
+                {
+                    "table_key": "document_relations",
+                    "row_count": 0,
+                    "csv_file": relation_csv_path.name,
+                    "csv_sha256": multi_format._file_sha256(relation_csv_path),
+                }
+            ]
+            manifest = {
+                "schema_version": 1,
+                "artifact_type": "bookrag_csv_run",
+                "csv_run_id": csv_run_id,
+                "source_parse_run_id": "parse-1",
+                "status": "ready",
+                "created_at": "2026-07-15 12:00:00",
+                "complete_table_contract": multi_format.BOOKRAG_COMPLETE_TABLE_CONTRACT,
+                "vector_store_name": "demo_vs",
+                "target_database": "demo_schema",
+                "table_targets": table_targets,
+                "qualified_table_targets": {
+                    key: f"demo_schema.{value}" for key, value in table_targets.items()
+                },
+                "table_generation": {
+                    "documents": True,
+                    "raw": False,
+                    "blocks": True,
+                    "nodes": True,
+                    "document_relations": True,
+                    "entities": True,
+                    "entity_links": True,
+                    "entity_relations": True,
+                },
+                "load_status": "not_started",
+                "vector_store_status": "not_started",
+                "run_csv_files": run_csv_files,
+                "documents": [
+                    {
+                        "source_index": 0,
+                        "doc_id": "doc-1",
+                        "filename": "one.pdf",
+                        "status": "success",
+                        "csv_files": csv_items,
+                    }
+                ],
+            }
+            (run_dir / "manifest.json").write_text(
+                multi_format.json.dumps(manifest), encoding="utf-8"
+            )
+
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(mock.patch.object(multi_format, "BOOKRAG_CSV_STAGE_DIR_DEFAULT", csv_root))
+                stack.enter_context(mock.patch.dict("os.environ", {"BOOKRAG_CSV_LOAD_WORKERS": "3"}))
+                for function_name in (
+                    "prepare_bookrag_document_table",
+                    "prepare_bookrag_block_table",
+                    "prepare_bookrag_node_table",
+                    "prepare_bookrag_document_relation_table",
+                    "prepare_bookrag_entity_table",
+                    "prepare_bookrag_entity_link_table",
+                    "prepare_bookrag_entity_relation_table",
+                ):
+                    stack.enter_context(mock.patch(f"app.services.multi_format.{function_name}", return_value=[]))
+                stack.enter_context(
+                    mock.patch("app.services.multi_format.load_prepared_bookrag_table_csv", side_effect=_load_csv)
+                )
+                stack.enter_context(
+                    mock.patch("app.services.multi_format.validate_prepared_bookrag_table_csv")
+                )
+                stack.enter_context(
+                    mock.patch(
+                        "app.services.multi_format._count_teradata_rows",
+                        side_effect=lambda schema_name, table_name, execute_sql_fn: next(
+                            count for key, count in expected_counts.items() if table_targets[key] == table_name
+                        ),
+                    )
+                )
+
+                execute_mock = mock.Mock()
+                summary = multi_format.run_bookrag_csv_load(
+                    csv_run_id=csv_run_id,
+                    execute_sql_fn=execute_mock,
+                )
+                ready_summary = multi_format.get_ready_bookrag_csv_load_summary(csv_run_id=csv_run_id)
+
+                failed_manifest = multi_format.json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+                failed_manifest["load_status"] = "failed"
+                failed_manifest["load_error"] = "simulated partial load"
+                (run_dir / "manifest.json").write_text(
+                    multi_format.json.dumps(failed_manifest), encoding="utf-8"
+                )
+                with mock.patch("app.services.multi_format._teradata_table_exists", return_value=True):
+                    retry_summary = multi_format.run_bookrag_csv_load(
+                        csv_run_id=csv_run_id,
+                        execute_sql_fn=execute_mock,
+                    )
+
+            self.assertEqual(summary["status"], "ready")
+            self.assertEqual(summary["workers"], 3)
+            self.assertEqual(summary["inserted_rows"], 6)
+            self.assertEqual(summary["node_table"], f"demo_schema.{table_targets['nodes']}")
+            self.assertEqual(ready_summary["node_table"], summary["node_table"])
+            self.assertTrue(ready_summary["already_loaded"])
+            self.assertTrue(any("partial target table" in warning for warning in retry_summary["warnings"]))
+            saved_manifest = multi_format.json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(saved_manifest["load_status"], "ready")
+            self.assertEqual(saved_manifest["vector_store_status"], "not_started")
+            self.assertEqual(saved_manifest["load_retry_count"], 1)
+            self.assertEqual(len(saved_manifest["load_recovered_tables"]), 7)
 
     def test_bookrag_table_groups_keep_core_indivisible_and_graph_all_or_nothing(self) -> None:
         flags = multi_format._resolve_bookrag_table_generation_flags(
@@ -1174,6 +1333,9 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
                     'prepare_bookrag_block_table',
                     'prepare_bookrag_node_table',
                     'prepare_bookrag_document_relation_table',
+                    'prepare_bookrag_entity_table',
+                    'prepare_bookrag_entity_link_table',
+                    'prepare_bookrag_entity_relation_table',
                 ):
                     stack.enter_context(mock.patch(f'app.services.multi_format.{patch_target}', return_value=[]))
                 stack.enter_context(mock.patch('app.services.multi_format._load_unstructured_runtime_config', return_value=('key', 'https://example.invalid')))
@@ -1284,7 +1446,7 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
             def _before_csv_load() -> None:
                 nonlocal loads_started
                 with stage_lock:
-                    if csv_prepared != len(sources) * 4:
+                    if csv_prepared != len(sources) * 7:
                         stage_violations.append('CSV loading started before every CSV completed.')
                     load_index = loads_started
                     loads_started += 1
@@ -1340,6 +1502,9 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
                 stack.enter_context(mock.patch('app.services.multi_format.prepare_bookrag_node_table', return_value=[]))
                 stack.enter_context(mock.patch('app.services.multi_format.prepare_bookrag_document_relation_table', return_value=[]))
                 stack.enter_context(mock.patch('app.services.multi_format.prepare_bookrag_raw_table', return_value=[]))
+                stack.enter_context(mock.patch('app.services.multi_format.prepare_bookrag_entity_table', return_value=[]))
+                stack.enter_context(mock.patch('app.services.multi_format.prepare_bookrag_entity_link_table', return_value=[]))
+                stack.enter_context(mock.patch('app.services.multi_format.prepare_bookrag_entity_relation_table', return_value=[]))
                 stack.enter_context(mock.patch('app.services.multi_format._load_unstructured_runtime_config', return_value=('key', 'https://example.invalid')))
                 stack.enter_context(mock.patch('app.services.multi_format._resolve_unstructured_request_timeout_ms', return_value=120000))
                 stack.enter_context(mock.patch('app.services.multi_format._create_unstructured_client', return_value=object()))
@@ -1383,7 +1548,7 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
         self.assertEqual(summary['bookrag_csv_prepare_workers'], 2)
         self.assertEqual(summary['bookrag_csv_load_workers'], 5)
         self.assertEqual(jobs_finished, 2)
-        self.assertEqual(csv_prepared, 8)
+        self.assertEqual(csv_prepared, 14)
         self.assertEqual(loads_started, 8)
         self.assertEqual(stage_violations, [])
         self.assertEqual(len(set(document_csv_dirs)), 2)

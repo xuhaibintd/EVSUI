@@ -1,0 +1,19 @@
+{% if bookrag_vector_store_create_error %}
+<div class="bookrag-parse-result bookrag-parse-result-error" role="status">
+  <strong>Vector Store creation failed.</strong>
+  <p>{{ bookrag_vector_store_create_error }}</p>
+</div>
+{% elif bookrag_vector_store_create %}
+<div class="bookrag-parse-result bookrag-parse-result-ok" role="status">
+  <div class="bookrag-parse-result-head">
+    <strong>Vector Store is ready.</strong>
+    <span>{{ bookrag_vector_store_create.vector_store_name }}</span>
+  </div>
+  <p>Node source: <strong>{{ bookrag_vector_store_create.node_table }}</strong></p>
+  {% if bookrag_vector_store_create.warnings %}
+  <ul class="bookrag-parse-warning-list">
+    {% for warning in bookrag_vector_store_create.warnings %}<li>{{ warning }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+</div>
+{% endif %}
