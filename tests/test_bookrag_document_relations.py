@@ -3,9 +3,11 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from app.services.bookrag_document_relations import (
-    suggest_document_relations,
+    derive_filename_document_relations,
+    fetch_document_relations,
     validate_document_relation,
     validate_document_relations,
 )
@@ -14,6 +16,7 @@ from app.services.bookrag_schema import (
     BOOKRAG_DOCUMENT_RELATION_COLUMNS,
     _build_table_ddl,
     build_bookrag_relationship_contract,
+    migrate_legacy_document_relation_table,
 )
 from app.utils.uploads import save_document_uploads
 
@@ -51,7 +54,7 @@ class BookRAGDocumentRelationTests(unittest.IsolatedAsyncioTestCase):
             {"doc_id": "spring", "filename": "①GMAP_2026年春号（銀行）.pdf"},
             {"doc_id": "summary", "filename": "②【A3両面印刷】GMAPサマリー_2026年春号（銀行）.pdf"},
         ]
-        rows = suggest_document_relations(documents)
+        rows = derive_filename_document_relations(documents)
         keys = {
             (row["from_doc_id"], row["relation_type"], row["to_doc_id"])
             for row in rows
@@ -59,8 +62,8 @@ class BookRAGDocumentRelationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(("summary", "summary_of", "spring"), keys)
         self.assertIn(("spring", "next_issue_of", "autumn"), keys)
         self.assertIn(("summer", "next_issue_of", "spring"), keys)
-        self.assertTrue(all(row["confirmed"] is False for row in rows))
-        self.assertTrue(all(row["is_active"] == 0 for row in rows))
+        self.assertTrue(all("confirmed" not in row for row in rows))
+        self.assertTrue(all("is_active" not in row for row in rows))
         self.assertTrue(all(row["from_filename"] and row["to_filename"] for row in rows))
         self.assertTrue(all(row["relation_description"] for row in rows))
 
@@ -76,7 +79,6 @@ class BookRAGDocumentRelationTests(unittest.IsolatedAsyncioTestCase):
                 "relation_type": "related_to",
                 "to_doc_id": "b",
                 "to_filename": "also-wrong.pdf",
-                "confirmed": True,
             },
             documents,
         )
@@ -88,7 +90,6 @@ class BookRAGDocumentRelationTests(unittest.IsolatedAsyncioTestCase):
                     "from_doc_id": "a",
                     "relation_type": "related_to",
                     "to_doc_id": "a",
-                    "confirmed": True,
                 },
                 documents,
             )
@@ -102,7 +103,6 @@ class BookRAGDocumentRelationTests(unittest.IsolatedAsyncioTestCase):
             "from_doc_id": "a",
             "relation_type": "references",
             "to_doc_id": "b",
-            "confirmed": True,
         }
         with self.assertRaisesRegex(ValueError, "Duplicate document relationship"):
             validate_document_relations([relation, relation], documents)
@@ -110,11 +110,53 @@ class BookRAGDocumentRelationTests(unittest.IsolatedAsyncioTestCase):
     def test_schema_and_mcp_contract_expose_bdrel_as_core(self) -> None:
         ddl = _build_table_ddl('"db"."vs_bk_bdrel"', BOOKRAG_DOCUMENT_RELATION_COLUMNS)
         self.assertIn('PRIMARY KEY ("from_doc_id", "relation_type", "to_doc_id")', ddl)
+        self.assertNotIn('"is_active"', ddl)
         contract = build_bookrag_relationship_contract("demo")
         self.assertEqual(contract["tables"]["document_relations"]["role"], "core")
         names = {row["name"] for row in contract["relationships"]}
         self.assertIn("document_relation_source", names)
         self.assertIn("document_relation_target", names)
+
+    def test_fetch_uses_every_stored_relationship_without_status_filter(self) -> None:
+        execute_sql = mock.Mock()
+        cursor = mock.Mock()
+        cursor.description = []
+        cursor.fetchall.return_value = []
+        execute_sql.return_value = cursor
+        with mock.patch(
+            "app.services.bookrag_document_relations._teradata_table_exists",
+            return_value=True,
+        ):
+            fetch_document_relations(
+                vector_store_name="demo",
+                schema_name="db",
+                execute_sql_fn=execute_sql,
+                doc_ids=["doc-a"],
+            )
+
+        query = execute_sql.call_args.args[0]
+        self.assertNotIn("is_active", query)
+        self.assertIn('"from_doc_id" IN (\'doc-a\')', query)
+        self.assertIn('"to_doc_id" IN (\'doc-a\')', query)
+
+    def test_legacy_activity_column_is_dropped_without_row_deletion(self) -> None:
+        execute_sql = mock.Mock()
+        with mock.patch(
+            "app.services.bookrag_schema._teradata_table_exists",
+            return_value=True,
+        ):
+            migrated = migrate_legacy_document_relation_table(
+                schema_name="db",
+                table_name="demo_bk_bdrel",
+                execute_sql_fn=execute_sql,
+            )
+
+        self.assertTrue(migrated)
+        queries = [call.args[0] for call in execute_sql.call_args_list]
+        self.assertEqual(len(queries), 2)
+        self.assertIn('SELECT TOP 1 "is_active"', queries[0])
+        self.assertIn('ALTER TABLE "db"."demo_bk_bdrel" DROP "is_active"', queries[1])
+        self.assertTrue(all("DELETE" not in query for query in queries))
 
     def test_retrieval_render_includes_human_readable_document_relation(self) -> None:
         text = render_bookrag_evidence_packages(

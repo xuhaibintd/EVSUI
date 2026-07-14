@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import time
 
@@ -25,9 +26,28 @@ from app.services.multi_format import (
 )
 from app.utils.table_state import format_preview, row_value_by_header, table_from_result
 
+def _positive_float_env(name: str, default: float) -> float:
+    try:
+        value = float(str(os.getenv(name, default)).strip())
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
 
-CREATE_READY_TIMEOUT_SECONDS = 120
-CREATE_READY_POLL_INTERVAL_SECONDS = 2
+
+def _optional_positive_float_env(name: str) -> float | None:
+    raw_value = os.getenv(name)
+    if raw_value is None or not str(raw_value).strip():
+        return None
+    try:
+        value = float(str(raw_value).strip())
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+CREATE_READY_TIMEOUT_SECONDS = _optional_positive_float_env("EVS_VECTORSTORE_READY_TIMEOUT_SECONDS")
+CREATE_READY_POLL_INTERVAL_SECONDS = _positive_float_env("EVS_VECTORSTORE_READY_POLL_SECONDS", 5)
+BOOKRAG_INDEX_READY_TIMEOUT_SECONDS = _positive_float_env("EVS_BOOKRAG_INDEX_READY_TIMEOUT_SECONDS", 0)
 _TERADATA_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
@@ -113,6 +133,13 @@ def _read_vectorstore_status(vector_store) -> tuple[str, str, str, str]:
     try:
         status_output = status_fn()
     except Exception as ex:
+        error_text = str(ex)
+        normalized_error = error_text.lower()
+        if "failed" in normalized_error and any(
+            marker in normalized_error
+            for marker in ("create", "update", "initialize", "vector store", "vectorstore")
+        ):
+            return "failed", error_text, "", ""
         return "unknown", "", "", f"Status check failed: {ex}"
 
     state, status_text, preview = _classify_vectorstore_status(status_output)
@@ -126,19 +153,77 @@ def _quote_teradata_identifier(value: str) -> str:
     return f'"{identifier}"'
 
 
+def _first_scalar(value):
+    if isinstance(value, dict):
+        return next(iter(value.values()), None)
+    if isinstance(value, (str, bytes, bytearray)):
+        return value
+    if isinstance(value, (list, tuple)):
+        return value[0] if value else None
+    try:
+        return value[0]
+    except Exception:
+        return value
+
+
+def _int_or_none(value) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
 def _scalar_from_sql_result(result) -> int | None:
+    """Read an integer scalar from DB-API cursors and test-friendly table results."""
+    if result is None:
+        return None
+
+    fetchone = getattr(result, "fetchone", None)
+    fetchall = getattr(result, "fetchall", None)
+    if callable(fetchone) or callable(fetchall):
+        parsed = None
+        try:
+            if callable(fetchone):
+                row = fetchone()
+                parsed = _int_or_none(_first_scalar(row)) if row is not None else None
+            if parsed is None and callable(fetchall):
+                remaining_rows = fetchall() or []
+                if remaining_rows:
+                    parsed = _int_or_none(_first_scalar(remaining_rows[0]))
+        except Exception:
+            parsed = None
+        finally:
+            close = getattr(result, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+        return parsed
+
+    if hasattr(result, "iloc"):
+        try:
+            parsed = _int_or_none(result.iloc[0, 0])
+            if parsed is not None:
+                return parsed
+        except Exception:
+            pass
+
+    if isinstance(result, dict):
+        parsed = _int_or_none(_first_scalar(result))
+        if parsed is not None:
+            return parsed
+    if isinstance(result, (list, tuple)) and result:
+        parsed = _int_or_none(_first_scalar(result[0]))
+        if parsed is not None:
+            return parsed
+
     headers, rows = table_from_result(result)
     if rows and rows[0]:
         value_index = 1 if headers and headers[0] == "#" and len(rows[0]) > 1 else 0
-        try:
-            return int(str(rows[0][value_index]).strip())
-        except ValueError:
-            return None
-    if hasattr(result, "iloc"):
-        try:
-            return int(result.iloc[0, 0])
-        except Exception:
-            return None
+        return _int_or_none(rows[0][value_index])
     return None
 
 
@@ -166,26 +251,100 @@ def _bookrag_vector_index_row_count(
     return count, ""
 
 
-async def _wait_for_vectorstore_ready(vector_store) -> tuple[bool, str, str, str]:
-    attempts = max(1, int(CREATE_READY_TIMEOUT_SECONDS / CREATE_READY_POLL_INTERVAL_SECONDS))
+def _bookrag_source_embedding_row_count(
+    *,
+    source_table_name: str,
+    target_database: str,
+    execute_sql_fn,
+) -> tuple[int | None, str]:
+    if execute_sql_fn is None:
+        return None, "execute_sql is unavailable"
+    try:
+        schema_sql = _quote_teradata_identifier(target_database)
+        table_sql = _quote_teradata_identifier(source_table_name)
+    except ValueError as ex:
+        return None, str(ex)
+    sql = (
+        f'SELECT COUNT(*) FROM {schema_sql}.{table_sql} '
+        'WHERE "content" IS NOT NULL AND TRIM("content") <> \'\''
+    )
+    try:
+        count_result = execute_sql_fn(sql)
+    except Exception as ex:
+        return None, str(ex)
+    count = _scalar_from_sql_result(count_result)
+    if count is None:
+        return None, f"could not parse source row count from {format_preview(count_result, max_chars=300)}"
+    return count, ""
+
+
+async def _wait_for_bookrag_index_rows(
+    *,
+    vector_store_name: str,
+    target_database: str,
+    expected_row_count: int | None,
+    execute_sql_fn,
+) -> tuple[int | None, str]:
+    deadline = time.monotonic() + max(0.0, float(BOOKRAG_INDEX_READY_TIMEOUT_SECONDS))
+    last_count: int | None = None
+    last_error = ""
+    first_attempt = True
+    while first_attempt or time.monotonic() < deadline:
+        first_attempt = False
+        last_count, last_error = _bookrag_vector_index_row_count(
+            vector_store_name=vector_store_name,
+            target_database=target_database,
+            execute_sql_fn=execute_sql_fn,
+        )
+        minimum_rows = expected_row_count if expected_row_count is not None else 1
+        if last_count is not None and last_count >= minimum_rows:
+            return last_count, ""
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        await asyncio.sleep(min(float(CREATE_READY_POLL_INTERVAL_SECONDS), remaining))
+
+    if last_count is not None:
+        expected_detail = (
+            f"; expected {expected_row_count} non-empty source rows"
+            if expected_row_count is not None
+            else ""
+        )
+        return last_count, f"index row count remained {last_count}{expected_detail}"
+    return None, last_error or "index row count remained unavailable"
+
+
+async def _wait_for_vectorstore_ready(vector_store) -> tuple[bool, str, str, str, str]:
+    deadline = (
+        time.monotonic() + max(0.0, float(CREATE_READY_TIMEOUT_SECONDS))
+        if CREATE_READY_TIMEOUT_SECONDS is not None
+        else None
+    )
     last_state = "unknown"
     last_status_text = ""
     last_preview = ""
+    first_attempt = True
 
-    for attempt in range(attempts):
+    while first_attempt or deadline is None or time.monotonic() < deadline:
+        first_attempt = False
         state, status_text, preview, error = _read_vectorstore_status(vector_store)
         last_state = state
         last_status_text = status_text
         last_preview = preview
         if error:
-            return False, preview, error, status_text
+            return False, preview, error, status_text, "check_error"
         if state == "ready":
-            return True, preview, "", status_text
+            return True, preview, "", status_text, "ready"
         if state == "failed":
             detail = status_text or preview or "unknown failure"
-            return False, preview, f"VectorStore.status() reported failure: {detail}", status_text
-        if attempt < attempts - 1:
-            await asyncio.sleep(CREATE_READY_POLL_INTERVAL_SECONDS)
+            return False, preview, f"VectorStore.status() reported failure: {detail}", status_text, "failed"
+        if deadline is None:
+            await asyncio.sleep(float(CREATE_READY_POLL_INTERVAL_SECONDS))
+            continue
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        await asyncio.sleep(min(float(CREATE_READY_POLL_INTERVAL_SECONDS), remaining))
 
     current_detail = last_status_text or last_preview or last_state or "unknown"
     return (
@@ -193,6 +352,7 @@ async def _wait_for_vectorstore_ready(vector_store) -> tuple[bool, str, str, str
         last_preview,
         f"VectorStore.status() did not reach Ready within {CREATE_READY_TIMEOUT_SECONDS}s. Current status: {current_detail}",
         last_status_text,
+        "pending",
     )
 
 
@@ -255,6 +415,7 @@ async def handle_upload_and_prepare_create(
     raw_doc_pipeline_mode = str(form.get("doc_pipeline_mode", "")).strip()
     doc_pipeline_mode = raw_doc_pipeline_mode
     loaded_csv_run_id = str(form.get("bookrag_loaded_csv_run_id") or "").strip()
+    loaded_summary: dict | None = None
     loaded_run_error = ""
     if raw_doc_pipeline_mode == "multi_format_bookrag" and loaded_csv_run_id:
         try:
@@ -323,6 +484,17 @@ async def handle_upload_and_prepare_create(
         if callable(should_run_vectorstore_create_fn)
         else (not bool(getattr(doc_pipeline_handler, "SKIP_VECTORSTORE_CREATE", False)))
     )
+
+    def _mark_prechecked_loaded_run(status: str, *, error: str = "") -> None:
+        if not loaded_summary or not loaded_csv_run_id:
+            return
+        mark_status_fn = getattr(doc_pipeline_handler, "mark_vectorstore_status", None)
+        if callable(mark_status_fn):
+            mark_status_fn(
+                {**loaded_summary, "source": "loaded_csv_tables", "csv_run_id": loaded_csv_run_id},
+                status=status,
+                error=error,
+            )
 
     create_payload: dict = {}
     warnings: list[str] = list(upload_notices)
@@ -442,7 +614,51 @@ async def handle_upload_and_prepare_create(
                 existing_vector_store
             )
             precheck_status_preview = existence_check_detail or current_status_preview
-            if current_state == "ready":
+            precheck_integrity_error = ""
+            if current_state == "ready" and loaded_summary:
+                target_database_for_index = str(loaded_summary.get("target_database") or "").strip()
+                loaded_table_targets = loaded_summary.get("table_targets") or {}
+                source_table_for_index = str(
+                    loaded_table_targets.get("nodes")
+                    or str(loaded_summary.get("node_table") or "").rsplit(".", 1)[-1]
+                ).strip()
+                expected_index_count, source_count_error = _bookrag_source_embedding_row_count(
+                    source_table_name=source_table_for_index,
+                    target_database=target_database_for_index,
+                    execute_sql_fn=execute_sql_fn,
+                )
+                index_row_count, index_count_error = await _wait_for_bookrag_index_rows(
+                    vector_store_name=vector_store_name,
+                    target_database=target_database_for_index,
+                    expected_row_count=expected_index_count,
+                    execute_sql_fn=execute_sql_fn,
+                )
+                if source_count_error:
+                    warnings.append(
+                        "Existing VectorStore is Ready, but source row-count verification was unavailable: "
+                        f"{source_count_error}"
+                    )
+                if index_row_count is None:
+                    warnings.append(
+                        "Existing VectorStore is Ready, but index row-count verification was unavailable: "
+                        f"{index_count_error}"
+                    )
+                else:
+                    index_message = (
+                        f"BookRAG vector index rows: "
+                        f"{target_database_for_index}.vectorstore_{vector_store_name}_index={index_row_count}."
+                    )
+                    precheck_status_preview = (
+                        f"{precheck_status_preview}\n{index_message}" if precheck_status_preview else index_message
+                    )
+                    if expected_index_count is not None and index_row_count != expected_index_count:
+                        precheck_integrity_error = (
+                            f"index has {index_row_count} rows; expected {expected_index_count} non-empty source rows"
+                        )
+                    elif index_row_count <= 0:
+                        precheck_integrity_error = "index is empty"
+
+            if current_state == "ready" and not precheck_integrity_error:
                 warnings.append(
                     f"VectorStore '{vector_store_name}' already exists. Skipped preprocessing and create()."
                 )
@@ -450,15 +666,34 @@ async def handle_upload_and_prepare_create(
                 result_message = f"Step 2 skipped preprocessing and VectorStore.create(): '{vector_store_name}' already exists."
                 if existence_check_detail:
                     result_message = f"{result_message} {existence_check_detail}"
-            else:
+                _mark_prechecked_loaded_run("ready")
+            elif current_state == "ready":
+                result_status = "error"
+                result_message = (
+                    f"Step 2 blocked before preprocessing: VectorStore '{vector_store_name}' reports Ready, "
+                    f"but BookRAG index verification failed ({precheck_integrity_error})."
+                )
+                _mark_prechecked_loaded_run("failed", error=result_message)
+            elif current_state == "failed":
                 result_status = "error"
                 current_detail = current_status_error or current_status_text or current_status_preview or "unknown"
                 result_message = (
                     f"Step 2 blocked before preprocessing: VectorStore '{vector_store_name}' already exists, "
-                    f"but current status is not Ready ({current_detail})."
+                    f"and its current status is Failed ({current_detail})."
                 )
                 if existence_check_detail:
                     result_message = f"{result_message} {existence_check_detail}"
+                _mark_prechecked_loaded_run("failed", error=result_message)
+            else:
+                result_status = "pending"
+                current_detail = current_status_error or current_status_text or current_status_preview or "unknown"
+                result_message = (
+                    f"Step 2 is still processing: VectorStore '{vector_store_name}' already exists, "
+                    f"but has not reached Ready ({current_detail}). The server-side operation was not cancelled."
+                )
+                if existence_check_detail:
+                    result_message = f"{result_message} {existence_check_detail}"
+                _mark_prechecked_loaded_run("creating")
 
             result = {
                 "status": result_status,
@@ -479,9 +714,15 @@ async def handle_upload_and_prepare_create(
             app.state.last_create_operation = result
             if result_status == "error":
                 app.state.evs_state["last_success"] = ""
+                app.state.evs_state["last_notice"] = ""
                 app.state.evs_state["last_error"] = result_message
+            elif result_status == "pending":
+                app.state.evs_state["last_success"] = ""
+                app.state.evs_state["last_error"] = ""
+                app.state.evs_state["last_notice"] = result_message
             else:
                 app.state.evs_state["last_error"] = ""
+                app.state.evs_state["last_notice"] = ""
                 app.state.evs_state["last_success"] = result_message
                 app.state.evs_state["last_created_vs_name"] = vector_store_name
                 append_connect_step(
@@ -557,10 +798,19 @@ async def handle_upload_and_prepare_create(
             create_output = vector_store.create(**exec_payload)
             execution_output_preview = format_preview(create_output)
 
-            ready_confirmed, status_output_preview, readiness_error, _ready_status_text = await _wait_for_vectorstore_ready(
-                vector_store
-            )
-            if (not ready_confirmed) and readiness_error and callable(verify_vectorstore_exists_fn):
+            (
+                ready_confirmed,
+                status_output_preview,
+                readiness_error,
+                _ready_status_text,
+                readiness_state,
+            ) = await _wait_for_vectorstore_ready(vector_store)
+            if (
+                (not ready_confirmed)
+                and readiness_state != "failed"
+                and readiness_error
+                and callable(verify_vectorstore_exists_fn)
+            ):
                 fallback_verified = False
                 fallback_detail = ""
                 fallback_error = ""
@@ -584,19 +834,52 @@ async def handle_upload_and_prepare_create(
                         status_output_preview = fallback_preview
                     if fallback_state == "ready":
                         ready_confirmed = True
+                        readiness_state = "ready"
+                        readiness_error = ""
                         warnings.append(
                             f"Primary VectorStore.status() check was inconclusive after create(); fallback probe confirmed '{vector_store_name}' is Ready."
                         )
-                    elif fallback_status_error and not readiness_error:
+                    elif fallback_state == "failed":
+                        readiness_state = "failed"
+                        readiness_error = (
+                            f"VectorStore.status() reported failure: "
+                            f"{fallback_status_text or fallback_preview or 'unknown failure'}"
+                        )
+                    elif fallback_status_error:
                         readiness_error = fallback_status_error
-                    elif fallback_error and not readiness_error:
+                        readiness_state = "check_error"
+                    elif fallback_error:
                         readiness_error = fallback_error
+                        readiness_state = "check_error"
 
-            if mode_summary and mode_summary.get("source") == "loaded_csv_tables":
+            if ready_confirmed and mode_summary and mode_summary.get("source") == "loaded_csv_tables":
                 target_database_for_index = str(mode_summary.get("target_database") or "").strip()
-                index_row_count, index_count_error = _bookrag_vector_index_row_count(
+                table_targets = mode_summary.get("table_targets") or {}
+                source_table_for_index = str(
+                    table_targets.get("nodes") or exec_payload.get("object_names") or ""
+                ).strip()
+                expected_index_count, source_count_error = _bookrag_source_embedding_row_count(
+                    source_table_name=source_table_for_index,
+                    target_database=target_database_for_index,
+                    execute_sql_fn=execute_sql_fn,
+                )
+                if source_count_error:
+                    warnings.append(
+                        "VectorStore is Ready, but the BookRAG source row-count verification was unavailable: "
+                        f"{source_count_error}"
+                    )
+                elif expected_index_count is not None and expected_index_count <= 0:
+                    ready_confirmed = False
+                    readiness_state = "failed"
+                    readiness_error = (
+                        f"BookRAG source table has no non-empty content rows: "
+                        f"{target_database_for_index}.{source_table_for_index}."
+                    )
+
+                index_row_count, index_count_error = await _wait_for_bookrag_index_rows(
                     vector_store_name=vector_store_name,
                     target_database=target_database_for_index,
+                    expected_row_count=expected_index_count,
                     execute_sql_fn=execute_sql_fn,
                 )
                 if index_row_count is not None:
@@ -608,20 +891,26 @@ async def handle_upload_and_prepare_create(
                         status_output_preview = f"{status_output_preview}\n{index_message}"
                     else:
                         status_output_preview = index_message
-                    if index_row_count <= 0:
+                    if expected_index_count is not None and index_row_count != expected_index_count:
                         ready_confirmed = False
+                        readiness_state = "failed"
                         readiness_error = (
-                            f"BookRAG vector index table is empty: "
+                            f"BookRAG vector index row count is incomplete: "
+                            f"{target_database_for_index}.vectorstore_{vector_store_name}_index has "
+                            f"{index_row_count} rows; expected {expected_index_count} non-empty source rows."
+                        )
+                    elif index_row_count <= 0:
+                        ready_confirmed = False
+                        readiness_state = "failed"
+                        readiness_error = (
+                            f"BookRAG vector index table is empty after VectorStore reached Ready: "
                             f"{target_database_for_index}.vectorstore_{vector_store_name}_index has 0 rows."
                         )
-                    elif not ready_confirmed and readiness_error.startswith("Status check failed:"):
-                        ready_confirmed = True
-                        warnings.append(
-                            "VectorStore.status() failed after create(), but BookRAG index row-count check confirmed rows were created."
-                        )
                 elif index_count_error:
-                    ready_confirmed = False
-                    readiness_error = f"BookRAG vector index row-count check failed: {index_count_error}"
+                    warnings.append(
+                        "VectorStore is Ready, but the BookRAG vector index row-count verification was unavailable: "
+                        f"{index_count_error}"
+                    )
 
             if ready_confirmed:
                 _mark_mode_status("ready")
@@ -632,15 +921,24 @@ async def handle_upload_and_prepare_create(
                 if callable(append_message_fn):
                     result_message = append_message_fn(result_message, mode_summary)
                 result_message = _append_elapsed(result_message, elapsed_seconds=vector_create_elapsed)
-            else:
+            elif readiness_state == "failed":
                 vector_create_elapsed = time.perf_counter() - vector_create_started
                 result_status = "error"
                 result_message = (
                     "Step 2 did not finish: VectorStore.create() returned, but "
-                    f"{readiness_error}"
+                    f"{readiness_error or 'VectorStore.status() reported failure.'}"
                 )
                 result_message = _append_elapsed(result_message, elapsed_seconds=vector_create_elapsed)
                 _mark_mode_status("failed", error=result_message)
+            else:
+                vector_create_elapsed = time.perf_counter() - vector_create_started
+                result_status = "pending"
+                result_message = (
+                    "Step 2 is still processing: VectorStore.create() returned, but the server-side operation "
+                    f"has not reached Ready yet ({readiness_error or readiness_state}). "
+                    "The operation was not cancelled and may continue after this response."
+                )
+                result_message = _append_elapsed(result_message, elapsed_seconds=vector_create_elapsed)
         except Exception as ex:
             vector_create_elapsed = time.perf_counter() - vector_create_started
             ex_text = str(ex)
@@ -680,12 +978,22 @@ async def handle_upload_and_prepare_create(
                     if callable(append_message_fn):
                         result_message = append_message_fn(result_message, mode_summary)
                     result_message = _append_elapsed(result_message, elapsed_seconds=vector_create_elapsed)
-                else:
+                elif current_state == "failed":
                     result_status = "error"
                     current_detail = current_status_error or current_status_text or current_status_preview or "unknown"
                     result_message = (
-                        f"Step 2 blocked: VectorStore '{vector_store_name}' already exists, but current status is not Ready "
+                        f"Step 2 blocked: VectorStore '{vector_store_name}' already exists with Failed status "
                         f"({current_detail})."
+                    )
+                    if existence_check_detail:
+                        result_message = f"{result_message} {existence_check_detail}"
+                    result_message = _append_elapsed(result_message, elapsed_seconds=vector_create_elapsed)
+                else:
+                    result_status = "pending"
+                    current_detail = current_status_error or current_status_text or current_status_preview or "unknown"
+                    result_message = (
+                        f"Step 2 is still processing: VectorStore '{vector_store_name}' already exists and has not "
+                        f"reached Ready ({current_detail}). The server-side operation was not cancelled."
                     )
                     if existence_check_detail:
                         result_message = f"{result_message} {existence_check_detail}"
@@ -709,6 +1017,8 @@ async def handle_upload_and_prepare_create(
                 result_message = _append_elapsed(result_message, elapsed_seconds=vector_create_elapsed)
             if result_status == "error":
                 _mark_mode_status("failed", error=result_message)
+            elif result_status == "pending":
+                _mark_mode_status("creating")
             else:
                 _mark_mode_status("ready")
 
@@ -731,9 +1041,15 @@ async def handle_upload_and_prepare_create(
     app.state.last_create_operation = result
     if result_status == "error":
         app.state.evs_state["last_success"] = ""
+        app.state.evs_state["last_notice"] = ""
         app.state.evs_state["last_error"] = result_message
+    elif result_status == "pending":
+        app.state.evs_state["last_success"] = ""
+        app.state.evs_state["last_error"] = ""
+        app.state.evs_state["last_notice"] = result_message
     else:
         app.state.evs_state["last_error"] = ""
+        app.state.evs_state["last_notice"] = ""
         app.state.evs_state["last_success"] = result_message
         app.state.evs_state["last_created_vs_name"] = vector_store_name
         append_connect_step(

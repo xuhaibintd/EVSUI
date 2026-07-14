@@ -49,7 +49,8 @@ EVSUI is a `FastAPI + Jinja2 + HTMX` interface for working with Teradata Vector 
 - No auto-list on connect; list execution is manual.
 - Vector Store Creation submit validation blocks create unless `vector_store_name`, `doc_pipeline_mode`, `embeddings_model`, and a document source are present. Uploaded files and `document_files` both satisfy this check.
 - For uploaded-file create flow, `object_names` is not auto-filled by the UI.
-- Vector Store Creation does not report success when `VectorStore.create()` merely returns; it waits until `VectorStore.status()` reaches `Ready`.
+- Vector Store Creation does not report success when `VectorStore.create()` merely returns. By default it polls every 5 seconds (`EVS_VECTORSTORE_READY_POLL_SECONDS`) until `VectorStore.status()` reaches the terminal `Ready` or `Failed` state; there is no time-based cutoff. Operations may set `EVS_VECTORSTORE_READY_TIMEOUT_SECONDS` explicitly when an infrastructure-level request limit is required. An explicitly configured timeout is reported as still processing and leaves the CSV manifest in `creating`, because the server-side operation is not cancelled.
+- After a loaded BookRAG store reaches `Ready`, the app verifies that the vector index row count matches the non-empty `bnode.content` row count. `EVS_BOOKRAG_INDEX_READY_TIMEOUT_SECONDS` can optionally add a database-visibility grace period; the default is a single immediate verification. An unavailable verification query is a warning; a successfully verified empty or incomplete index is an error.
 - If `create()` reports `already exists`, the app verifies existence with unfiltered `VSManager.list()` and only reuses the store when its current status is `Ready`.
 
 ## Requirements
@@ -265,18 +266,17 @@ Columns:
 | `relation_description` | Human-readable business explanation used as retrieval context |
 | `source_type` | Provenance: `human`, `rule`, `import`, or `llm` |
 | `confidence` | Optional value from `0.0` to `1.0` |
-| `is_active` | Only active rows are included in normal retrieval |
 | `created_by`, `created_at`, `updated_by`, `updated_at` | Audit fields maintained during persistence/editing |
 
 Relationship direction is meaningful. For example, `A summary_of B` means A is the summary and B is the full report; `A next_issue_of B` means A is the newer issue and B is the preceding issue. A row cannot point to itself. Duplicate `(from_doc_id, relation_type, to_doc_id)` values are rejected.
 
 Create-time filename initialization is deliberately conservative:
 
-- `②` summary and `①` full report with the same issue become a proposed `summary_of` relationship.
-- `①` full reports, `②` summaries, and `③/④` monthly updates are ordered by the issue date and become proposed `next_issue_of` relationships.
+- `②` summary and `①` full report with the same issue become a `summary_of` relationship.
+- `①` full reports, `②` summaries, and `③/④` monthly updates are ordered by the issue date and become `next_issue_of` relationships.
 - Spot (`⑤`) and Topics (`⑥`) reports are not assigned semantic relationships automatically; a person must classify them.
-- The upload panel remains file-only. After `bdoc` is complete, valid rule suggestions are inserted into `bdrel` with both document IDs, both canonical filenames, a relationship description, `source_type=rule`, and `is_active=0`.
-- Inactive rule rows are visible in Administration but are excluded from normal retrieval until a person reviews and activates them.
+- The upload panel remains file-only. After `bdoc` is complete, valid filename-rule relationships are inserted into `bdrel` with both document IDs, both canonical filenames, a relationship description, and `source_type=rule`.
+- Every row in `bdrel` is effective and included in normal retrieval. Incorrect relationships must be edited or deleted.
 - A document with no defensible relationship remains only in `bdoc`; the pipeline never creates a self-relation or another placeholder relationship merely to give every document a `bdrel` row.
 
 ### Creation and Persistence Flow
@@ -294,7 +294,7 @@ After table loading succeeds, the existing **Basic > Vector Store Name** field b
 3. Unstructured jobs run concurrently (default `5`; override with `BOOKRAG_UNSTRUCTURED_WORKERS`). Each completed job writes its fixed per-file raw JSON stage file. The pipeline waits for every JSON job before continuing.
 4. After the JSON barrier, files are transformed concurrently (default `5`; override with `BOOKRAG_CSV_PREPARE_WORKERS`). Each JSON keeps the existing fixed per-file/per-table CSV mapping; CSV files are neither merged nor split. The pipeline waits for every CSV to be ready before loading any rows.
 5. After the CSV barrier, all prepared CSV load tasks run concurrently (default `5`; override with `BOOKRAG_CSV_LOAD_WORKERS`) and their results are collected together.
-6. After all documents exist in `bdoc`, the pipeline creates `bdrel` like the other Core tables, derives conservative filename-rule relationships, validates both endpoints against `bdoc`, and inserts the suggestions as inactive rows for administrative review.
+6. After all documents exist in `bdoc`, the pipeline creates `bdrel` like the other Core tables, derives conservative filename-rule relationships, validates both endpoints against `bdoc`, and inserts them as effective rows.
 7. When the embedding option is enabled, `VectorStore.create()` uses the physical `bnode` table, `content` as data, and `(doc_id, node_id)` as its composite key. When disabled, table preprocessing completes without vector creation.
 
 `bdoc.source_file` stores the original uploaded document path. `page_count` is derived from the maximum extracted block page, `language_hint` records the configured OCR languages when present, and `created_at` records when the document row was built. Raw JSON stage paths remain available in the preprocessing summary/debug artifacts and are not stored as the source document path.
@@ -312,7 +312,7 @@ For applications that use the EVSUI retrieval API:
 1. Vector similarity returns a composite `(doc_id, node_id)` match from `bnode`.
 2. Retrieval loads the matched node and its ancestor nodes from `bnode` using document-scoped keys.
 3. It resolves the source element from `bblk` and document metadata from `bdoc`.
-4. It loads active `bdrel` rows in both directions and adds `direction`, `related_doc_id`, `related_filename`, type, and description to each evidence package and the LLM context.
+4. It loads every matching `bdrel` row in both directions and adds `direction`, `related_doc_id`, `related_filename`, type, and description to each evidence package and the LLM context.
 5. When Graph tables exist, entity mentions and relations are attached using the composite joins above.
 
 For external MCP/SQL applications, call `GET /api/bookrag/schema?vector_store_name=<name>&schema_name=<schema>` and use the returned physical table names, primary keys, roles, and relationships. Do not infer table names, omit `doc_id` from joins, or use filenames as keys.
@@ -320,9 +320,10 @@ For external MCP/SQL applications, call `GET /api/bookrag/schema?vector_store_na
 ### Administration and Migration
 
 - **Vector Store Creation -> Upload PDF / Documents** is file upload only. `bdrel` is created during Create together with `bdoc`, `bblk`, and `bnode`.
-- Create-time filename-rule rows begin inactive. Use **Administration -> Business Configuration -> Document Relationships** to load, review, add, edit, activate/deactivate, delete, import, or export rows.
+- Create-time filename-rule rows are effective immediately. Use **Administration -> Business Configuration -> Document Relationships** to load, review, add, edit, delete, import, or export rows.
 - The Document Relationships panel refreshes its own Vector Store list on load and provides **Refresh Vector Stores**; it does not depend on running the Retrieval page's list action first.
-- If an older vector store has `bdoc` but no `bdrel`, click **Initialize bdrel**. This only creates the empty table after verifying that `bdoc` contains documents; it does not invent or activate relationships.
+- If an older vector store has `bdoc` but no `bdrel`, click **Initialize bdrel**. This only creates the empty table after verifying that `bdoc` contains documents; it does not invent relationships.
+- When an existing legacy `bdrel` table is next initialized or changed, the obsolete `is_active` column is dropped without deleting rows. Retrieval already treats every legacy row as effective.
 - CSV import may identify endpoints by `doc_id`. A filename-only import is accepted only when that filename is present and unique in `bdoc`; stored filenames are then canonicalized from `bdoc`.
 - Adding or changing `bdrel` rows does not require re-running Unstructured or rebuilding embeddings because document relationships are loaded at retrieval time.
 - New uploads use stable upload-instance UUIDs throughout one create flow. Re-uploading or rebuilding from a newly generated manifest assigns new IDs, so any external references or imported `bdrel` rows must be remapped to the new `bdoc.doc_id` values.
@@ -350,7 +351,7 @@ document_relations:
   primary_key: [from_doc_id, relation_type, to_doc_id]
   authoritative_endpoints: [from_doc_id, to_doc_id]
   display_only: [from_filename, to_filename]
-  active_filter: is_active = 1
+  retrieval_filter: none
 client_rules:
   - obtain physical names from GET /api/bookrag/schema
   - always include doc_id in document-scoped joins

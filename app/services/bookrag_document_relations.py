@@ -7,6 +7,7 @@ from typing import Any, Iterable
 from app.services.bookrag_schema import (
     BOOKRAG_DOCUMENT_RELATION_COLUMNS,
     build_bookrag_table_targets,
+    migrate_legacy_document_relation_table,
     prepare_bookrag_document_relation_table,
 )
 from app.services.teradata_sql import (
@@ -112,10 +113,10 @@ def _monthly_key(filename: str) -> tuple[int, int] | None:
     return (int(match.group(1)), month) if 1 <= month <= 12 else None
 
 
-def suggest_document_relations(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return conservative filename-based drafts; suggestions are never active implicitly."""
+def derive_filename_document_relations(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return filename-rule relationships ready for persistence and retrieval."""
     documents = normalize_uploaded_documents(items)
-    suggestions: list[dict[str, Any]] = []
+    relationships: list[dict[str, Any]] = []
     main_by_issue = {
         key: document
         for document in documents
@@ -128,7 +129,7 @@ def suggest_document_relations(items: Iterable[dict[str, Any]]) -> list[dict[str
         issue_key = _issue_key(summary["filename"])
         target = main_by_issue.get(issue_key) if issue_key else None
         if target:
-            suggestions.append(
+            relationships.append(
                 _draft_relation(
                     summary,
                     "summary_of",
@@ -150,7 +151,7 @@ def suggest_document_relations(items: Iterable[dict[str, Any]]) -> list[dict[str
         for index in range(1, len(series)):
             newer = series[index][1]
             older = series[index - 1][1]
-            suggestions.append(
+            relationships.append(
                 _draft_relation(
                     newer,
                     "next_issue_of",
@@ -161,7 +162,7 @@ def suggest_document_relations(items: Iterable[dict[str, Any]]) -> list[dict[str
 
     deduped: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
-    for row in suggestions:
+    for row in relationships:
         key = (row["from_doc_id"], row["relation_type"], row["to_doc_id"])
         if key not in seen:
             seen.add(key)
@@ -184,16 +185,12 @@ def _draft_relation(
         "relation_description": description,
         "source_type": "rule",
         "confidence": 1.0,
-        "is_active": 0,
-        "confirmed": False,
     }
 
 
 def validate_document_relation(
     relation: dict[str, Any],
     documents: Iterable[dict[str, Any]],
-    *,
-    allow_unconfirmed: bool = False,
 ) -> dict[str, Any]:
     document_map = {
         document["doc_id"]: document["filename"]
@@ -210,8 +207,6 @@ def validate_document_relation(
         raise ValueError("A document cannot relate to itself.")
     if relation_type not in BOOKRAG_DOCUMENT_RELATION_TYPES:
         raise ValueError(f"Unsupported document relation type: {relation_type or '(empty)' }.")
-    if not allow_unconfirmed and relation.get("confirmed") is False:
-        raise ValueError("The document relationship suggestion has not been confirmed.")
     source_type = _as_text(relation.get("source_type") or "human", max_len=32).lower()
     if source_type not in BOOKRAG_DOCUMENT_RELATION_SOURCE_TYPES:
         raise ValueError(f"Unsupported document relation source: {source_type}.")
@@ -228,24 +223,17 @@ def validate_document_relation(
         "relation_description": _as_text(relation.get("relation_description"), max_len=4000) or None,
         "source_type": source_type,
         "confidence": confidence,
-        "is_active": 1 if str(relation.get("is_active", "1")).strip().lower() not in {"0", "false", "off", "no"} else 0,
     }
 
 
 def validate_document_relations(
     relations: Iterable[dict[str, Any]],
     documents: Iterable[dict[str, Any]],
-    *,
-    allow_unconfirmed: bool = False,
 ) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
     for relation in relations:
-        row = validate_document_relation(
-            relation,
-            documents,
-            allow_unconfirmed=allow_unconfirmed,
-        )
+        row = validate_document_relation(relation, documents)
         key = (row["from_doc_id"], row["relation_type"], row["to_doc_id"])
         if key in seen:
             raise ValueError(f"Duplicate document relationship: {key!r}.")
@@ -263,6 +251,11 @@ def ensure_document_relation_table(
     targets = build_bookrag_table_targets(vector_store_name)
     qualified_table = _qualified_table_sql(schema_name, targets["document_relations"])
     if _teradata_table_exists(qualified_table, execute_sql_fn):
+        migrate_legacy_document_relation_table(
+            schema_name=schema_name,
+            table_name=targets["document_relations"],
+            execute_sql_fn=execute_sql_fn,
+        )
         return False
     prepare_bookrag_document_relation_table(schema_name, targets, execute_sql_fn)
     return True
@@ -303,7 +296,6 @@ def fetch_document_relations(
     schema_name: str | None,
     execute_sql_fn: ExecuteSqlFn | None,
     doc_ids: Iterable[str] | None = None,
-    active_only: bool = True,
 ) -> list[dict[str, Any]]:
     if execute_sql_fn is None:
         raise RuntimeError("teradataml.execute_sql is unavailable.")
@@ -311,7 +303,7 @@ def fetch_document_relations(
     qualified = _qualified_table_sql(schema_name, table_name)
     if not _teradata_table_exists(qualified, execute_sql_fn):
         return []
-    where_sql = ' WHERE "is_active" = 1' if active_only else ""
+    where_sql = ""
     normalized_ids = sorted({_as_text(value, max_len=64) for value in (doc_ids or []) if _as_text(value)})
     if normalized_ids:
         values = ", ".join(_sql_literal(value) for value in normalized_ids)
@@ -417,7 +409,6 @@ def save_document_relation(
             vector_store_name=vector_store_name,
             schema_name=schema_name,
             execute_sql_fn=execute_sql_fn,
-            active_only=False,
         )
     }
     if delete_key == key and key in existing_keys:
@@ -432,7 +423,6 @@ def save_document_relation(
             "relation_description": normalized["relation_description"],
             "source_type": normalized["source_type"],
             "confidence": normalized["confidence"],
-            "is_active": normalized["is_active"],
             "updated_by": _as_text(username, max_len=128) or None,
             "updated_at": now,
         }
@@ -453,7 +443,7 @@ def save_document_relation(
     persist_document_relations(
         vector_store_name=vector_store_name,
         schema_name=schema_name,
-        relations=[{**normalized, "confirmed": True}],
+        relations=[normalized],
         documents=documents,
         execute_sql_fn=execute_sql_fn,
         username=username,

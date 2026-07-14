@@ -1495,8 +1495,6 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
                         "relation_description": "Filename rule created an initial relationship.",
                         "source_type": "rule",
                         "confidence": 1.0,
-                        "is_active": 0,
-                        "confirmed": False,
                     }
                 ]
 
@@ -1530,7 +1528,7 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
                 stack.enter_context(mock.patch('app.services.multi_format.persist_bookrag_raw_rows', side_effect=_persist_raw))
                 stack.enter_context(mock.patch('app.services.multi_format.persist_bookrag_blocks', side_effect=_persist_blocks))
                 stack.enter_context(mock.patch('app.services.multi_format.persist_bookrag_nodes', side_effect=_persist_nodes))
-                stack.enter_context(mock.patch('app.services.multi_format.suggest_document_relations', side_effect=_suggest_relations))
+                stack.enter_context(mock.patch('app.services.multi_format.derive_filename_document_relations', side_effect=_suggest_relations))
                 stack.enter_context(mock.patch('app.services.multi_format.persist_document_relations', side_effect=_persist_relations))
                 stack.enter_context(mock.patch('app.services.multi_format._count_teradata_rows', return_value=2))
 
@@ -1570,8 +1568,8 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
         self.assertEqual(summary['document_relation_count'], 1)
         self.assertEqual(summary['document_relation_rule_count'], 1)
         self.assertEqual(len(document_relation_rows), 1)
-        self.assertEqual(document_relation_rows[0]['is_active'], 0)
-        self.assertTrue(document_relation_rows[0]['confirmed'])
+        self.assertNotIn('is_active', document_relation_rows[0])
+        self.assertNotIn('confirmed', document_relation_rows[0])
 
 
 if __name__ == '__main__':

@@ -188,7 +188,6 @@ def _document_relation_admin_context(
                 vector_store_name=selected,
                 schema_name=schema_name,
                 execute_sql_fn=execute_sql,
-                active_only=False,
             )
     except Exception as ex:
         if status is None:
@@ -1241,7 +1240,6 @@ async def save_document_relations_admin(
     relation_type: str = Form(default=""),
     to_doc_id: str = Form(default=""),
     relation_description: str = Form(default=""),
-    is_active: str = Form(default=""),
     original_from_doc_id: str = Form(default=""),
     original_relation_type: str = Form(default=""),
     original_to_doc_id: str = Form(default=""),
@@ -1267,8 +1265,6 @@ async def save_document_relations_admin(
                 "relation_description": relation_description,
                 "source_type": "human",
                 "confidence": 1.0,
-                "is_active": is_active,
-                "confirmed": True,
             },
             documents=documents,
             execute_sql_fn=execute_sql,
@@ -1344,7 +1340,6 @@ async def export_document_relations_admin(request: Request, vector_store_name: s
         vector_store_name=selected,
         schema_name=_document_relation_schema_name(request.app),
         execute_sql_fn=execute_sql,
-        active_only=False,
     )
     fieldnames = [
         "from_doc_id",
@@ -1355,7 +1350,6 @@ async def export_document_relations_admin(request: Request, vector_store_name: s
         "relation_description",
         "source_type",
         "confidence",
-        "is_active",
     ]
     buffer = io.StringIO(newline="")
     writer = csv.DictWriter(buffer, fieldnames=fieldnames, extrasaction="ignore")
@@ -1408,13 +1402,12 @@ async def import_document_relations_admin(
                     raise ValueError(f"Target filename is missing or not unique: {filename!r}.")
                 row["to_doc_id"] = filename_map[filename]
             row["source_type"] = "import"
-            row["confirmed"] = True
         normalized_rows = validate_document_relations(imported, documents)
         for row in normalized_rows:
             save_document_relation(
                 vector_store_name=selected,
                 schema_name=schema_name,
-                relation={**row, "confirmed": True},
+                relation=row,
                 documents=documents,
                 execute_sql_fn=execute_sql,
                 username=str(request.cookies.get("evsui_user", "")),

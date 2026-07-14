@@ -74,7 +74,6 @@
         {% for doc in relation_admin.documents %}<option value="{{ doc.doc_id }}">{{ doc.filename }}</option>{% endfor %}
       </select>
       <input type="text" name="relation_description" placeholder="Relationship description" />
-      <label class="document-relation-confirm"><input type="checkbox" name="is_active" value="1" checked /> Active</label>
       <button type="submit" class="wizard-btn">Save</button>
     </form>
   </section>
@@ -88,7 +87,7 @@
     {% if relation_admin.relations|default([]) %}
     <div class="document-relation-admin-table-wrap">
       <table class="document-relation-admin-table">
-        <thead><tr><th>From Filename</th><th>Relationship</th><th>To Filename</th><th>Description</th><th>Source</th><th>Status</th><th>Actions</th></tr></thead>
+        <thead><tr><th>From Filename</th><th>Relationship</th><th>To Filename</th><th>Description</th><th>Source</th><th>Actions</th></tr></thead>
         <tbody>
         {% for row in relation_admin.relations %}
           <tr>
@@ -97,7 +96,6 @@
             <td>{{ row.to_filename }}</td>
             <td>{{ row.relation_description|default('', true) }}</td>
             <td>{{ row.source_type|default('human', true) }}</td>
-            <td>{% if row.confirmed is defined and not row.confirmed %}Suggested{% elif row.is_active|default(1) %}Active{% else %}Inactive{% endif %}</td>
             <td>
               {% if relation_admin.table_initialized %}
               <details class="document-relation-edit-details">
@@ -117,7 +115,6 @@
                     {% for doc in relation_admin.documents %}<option value="{{ doc.doc_id }}" {% if doc.doc_id == row.to_doc_id %}selected{% endif %}>{{ doc.filename }}</option>{% endfor %}
                   </select>
                   <input type="text" name="relation_description" value="{{ row.relation_description|default('', true) }}" placeholder="Relationship description" />
-                  <label><input type="checkbox" name="is_active" value="1" {% if row.is_active|default(1) %}checked{% endif %} /> Active</label>
                   <button type="submit" class="wizard-btn">Update</button>
                 </form>
               </details>

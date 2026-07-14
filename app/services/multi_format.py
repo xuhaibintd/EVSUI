@@ -43,8 +43,8 @@ from app.services.bookrag_reconcile import reconcile_unstructured_elements  # no
 from app.services.bookrag_graph import build_bookrag_entities
 from app.services.bookrag_integrity import validate_bookrag_dataset_relationships
 from app.services.bookrag_document_relations import (
+    derive_filename_document_relations,
     persist_document_relations,
-    suggest_document_relations,
 )
 from app.services.bookrag_schema import (
     build_bookrag_table_targets,
@@ -2067,7 +2067,7 @@ def run_bookrag_json_to_csv(
                 {"doc_id": item["doc_id"], "filename": item["filename"]}
                 for item in results
             ]
-            relation_rows = suggest_document_relations(relation_documents)
+            relation_rows = derive_filename_document_relations(relation_documents)
             relation_timestamp = _now_ts()
             relation_rows = [
                 {
@@ -2992,16 +2992,16 @@ def _apply_bookrag_tree_pipeline(
         for item in document_relations_to_persist
     }
     if table_generation["document_relations"]:
-        for suggestion in suggest_document_relations(persisted_documents):
+        for relationship in derive_filename_document_relations(persisted_documents):
             key = (
-                str(suggestion.get("from_doc_id") or "").strip(),
-                str(suggestion.get("relation_type") or "").strip(),
-                str(suggestion.get("to_doc_id") or "").strip(),
+                str(relationship.get("from_doc_id") or "").strip(),
+                str(relationship.get("relation_type") or "").strip(),
+                str(relationship.get("to_doc_id") or "").strip(),
             )
             if key in existing_relation_keys:
                 continue
             existing_relation_keys.add(key)
-            document_relations_to_persist.append({**suggestion, "confirmed": True})
+            document_relations_to_persist.append(relationship)
             document_relation_rule_count += 1
 
     if table_generation["document_relations"] and document_relations_to_persist:
@@ -3028,8 +3028,8 @@ def _apply_bookrag_tree_pipeline(
         )
         if document_relation_rule_count:
             partition_warnings.append(
-                f"Created {document_relation_rule_count} inactive bdrel suggestion(s) from filename rules; "
-                "review and activate them in Administration > Business Configuration."
+                f"Created {document_relation_rule_count} bdrel relationship(s) from filename rules; "
+                "every stored relationship is available to retrieval."
             )
 
     persisted_table_row_counts: dict[str, Any] = {}

@@ -1038,7 +1038,7 @@
 }
 
 .document-relation-admin-form {
-  grid-template-columns: minmax(12rem, 1fr) minmax(8rem, 0.55fr) minmax(12rem, 1fr) minmax(12rem, 1fr) auto auto;
+  grid-template-columns: minmax(12rem, 1fr) minmax(8rem, 0.55fr) minmax(12rem, 1fr) minmax(12rem, 1fr) auto;
 }
 
 .document-relation-admin-form select,
