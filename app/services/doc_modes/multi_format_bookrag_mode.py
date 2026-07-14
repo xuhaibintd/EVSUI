@@ -13,9 +13,7 @@ SKIP_VECTORSTORE_CREATE = False
 
 
 def should_run_vectorstore_create(create_values: dict[str, str]) -> bool:
-    if str(create_values.get("bookrag_loaded_csv_run_id") or "").strip():
-        return True
-    return str(create_values.get("multi_format_bookrag_run_embedding", "false")).strip().lower() == "true"
+    return True
 
 
 def preprocess_create_payload(**kwargs) -> tuple[dict, dict | None]:
@@ -25,6 +23,8 @@ def preprocess_create_payload(**kwargs) -> tuple[dict, dict | None]:
         vector_store_name = str(load_summary.get("vector_store_name") or "").strip()
         if vector_store_name != str(kwargs["vector_store_name"] or "").strip():
             raise RuntimeError("Selected loaded-table run does not match the Vector Store name.")
+        table_targets = load_summary.get("table_targets") or {}
+        node_object_name = str(table_targets.get("nodes") or load_summary["node_table"]).strip()
         payload = strip_file_based_create_params(dict(kwargs["exec_payload"]))
         description = str(payload.get("description") or "").strip()
         marker = "unstructured_bookrag_flg"
@@ -33,7 +33,7 @@ def preprocess_create_payload(**kwargs) -> tuple[dict, dict | None]:
         payload.update(
             {
                 "target_database": str(load_summary["target_database"]),
-                "object_names": str(load_summary["node_table"]),
+                "object_names": node_object_name,
                 "data_columns": ["content"],
                 "key_columns": ["doc_id", "node_id"],
                 "description": description,

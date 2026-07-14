@@ -62,15 +62,12 @@ DOC_PIPELINE_UI_DEFAULTS = {
     "multi_format_bookrag_extract_image_block_types": "auto",
     "multi_format_bookrag_generate_raw": "true",
     "multi_format_bookrag_generate_graph": "true",
-    "multi_format_bookrag_run_embedding": "false",
+    "multi_format_bookrag_run_embedding": "true",
     "bookrag_loaded_csv_run_id": "",
 }
 
-DOC_PIPELINE_CHECKBOX_FIELDS = {
-    "multi_format_bookrag_generate_raw",
-    "multi_format_bookrag_generate_graph",
-    "multi_format_bookrag_run_embedding",
-}
+DOC_PIPELINE_CHECKBOX_FIELDS: set[str] = set()
+DOC_PIPELINE_UNTRUNCATED_FIELDS = {"bookrag_loaded_csv_run_id"}
 
 DOC_PIPELINE_OPTIONS = [
     {"value": "text_core", "label": "Text PDF Only"},
@@ -95,5 +92,8 @@ def collect_doc_pipeline_ui_values(form, *, field_max_len: int) -> dict[str, str
             values[ui_field] = "true" if any(str(item).strip().lower() == "true" for item in raw_values) else "false"
             continue
         ui_raw = str(form.get(ui_field, default_value)).strip()
-        values[ui_field] = ui_raw[:field_max_len]
+        if ui_field in DOC_PIPELINE_UNTRUNCATED_FIELDS:
+            values[ui_field] = ui_raw
+        else:
+            values[ui_field] = ui_raw[:field_max_len]
     return values

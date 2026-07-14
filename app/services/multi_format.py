@@ -248,15 +248,11 @@ CREATE SET TABLE {qualified_table} (
 
 
 def _resolve_bookrag_table_generation_flags(create_values: dict[str, str]) -> dict[str, bool]:
-    # Core and Graph are mandatory parts of every new BookRAG CSV contract.
+    # Core, Audit, and Graph are mandatory parts of every new BookRAG CSV contract.
     # Graph CSV files are still emitted with headers when NER produced no rows.
-    raw_enabled = _to_bool(
-        create_values.get(BOOKRAG_TABLE_TOGGLE_FIELDS["raw"], "true"),
-        default=True,
-    )
     return {
         "documents": True,
-        "raw": raw_enabled,
+        "raw": True,
         "blocks": True,
         "nodes": True,
         "document_relations": True,
@@ -267,7 +263,7 @@ def _resolve_bookrag_table_generation_flags(create_values: dict[str, str]) -> di
 
 
 def _resolve_bookrag_embedding_step_flag(create_values: dict[str, str]) -> bool:
-    return _to_bool(create_values.get("multi_format_bookrag_run_embedding", "false"), default=False)
+    return True
 
 
 def normalize_document_files_for_create(

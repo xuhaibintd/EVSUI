@@ -42,16 +42,13 @@ def _base_evs(connected):
 
 
 class CreatePanelBookRAGToggleTests(unittest.TestCase):
-    def test_bookrag_uses_grouped_core_audit_graph_controls(self):
+    def test_bookrag_mandatory_stages_do_not_render_optional_controls(self):
         source = (TEMPLATES_DIR / "partials" / "create_panel.html").read_text(encoding="utf-8")
 
-        self.assertIn("Core (bdoc + bblk + bnode + bdrel)", source)
-        self.assertIn("Audit (braw)", source)
-        self.assertIn("Graph (bent + belnk + brel, required)", source)
-        self.assertIn('name="multi_format_bookrag_generate_graph"', source)
-        self.assertNotIn('name="multi_format_bookrag_generate_entities"', source)
-        self.assertNotIn('name="multi_format_bookrag_generate_entity_links"', source)
-        self.assertNotIn('name="multi_format_bookrag_generate_entity_relations"', source)
+        self.assertNotIn("BookRAG Tables", source)
+        self.assertNotIn('name="multi_format_bookrag_generate_raw"', source)
+        self.assertNotIn('name="multi_format_bookrag_generate_graph"', source)
+        self.assertNotIn('name="multi_format_bookrag_run_embedding"', source)
 
     def test_upload_panel_is_file_only(self):
         source = (TEMPLATES_DIR / "partials" / "selected_documents.html").read_text(encoding="utf-8")
@@ -80,6 +77,7 @@ class CreatePanelBookRAGToggleTests(unittest.TestCase):
         self.assertIn('name="bookrag_csv_run_id"', load_source)
         create_panel_source = (TEMPLATES_DIR / "partials" / "create_panel.html").read_text(encoding="utf-8")
         self.assertIn('partials/bookrag_vector_store_name_field.html', create_panel_source)
+        self.assertIn("section.get('title') == 'Basic' and _doc_pipeline_mode == 'multi_format_bookrag'", create_panel_source)
         select_source = (TEMPLATES_DIR / "partials" / "bookrag_vector_store_name_field.html").read_text(
             encoding="utf-8"
         )

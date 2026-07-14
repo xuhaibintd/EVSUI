@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
+import time
 
 from app.services.create_config import (
     CORE_CREATE_FIELDS,
@@ -26,10 +28,23 @@ from app.utils.table_state import format_preview, row_value_by_header, table_fro
 
 CREATE_READY_TIMEOUT_SECONDS = 120
 CREATE_READY_POLL_INTERVAL_SECONDS = 2
+_TERADATA_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def _split_document_file_hints(raw_value: str) -> list[str]:
     return [chunk.strip() for chunk in str(raw_value or '').replace('\n', ',').split(',') if chunk.strip()]
+
+
+def _format_elapsed(seconds: float) -> str:
+    elapsed = max(0.0, float(seconds or 0.0))
+    minutes = elapsed / 60.0
+    return f"{minutes:.2f} min"
+
+
+def _append_elapsed(message: str, *, elapsed_seconds: float | None) -> str:
+    if elapsed_seconds is None:
+        return message
+    return f"{message} Elapsed: {_format_elapsed(elapsed_seconds)}."
 
 
 def _classify_vectorstore_status(status_output) -> tuple[str, str, str]:
@@ -102,6 +117,53 @@ def _read_vectorstore_status(vector_store) -> tuple[str, str, str, str]:
 
     state, status_text, preview = _classify_vectorstore_status(status_output)
     return state, status_text, preview, ""
+
+
+def _quote_teradata_identifier(value: str) -> str:
+    identifier = str(value or "").strip()
+    if not _TERADATA_IDENTIFIER_RE.match(identifier):
+        raise ValueError(f"unsafe Teradata identifier: {identifier!r}")
+    return f'"{identifier}"'
+
+
+def _scalar_from_sql_result(result) -> int | None:
+    headers, rows = table_from_result(result)
+    if rows and rows[0]:
+        value_index = 1 if headers and headers[0] == "#" and len(rows[0]) > 1 else 0
+        try:
+            return int(str(rows[0][value_index]).strip())
+        except ValueError:
+            return None
+    if hasattr(result, "iloc"):
+        try:
+            return int(result.iloc[0, 0])
+        except Exception:
+            return None
+    return None
+
+
+def _bookrag_vector_index_row_count(
+    *,
+    vector_store_name: str,
+    target_database: str,
+    execute_sql_fn,
+) -> tuple[int | None, str]:
+    if execute_sql_fn is None:
+        return None, "execute_sql is unavailable"
+    try:
+        schema_sql = _quote_teradata_identifier(target_database)
+        table_sql = _quote_teradata_identifier(f"vectorstore_{vector_store_name}_index")
+    except ValueError as ex:
+        return None, str(ex)
+    sql = f"SELECT COUNT(*) FROM {schema_sql}.{table_sql}"
+    try:
+        count_result = execute_sql_fn(sql)
+    except Exception as ex:
+        return None, str(ex)
+    count = _scalar_from_sql_result(count_result)
+    if count is None:
+        return None, f"could not parse row count from {format_preview(count_result, max_chars=300)}"
+    return count, ""
 
 
 async def _wait_for_vectorstore_ready(vector_store) -> tuple[bool, str, str, str]:
@@ -482,6 +544,8 @@ async def handle_upload_and_prepare_create(
         result_message = "Step 2 failed: VectorStore runtime is unavailable in current environment."
         _mark_mode_status("failed", error=result_message)
     else:
+        vector_create_started = time.perf_counter()
+        vector_create_elapsed: float | None = None
         try:
             if doc_pipeline_handler.MODE in {"multi_format", "multi_format_bookrag"}:
                 exec_payload = strip_file_based_create_params(exec_payload)
@@ -528,21 +592,57 @@ async def handle_upload_and_prepare_create(
                     elif fallback_error and not readiness_error:
                         readiness_error = fallback_error
 
+            if mode_summary and mode_summary.get("source") == "loaded_csv_tables":
+                target_database_for_index = str(mode_summary.get("target_database") or "").strip()
+                index_row_count, index_count_error = _bookrag_vector_index_row_count(
+                    vector_store_name=vector_store_name,
+                    target_database=target_database_for_index,
+                    execute_sql_fn=execute_sql_fn,
+                )
+                if index_row_count is not None:
+                    index_message = (
+                        f"BookRAG vector index rows: "
+                        f"{target_database_for_index}.vectorstore_{vector_store_name}_index={index_row_count}."
+                    )
+                    if status_output_preview:
+                        status_output_preview = f"{status_output_preview}\n{index_message}"
+                    else:
+                        status_output_preview = index_message
+                    if index_row_count <= 0:
+                        ready_confirmed = False
+                        readiness_error = (
+                            f"BookRAG vector index table is empty: "
+                            f"{target_database_for_index}.vectorstore_{vector_store_name}_index has 0 rows."
+                        )
+                    elif not ready_confirmed and readiness_error.startswith("Status check failed:"):
+                        ready_confirmed = True
+                        warnings.append(
+                            "VectorStore.status() failed after create(), but BookRAG index row-count check confirmed rows were created."
+                        )
+                elif index_count_error:
+                    ready_confirmed = False
+                    readiness_error = f"BookRAG vector index row-count check failed: {index_count_error}"
+
             if ready_confirmed:
                 _mark_mode_status("ready")
+                vector_create_elapsed = time.perf_counter() - vector_create_started
                 result_status = "ok_with_warnings" if warnings else "ok"
                 result_message = "Step 2 completed. VectorStore.create() executed successfully and status is Ready."
                 append_message_fn = getattr(doc_pipeline_handler, "append_success_message", None)
                 if callable(append_message_fn):
                     result_message = append_message_fn(result_message, mode_summary)
+                result_message = _append_elapsed(result_message, elapsed_seconds=vector_create_elapsed)
             else:
+                vector_create_elapsed = time.perf_counter() - vector_create_started
                 result_status = "error"
                 result_message = (
                     "Step 2 did not finish: VectorStore.create() returned, but "
                     f"{readiness_error}"
                 )
+                result_message = _append_elapsed(result_message, elapsed_seconds=vector_create_elapsed)
                 _mark_mode_status("failed", error=result_message)
         except Exception as ex:
+            vector_create_elapsed = time.perf_counter() - vector_create_started
             ex_text = str(ex)
             already_exists = is_vectorstore_already_exists_error_fn(ex_text)
             verified_existing_store = False
@@ -579,6 +679,7 @@ async def handle_upload_and_prepare_create(
                     append_message_fn = getattr(doc_pipeline_handler, "append_success_message", None)
                     if callable(append_message_fn):
                         result_message = append_message_fn(result_message, mode_summary)
+                    result_message = _append_elapsed(result_message, elapsed_seconds=vector_create_elapsed)
                 else:
                     result_status = "error"
                     current_detail = current_status_error or current_status_text or current_status_preview or "unknown"
@@ -588,6 +689,7 @@ async def handle_upload_and_prepare_create(
                     )
                     if existence_check_detail:
                         result_message = f"{result_message} {existence_check_detail}"
+                    result_message = _append_elapsed(result_message, elapsed_seconds=vector_create_elapsed)
             else:
                 result_status = "error"
                 if already_exists:
@@ -604,6 +706,7 @@ async def handle_upload_and_prepare_create(
                     result_message = f"Step 2 failed while executing VectorStore.create(): {ex}{verification_suffix}"
                 else:
                     result_message = f"Step 2 failed while executing VectorStore.create(): {ex}"
+                result_message = _append_elapsed(result_message, elapsed_seconds=vector_create_elapsed)
             if result_status == "error":
                 _mark_mode_status("failed", error=result_message)
             else:

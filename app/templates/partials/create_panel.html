@@ -63,7 +63,7 @@
   {% for section in create_ui_sections %}
   <section class="param-group" {% if section.get('title') == 'Search Algorithm' %}data-algorithm-panel{% endif %}>
     <h3 class="section-title-inline">
-      <span>{{ section.get('title') }}</span>
+      <span>{% if section.get('title') == 'Basic' and _doc_pipeline_mode == 'multi_format_bookrag' %}Create Vector Store{% else %}{{ section.get('title') }}{% endif %}</span>
       {% if section.get('hint') %}
       <span class="algorithm-hint-inline" data-algo-hint></span>
       {% endif %}
@@ -135,12 +135,12 @@
   </section>
   {% endfor %}
 
-  <div class="stack-inline create-action-row">
+  <div class="stack-inline">
     <button
       type="submit"
       name="create_mode"
       value="core"
-      class="progress-btn create-primary-btn"
+      class="progress-btn"
       data-progress-button
       data-progress-show-seconds
       {% if not evs.connected %}disabled{% endif %}
@@ -151,43 +151,6 @@
         <span data-progress-loading-text>Creating...</span>
       </span>
     </button>
-    <div
-      class="bookrag-debug-bar {% if _doc_pipeline_mode != 'multi_format_bookrag' %}doc-mode-hidden{% endif %}"
-      data-doc-mode-for="multi_format_bookrag"
-      {% if _doc_pipeline_mode != 'multi_format_bookrag' %}hidden{% endif %}
-      aria-label="BookRAG table generation toggles"
-    >
-      <span class="bookrag-debug-label">BookRAG Tables</span>
-      <label class="bookrag-debug-toggle">
-        <input type="checkbox" checked disabled />
-        <span>Core (bdoc + bblk + bnode + bdrel)</span>
-      </label>
-      <label class="bookrag-debug-toggle">
-        <input
-          type="checkbox"
-          name="multi_format_bookrag_generate_raw"
-          value="true"
-          {% if create_values.get('multi_format_bookrag_generate_raw', 'true') == 'true' %}checked{% endif %}
-          {% if not evs.connected or _doc_pipeline_mode != 'multi_format_bookrag' %}disabled{% endif %}
-        />
-        <span>Audit (braw)</span>
-      </label>
-      <label class="bookrag-debug-toggle">
-        <input type="hidden" name="multi_format_bookrag_generate_graph" value="true" />
-        <input type="checkbox" checked disabled />
-        <span>Graph (bent + belnk + brel, required)</span>
-      </label>
-      <label class="bookrag-debug-toggle bookrag-debug-toggle-embed">
-        <input
-          type="checkbox"
-          name="multi_format_bookrag_run_embedding"
-          value="true"
-          {% if create_values.get('multi_format_bookrag_run_embedding', 'false') == 'true' %}checked{% endif %}
-          {% if not evs.connected or _doc_pipeline_mode != 'multi_format_bookrag' %}disabled{% endif %}
-        />
-        <span>embed</span>
-      </label>
-    </div>
   </div>
 </form>
 

@@ -8,7 +8,7 @@ SKIP_VECTORSTORE_CREATE = False
 
 
 def should_run_vectorstore_create(create_values: dict[str, str]) -> bool:
-    return str(create_values.get("multi_format_bookrag_run_embedding", "false")).strip().lower() == "true"
+    return True
 
 
 def preprocess_create_payload(**kwargs) -> tuple[dict, dict | None]:

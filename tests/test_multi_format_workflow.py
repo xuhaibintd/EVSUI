@@ -380,10 +380,17 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
         self.assertTrue(flags["documents"])
         self.assertTrue(flags["blocks"])
         self.assertTrue(flags["nodes"])
-        self.assertFalse(flags["raw"])
+        self.assertTrue(flags["raw"])
         self.assertTrue(flags["entities"])
         self.assertTrue(flags["entity_links"])
         self.assertTrue(flags["entity_relations"])
+
+    def test_bookrag_embedding_is_mandatory_even_for_legacy_false_value(self) -> None:
+        self.assertTrue(
+            multi_format._resolve_bookrag_embedding_step_flag(
+                self._create_values(multi_format_bookrag_run_embedding="false")
+            )
+        )
 
     def test_bookrag_legacy_graph_toggle_enables_complete_graph_group(self) -> None:
         flags = multi_format._resolve_bookrag_table_generation_flags(
