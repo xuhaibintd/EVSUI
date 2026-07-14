@@ -269,8 +269,4 @@
   {% include "partials/bookrag_csv_load_panel.html" %}
   <div id="bookrag-csv-load-result" class="bookrag-parse-result-shell" aria-live="polite"></div>
 
-  {% set bookrag_loaded_csv_runs = bookrag_csv_runs | selectattr('load_status', 'equalto', 'ready') | list %}
-  {% include "partials/bookrag_vector_store_create_panel.html" %}
-  <div id="bookrag-vector-store-create-result" class="bookrag-parse-result-shell" aria-live="polite"></div>
-
 </div>

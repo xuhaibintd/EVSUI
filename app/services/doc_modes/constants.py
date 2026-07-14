@@ -63,6 +63,7 @@ DOC_PIPELINE_UI_DEFAULTS = {
     "multi_format_bookrag_generate_raw": "true",
     "multi_format_bookrag_generate_graph": "true",
     "multi_format_bookrag_run_embedding": "false",
+    "bookrag_loaded_csv_run_id": "",
 }
 
 DOC_PIPELINE_CHECKBOX_FIELDS = {

@@ -587,6 +587,12 @@ def _build_home_context(request: Request, app) -> dict:
 
     username = _current_user(request)
     bookrag_section_rules = load_bookrag_section_rules()
+    bookrag_csv_runs = list_bookrag_csv_runs()
+    bookrag_loaded_csv_runs = [
+        run
+        for run in bookrag_csv_runs
+        if run.get("load_status") == "ready" and run.get("vector_store_status") != "ready"
+    ]
     return {
         "messages": app.state.chat_history,
         "evs": state,
@@ -599,7 +605,8 @@ def _build_home_context(request: Request, app) -> dict:
         "create_result": app.state.last_create_operation,
         "document_uploads": app.state.document_uploads,
         "bookrag_parse_runs": list_bookrag_parse_runs(),
-        "bookrag_csv_runs": list_bookrag_csv_runs(),
+        "bookrag_csv_runs": bookrag_csv_runs,
+        "bookrag_loaded_csv_runs": bookrag_loaded_csv_runs,
         "document_relation_admin": {
             "vector_store_options": list(state.get("chat_vs_options") or []),
             "selected_vector_store": str(

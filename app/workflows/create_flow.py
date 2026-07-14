@@ -16,6 +16,7 @@ from app.services.create_config import (
 from app.services.doc_modes.constants import collect_doc_pipeline_ui_values
 from app.services.doc_modes.registry import get_doc_pipeline_handler
 from app.services.multi_format import (
+    get_ready_bookrag_csv_load_summary,
     normalize_document_files_for_create,
     strip_create_ingestor_params,
     strip_file_based_create_params,
@@ -191,11 +192,35 @@ async def handle_upload_and_prepare_create(
 
     raw_doc_pipeline_mode = str(form.get("doc_pipeline_mode", "")).strip()
     doc_pipeline_mode = raw_doc_pipeline_mode
+    loaded_csv_run_id = str(form.get("bookrag_loaded_csv_run_id") or "").strip()
+    loaded_run_error = ""
+    if raw_doc_pipeline_mode == "multi_format_bookrag" and loaded_csv_run_id:
+        try:
+            loaded_summary = get_ready_bookrag_csv_load_summary(csv_run_id=loaded_csv_run_id)
+            vector_store_name = str(loaded_summary.get("vector_store_name") or "").strip()
+        except Exception as ex:
+            loaded_run_error = str(ex)
     create_values["vector_store_name"] = vector_store_name
     create_values["create_preset"] = create_preset
     create_values["create_mode"] = create_mode
     create_values["doc_pipeline_mode"] = doc_pipeline_mode
     create_values.update(collect_doc_pipeline_ui_values(form, field_max_len=CREATE_FIELD_MAX_LEN))
+
+    if loaded_run_error:
+        app.state.create_form_values = create_values
+        return templates.TemplateResponse(
+            request,
+            "partials/create_result.html",
+            {
+                "create_result": {
+                    "status": "error",
+                    "time": now_ts(),
+                    "message": f"Selected loaded-table run is unavailable: {loaded_run_error}",
+                },
+                "evs": app.state.evs_state,
+                "is_htmx": is_htmx,
+            },
+        )
 
     required_missing: list[str] = []
     if not vector_store_name:
@@ -207,7 +232,8 @@ async def handle_upload_and_prepare_create(
         required_missing.append("embeddings_model")
     has_document_files = bool(_split_document_file_hints(form.get("document_files", "")))
     has_uploaded_documents = bool(saved or app.state.document_uploads)
-    if not (has_uploaded_documents or has_document_files):
+    uses_loaded_bookrag_tables = raw_doc_pipeline_mode == "multi_format_bookrag" and bool(loaded_csv_run_id)
+    if not (has_uploaded_documents or has_document_files or uses_loaded_bookrag_tables):
         required_missing.append("document_source")
 
     if required_missing:
@@ -433,6 +459,16 @@ async def handle_upload_and_prepare_create(
     status_output_preview = ""
 
     mode_skip_vectorstore_create = bool(mode_summary.get("skip_vectorstore_create")) if mode_summary else (not should_run_vectorstore_create)
+    mark_mode_status_fn = getattr(doc_pipeline_handler, "mark_vectorstore_status", None)
+
+    def _mark_mode_status(status: str, *, error: str = "", create_payload: dict | None = None) -> None:
+        if callable(mark_mode_status_fn):
+            mark_mode_status_fn(
+                mode_summary,
+                status=status,
+                error=error,
+                create_payload=create_payload,
+            )
 
     if mode_error:
         result_status = "error"
@@ -444,6 +480,7 @@ async def handle_upload_and_prepare_create(
     elif vector_store_cls is None:
         result_status = "error"
         result_message = "Step 2 failed: VectorStore runtime is unavailable in current environment."
+        _mark_mode_status("failed", error=result_message)
     else:
         try:
             if doc_pipeline_handler.MODE in {"multi_format", "multi_format_bookrag"}:
@@ -451,6 +488,7 @@ async def handle_upload_and_prepare_create(
                 exec_payload["nv_ingestor"] = None
             else:
                 exec_payload = strip_create_ingestor_params(exec_payload)
+            _mark_mode_status("creating", create_payload=exec_payload)
             vector_store = vector_store_cls(vector_store_name)
             create_output = vector_store.create(**exec_payload)
             execution_output_preview = format_preview(create_output)
@@ -491,6 +529,7 @@ async def handle_upload_and_prepare_create(
                         readiness_error = fallback_error
 
             if ready_confirmed:
+                _mark_mode_status("ready")
                 result_status = "ok_with_warnings" if warnings else "ok"
                 result_message = "Step 2 completed. VectorStore.create() executed successfully and status is Ready."
                 append_message_fn = getattr(doc_pipeline_handler, "append_success_message", None)
@@ -502,6 +541,7 @@ async def handle_upload_and_prepare_create(
                     "Step 2 did not finish: VectorStore.create() returned, but "
                     f"{readiness_error}"
                 )
+                _mark_mode_status("failed", error=result_message)
         except Exception as ex:
             ex_text = str(ex)
             already_exists = is_vectorstore_already_exists_error_fn(ex_text)
@@ -564,6 +604,10 @@ async def handle_upload_and_prepare_create(
                     result_message = f"Step 2 failed while executing VectorStore.create(): {ex}{verification_suffix}"
                 else:
                     result_message = f"Step 2 failed while executing VectorStore.create(): {ex}"
+            if result_status == "error":
+                _mark_mode_status("failed", error=result_message)
+            else:
+                _mark_mode_status("ready")
 
     result = {
         "status": result_status,

@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from app.services.multi_format import apply_multi_format_pipeline
+from app.services.multi_format import (
+    apply_multi_format_pipeline,
+    get_ready_bookrag_csv_load_summary,
+    strip_file_based_create_params,
+    update_bookrag_csv_vector_store_status,
+)
 
 MODE = "multi_format_bookrag"
 LABEL = "Multi-Format BookRAG"
@@ -8,10 +13,43 @@ SKIP_VECTORSTORE_CREATE = False
 
 
 def should_run_vectorstore_create(create_values: dict[str, str]) -> bool:
+    if str(create_values.get("bookrag_loaded_csv_run_id") or "").strip():
+        return True
     return str(create_values.get("multi_format_bookrag_run_embedding", "false")).strip().lower() == "true"
 
 
 def preprocess_create_payload(**kwargs) -> tuple[dict, dict | None]:
+    csv_run_id = str(kwargs["create_values"].get("bookrag_loaded_csv_run_id") or "").strip()
+    if csv_run_id:
+        load_summary = get_ready_bookrag_csv_load_summary(csv_run_id=csv_run_id)
+        vector_store_name = str(load_summary.get("vector_store_name") or "").strip()
+        if vector_store_name != str(kwargs["vector_store_name"] or "").strip():
+            raise RuntimeError("Selected loaded-table run does not match the Vector Store name.")
+        payload = strip_file_based_create_params(dict(kwargs["exec_payload"]))
+        description = str(payload.get("description") or "").strip()
+        marker = "unstructured_bookrag_flg"
+        if marker not in description.lower():
+            description = f"{description} {marker}".strip()
+        payload.update(
+            {
+                "target_database": str(load_summary["target_database"]),
+                "object_names": str(load_summary["node_table"]),
+                "data_columns": ["content"],
+                "key_columns": ["doc_id", "node_id"],
+                "description": description,
+                "nv_ingestor": None,
+            }
+        )
+        persisted_counts = load_summary.get("persisted_row_counts") or {}
+        return payload, {
+            **load_summary,
+            "source": "loaded_csv_tables",
+            "skip_vectorstore_create": False,
+            "nodes_table_name": str(load_summary["node_table"]),
+            "node_count": persisted_counts.get("nodes"),
+            "entity_count": persisted_counts.get("entities"),
+            "entity_relation_count": persisted_counts.get("entity_relations"),
+        }
     return apply_multi_format_pipeline(
         exec_payload=kwargs["exec_payload"],
         create_values=kwargs["create_values"],
@@ -20,6 +58,23 @@ def preprocess_create_payload(**kwargs) -> tuple[dict, dict | None]:
         execute_sql_fn=kwargs.get("execute_sql_fn"),
         resolve_path_hint=kwargs["resolve_path_hint"],
         pipeline_mode=MODE,
+    )
+
+
+def mark_vectorstore_status(
+    summary: dict | None,
+    *,
+    status: str,
+    error: str = "",
+    create_payload: dict | None = None,
+) -> None:
+    if not summary or summary.get("source") != "loaded_csv_tables":
+        return
+    update_bookrag_csv_vector_store_status(
+        csv_run_id=str(summary["csv_run_id"]),
+        status=status,
+        error=error,
+        create_payload=create_payload,
     )
 
 

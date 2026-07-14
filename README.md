@@ -287,7 +287,7 @@ The **Generate CSV from JSON** action can select any locally stored parsing mani
 
 The **Load CSV to Tables** action accepts only a `ready` CSV manifest. It validates every CSV path, checksum, table key, row count, and header before creating the mapped BookRAG tables. CSV files load concurrently, and persisted table counts must match the manifest before the run is marked table-ready. This stage never creates a Vector Store.
 
-The separate **Create Vector Store** action accepts only a CSV run whose table load is `ready`. It reads the verified load summary without loading CSV again, then uses the manifest's target name and qualified `bnode` table as `object_names`, with `content` as the data column and `doc_id,node_id` as key columns. A CSV load or row-count failure therefore prevents the create action from becoming available.
+After table loading succeeds, the existing **Basic > Vector Store Name** field becomes a dropdown of table-ready runs. Selecting a run keeps the normal Search Algorithm, Rerank, and other create settings, and the existing bottom **Create Vector Store** button reads the verified load summary without loading CSV again. The server uses the manifest's target name and qualified `bnode` table as `object_names`, with `content` as the data column and `doc_id,node_id` as key columns. A CSV load or row-count failure therefore prevents that run from appearing in the dropdown.
 
 1. Upload saves each file under its UUID `doc_id` and records `{doc_id, filename, saved_path}` in the document manifest.
 2. The upload UI stops at the file catalog; it does not render or submit document relationships.

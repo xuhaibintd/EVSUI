@@ -188,6 +188,74 @@ class CreateFlowDocumentSourceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(result["status"], {"ok", "ok_with_warnings"})
         self.assertEqual(captured_kwargs["document_files"], ["uploads/documents/sample.pdf"])
 
+    async def test_loaded_bookrag_run_uses_existing_create_controls_without_document_preprocessing(self):
+        captured_kwargs = {}
+        status_calls = []
+        load_summary = {
+            "status": "ready",
+            "csv_run_id": "csv-run-1",
+            "vector_store_name": "demo_vs",
+            "target_database": "demo_schema",
+            "node_table": "demo_schema.demo_vs_bk_bnode",
+            "persisted_row_counts": {"nodes": 10, "entities": 2, "entity_relations": 1},
+            "warnings": [],
+        }
+
+        class VectorStore:
+            def __init__(self, name):
+                self.name = name
+
+            def create(self, **kwargs):
+                captured_kwargs.update(kwargs)
+                return "created"
+
+            def status(self):
+                return "Ready"
+
+        form_data = {
+            "bookrag_loaded_csv_run_id": "csv-run-1",
+            "doc_pipeline_mode": "multi_format_bookrag",
+            "embeddings_model": "text-embedding-3-small",
+            "search_algorithm": "VECTORDISTANCE",
+            "create_mode": "core",
+            "create_preset": "auto",
+        }
+        with patch(
+            "app.workflows.create_flow.get_ready_bookrag_csv_load_summary",
+            return_value=load_summary,
+        ), patch(
+            "app.services.doc_modes.multi_format_bookrag_mode.get_ready_bookrag_csv_load_summary",
+            return_value=load_summary,
+        ), patch(
+            "app.services.doc_modes.multi_format_bookrag_mode.update_bookrag_csv_vector_store_status",
+            side_effect=lambda **kwargs: status_calls.append(kwargs),
+        ):
+            response = await handle_upload_and_prepare_create(
+                _DummyRequest(form_data),
+                self._build_app(),
+                _DummyTemplates(),
+                vector_store_cls=VectorStore,
+                execute_sql_fn=lambda *args, **kwargs: None,
+                save_document_uploads_fn=self._save_document_uploads,
+                collect_upload_files_fn=lambda form, field_name="files": [],
+                resolve_path_hint_fn=lambda value: value,
+                now_ts=lambda: "2026-04-14 00:00:00",
+                is_htmx=True,
+                is_vectorstore_already_exists_error_fn=lambda value: False,
+                verify_vectorstore_exists_fn=lambda *args, **kwargs: (False, "", ""),
+                append_connect_step=lambda *args, **kwargs: None,
+            )
+
+        result = response["context"]["create_result"]
+        self.assertIn(result["status"], {"ok", "ok_with_warnings"})
+        self.assertEqual(result["vector_store_name"], "demo_vs")
+        self.assertEqual(captured_kwargs["target_database"], "demo_schema")
+        self.assertEqual(captured_kwargs["object_names"], "demo_schema.demo_vs_bk_bnode")
+        self.assertEqual(captured_kwargs["data_columns"], ["content"])
+        self.assertEqual(captured_kwargs["key_columns"], ["doc_id", "node_id"])
+        self.assertNotIn("document_files", captured_kwargs)
+        self.assertEqual([call["status"] for call in status_calls], ["creating", "ready"])
+
 
 if __name__ == "__main__":
     unittest.main()

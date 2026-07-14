@@ -201,8 +201,10 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
 
             parse_mock.assert_not_called()
             self.assertEqual(first["status"], "ready")
+            self.assertTrue(first["created_at"])
             self.assertEqual(first["success_count"], 2)
             self.assertEqual(first["csv_files_created"], 15)
+            self.assertEqual(first["csv_file_count"], 15)
             self.assertEqual(len(first["run_csv_files"]), 1)
             self.assertEqual(first["run_csv_files"][0]["table_key"], "document_relations")
             first_manifest = multi_format.json.loads(Path(first["manifest_path"]).read_text(encoding="utf-8"))

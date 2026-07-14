@@ -22,5 +22,7 @@
   </ul>
   {% endif %}
 </div>
-{% include "partials/bookrag_vector_store_create_panel.html" %}
+{% set bookrag_vector_name_oob = true %}
+{% set bookrag_selected_loaded_csv_run_id = bookrag_csv_load.csv_run_id %}
+{% include "partials/bookrag_vector_store_name_field.html" %}
 {% endif %}

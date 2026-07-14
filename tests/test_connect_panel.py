@@ -73,17 +73,18 @@ class CreatePanelBookRAGToggleTests(unittest.TestCase):
         self.assertIn('name="bookrag_csv_target_database"', source)
         self.assertIn('bookrag-csv-generate-actions', source)
         self.assertIn('partials/bookrag_csv_load_panel.html', source)
-        self.assertIn('partials/bookrag_vector_store_create_panel.html', source)
-        self.assertLess(source.index('partials/bookrag_csv_load_panel.html'), source.index('partials/bookrag_vector_store_create_panel.html'))
+        self.assertNotIn('bookrag_vector_store_create_panel.html', source)
         load_source = (TEMPLATES_DIR / "partials" / "bookrag_csv_load_panel.html").read_text(encoding="utf-8")
         self.assertIn('bookrag-csv-load-actions', load_source)
         self.assertIn('hx-post="/ui/create/load-csv-tables"', load_source)
         self.assertIn('name="bookrag_csv_run_id"', load_source)
-        create_source = (TEMPLATES_DIR / "partials" / "bookrag_vector_store_create_panel.html").read_text(
+        create_panel_source = (TEMPLATES_DIR / "partials" / "create_panel.html").read_text(encoding="utf-8")
+        self.assertIn('partials/bookrag_vector_store_name_field.html', create_panel_source)
+        select_source = (TEMPLATES_DIR / "partials" / "bookrag_vector_store_name_field.html").read_text(
             encoding="utf-8"
         )
-        self.assertIn('hx-post="/ui/create/create-vector-store-from-csv"', create_source)
-        self.assertIn('name="bookrag_vector_create_csv_run_id"', create_source)
+        self.assertIn('name="bookrag_loaded_csv_run_id"', select_source)
+        self.assertIn('Vector Store Name', select_source)
         self.assertLess(source.index("Named Entity Recognition"), source.index("Document Parsing"))
 
     def test_document_parsing_result_scrolls_only_after_ten_files_and_shows_total_minutes(self):
@@ -273,76 +274,6 @@ class DocumentParseRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response["template"], "partials/bookrag_csv_load_result.html")
         self.assertEqual(response["context"]["bookrag_csv_load"], load_summary)
         self.assertEqual(response["context"]["bookrag_loaded_csv_runs"], [load_summary])
-
-    async def test_create_route_uses_loaded_tables_without_loading_csv_again(self):
-        class Request:
-            def __init__(self, app):
-                self.app = app
-
-            async def form(self):
-                return {
-                    "bookrag_vector_create_csv_run_id": "csv-run-1",
-                    "embeddings_model": "text-embedding-3-small",
-                    "search_algorithm": "VECTORDISTANCE",
-                }
-
-        captured_response = {}
-
-        def template_response(request, template_name, context):
-            captured_response.update(template=template_name, context=context)
-            return captured_response
-
-        class FakeVectorStore:
-            def __init__(self, name):
-                self.name = name
-                self.create_kwargs = None
-
-            def create(self, **kwargs):
-                self.create_kwargs = kwargs
-                return {"created": self.name}
-
-        app = SimpleNamespace(
-            state=SimpleNamespace(
-                evs_state={"connected": True, "params": {}, "last_success": "", "last_error": ""},
-                templates=SimpleNamespace(TemplateResponse=template_response),
-            )
-        )
-        load_summary = {
-            "status": "ready",
-            "csv_run_id": "csv-run-1",
-            "vector_store_name": "demo_vs",
-            "target_database": "demo_schema",
-            "node_table": "demo_schema.demo_vs_bk_bnode",
-            "warnings": [],
-        }
-        fake_store = FakeVectorStore("demo_vs")
-        load_mock = mock.Mock()
-        with mock.patch.object(web_router_module, "_is_logged_in", return_value=True), mock.patch.object(
-            web_router_module, "_activate_session_state"
-        ), mock.patch.object(
-            web_router_module, "get_ready_bookrag_csv_load_summary", return_value=load_summary
-        ), mock.patch.object(
-            web_router_module, "run_bookrag_csv_load", load_mock
-        ), mock.patch.object(
-            web_router_module, "_verify_vectorstore_exists", return_value=(False, "", "")
-        ), mock.patch.object(
-            web_router_module, "VectorStore", return_value=fake_store
-        ), mock.patch.object(
-            web_router_module, "_wait_for_vectorstore_ready", new=mock.AsyncMock(return_value=(True, "Ready", "", "Ready"))
-        ), mock.patch.object(
-            web_router_module, "update_bookrag_csv_vector_store_status"
-        ) as status_mock, mock.patch.object(
-            web_router_module, "_persist_active_session_state"
-        ):
-            response = await web_router_module.create_vector_store_from_csv(Request(app))
-
-        load_mock.assert_not_called()
-        self.assertEqual(response["template"], "partials/bookrag_vector_store_create_result.html")
-        self.assertEqual(response["context"]["bookrag_vector_store_create"]["vector_store_status"], "ready")
-        self.assertEqual(fake_store.create_kwargs["object_names"], "demo_schema.demo_vs_bk_bnode")
-        self.assertEqual(fake_store.create_kwargs["data_columns"], ["content"])
-        self.assertEqual(fake_store.create_kwargs["key_columns"], ["doc_id", "node_id"])
-        self.assertEqual(status_mock.call_args_list[-1].kwargs["status"], "ready")
 
     async def test_load_route_never_creates_vector_store_when_csv_loading_fails(self):
         class Request:

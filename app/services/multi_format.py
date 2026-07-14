@@ -2120,6 +2120,7 @@ def run_bookrag_json_to_csv(
     _write_json_atomic(csv_manifest_path, final_manifest)
     return {
         "status": final_status,
+        "created_at": running_manifest["created_at"],
         "parse_run_id": parse_run_id,
         "csv_run_id": csv_run_id,
         "manifest_path": str(csv_manifest_path),
@@ -2132,6 +2133,7 @@ def run_bookrag_json_to_csv(
         "success_count": success_count,
         "failure_count": failure_count,
         "csv_files_created": csv_file_count,
+        "csv_file_count": csv_file_count,
         "document_relation_count": document_relation_count,
         "run_csv_files": run_csv_files,
         "run_error": run_error,

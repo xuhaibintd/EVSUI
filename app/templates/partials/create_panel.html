@@ -72,6 +72,23 @@
     <div class="basic-inline-grid">
       {% for row in section.get('rows', []) %}
       {% for field in row.get('fields', []) %}
+      {% if field.get('name') == 'vector_store_name' %}
+      <label
+        class="{{ field.get('wrapper_class', 'field') }} basic-inline-field{% if _doc_pipeline_mode not in ['text_core', 'multi_format'] %} doc-mode-hidden{% endif %}"
+        data-doc-mode-for="text_core multi_format"
+        {% if _doc_pipeline_mode not in ['text_core', 'multi_format'] %}hidden aria-hidden="true"{% endif %}
+      >
+        <span class="field-label">Vector Store Name</span>
+        <input
+          type="text"
+          name="vector_store_name"
+          value="{{ create_values.get('vector_store_name', '') }}"
+          required
+          {% if not evs.connected or _doc_pipeline_mode not in ['text_core', 'multi_format'] %}disabled{% endif %}
+        />
+      </label>
+      {% include "partials/bookrag_vector_store_name_field.html" %}
+      {% else %}
       <label class="{{ field.get('wrapper_class', 'field') }} basic-inline-field">
         <span class="field-label">{{ field.get('label', field.get('name', '')) }}</span>
         {% set value = create_values.get(field.get('name', ''), field.get('default', '')) %}
@@ -94,6 +111,7 @@
         <input type="{{ field.get('kind', 'text') }}" name="{{ field.get('name', '') }}" value="{{ value }}" placeholder="{{ field.get('placeholder', '') }}"{% if field.get('required') %} required{% endif %}{% if not evs.connected %} disabled{% endif %}{{ fields.render_attrs(field.get('input_attrs')) }} />
         {% endif %}
       </label>
+      {% endif %}
       {% endfor %}
       {% endfor %}
     </div>

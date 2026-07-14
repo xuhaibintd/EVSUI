@@ -137,6 +137,8 @@
     createForm.dataset.validationBound = "1";
 
     const vectorStoreName = createForm.querySelector("[name='vector_store_name']");
+    const getBookragLoadedRunSelect = () =>
+      createForm.querySelector("select[name='bookrag_loaded_csv_run_id']:not([disabled])");
     const docPipelineMode = createForm.querySelector("[name='doc_pipeline_mode']");
     const embeddingsModel = createForm.querySelector("[name='embeddings_model']");
     const objectNames = createForm.querySelector("[name='object_names']");
@@ -218,6 +220,7 @@
 
     const syncConditionalRules = () => {
       clearValidity(vectorStoreName);
+      clearValidity(getBookragLoadedRunSelect());
       clearValidity(docPipelineMode);
       clearValidity(embeddingsModel);
       clearValidity(objectNames);
@@ -227,6 +230,10 @@
       const uploadedCount = getUploadedCount();
       const selectedFileCount = getSelectedFileCount();
       const documentFileCount = getDocumentFileCount();
+      const isBookrag = docPipelineMode instanceof HTMLSelectElement && docPipelineMode.value === "multi_format_bookrag";
+      const loadedRunSelect = getBookragLoadedRunSelect();
+      const hasLoadedBookragRun =
+        isBookrag && loadedRunSelect instanceof HTMLSelectElement && Boolean(loadedRunSelect.value.trim());
       createForm.dataset.uploadedCount = String(uploadedCount);
       if (embeddingsModel instanceof HTMLSelectElement) {
         embeddingsModel.required = true;
@@ -238,9 +245,8 @@
         uploadInput.required = false;
       }
       createForm.dataset.uploadMissing =
-        uploadedCount === 0 && selectedFileCount === 0 && documentFileCount === 0 ? "1" : "0";
+        !hasLoadedBookragRun && uploadedCount === 0 && selectedFileCount === 0 && documentFileCount === 0 ? "1" : "0";
       if (parseButton instanceof HTMLButtonElement && !parseButton.classList.contains("is-loading")) {
-        const isBookrag = docPipelineMode instanceof HTMLSelectElement && docPipelineMode.value === "multi_format_bookrag";
         const formLocked = createForm.classList.contains("disabled-block");
         parseButton.disabled = formLocked || !isBookrag || isUploadInProgress() || uploadedCount === 0;
       }
@@ -266,6 +272,7 @@
         field.addEventListener("change", syncConditionalRules);
       }
     });
+    createForm.addEventListener("change", syncConditionalRules, true);
 
     if (csvVectorStoreName instanceof HTMLInputElement && vectorStoreName instanceof HTMLInputElement) {
       csvVectorStoreName.addEventListener("input", () => {
