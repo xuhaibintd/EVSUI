@@ -12,7 +12,16 @@ from app.services.bookrag_schema import (
     BOOKRAG_RAW_COLUMNS,
     _build_table_ddl,
 )
-from app.services.bookrag_storage import _as_text, _csv_safe_value, _insert_rows, _load_csv_to_teradata, _raw_row_to_element_dict, build_bookrag_raw_rows, persist_bookrag_dataset
+from app.services.bookrag_storage import (
+    _as_text,
+    _csv_safe_value,
+    _insert_rows,
+    _load_csv_to_teradata,
+    _raw_row_to_element_dict,
+    build_bookrag_raw_rows,
+    persist_bookrag_dataset,
+    prepare_bookrag_table_csv,
+)
 
 
 class BookragRawStorageTests(unittest.TestCase):
@@ -106,6 +115,48 @@ class BookragRawStorageTests(unittest.TestCase):
             "demo_schema",
             "demo_bdoc",
             str(csv_path),
+            1,
+            stats=stats,
+        )
+
+    def test_prepared_csv_is_loaded_without_being_generated_again(self) -> None:
+        rows = [{"doc_id": "doc1", "filename": "demo.pdf"}]
+        columns = [("doc_id", "VARCHAR(64)"), ("filename", "VARCHAR(255)")]
+        table_targets = {"documents": "demo_bdoc"}
+        stats: dict[str, object] = {}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            csv_dir = Path(tmpdir)
+            csv_path = prepare_bookrag_table_csv(
+                table_key="documents",
+                table_targets=table_targets,
+                rows=rows,
+                csv_stage_dir=csv_dir,
+                stats=stats,
+            )
+            with mock.patch(
+                "app.services.bookrag_storage._write_rows_csv",
+                side_effect=AssertionError("CSV must not be generated during the load phase"),
+            ), mock.patch(
+                "app.services.bookrag_storage._load_csv_to_teradata",
+                return_value=1,
+            ) as load_mock:
+                inserted = _insert_rows(
+                    schema_name="demo_schema",
+                    table_name="demo_bdoc",
+                    rows=rows,
+                    columns=columns,
+                    execute_sql_fn=mock.Mock(),
+                    stats=stats,
+                    prepared_csv_path=csv_path,
+                )
+
+        self.assertEqual(inserted, 1)
+        self.assertEqual(stats["input_rows"], 1)
+        load_mock.assert_called_once_with(
+            "demo_schema",
+            "demo_bdoc",
+            csv_path,
             1,
             stats=stats,
         )

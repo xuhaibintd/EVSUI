@@ -69,6 +69,7 @@ from app.services.bookrag_storage import (
     persist_bookrag_nodes,
     persist_bookrag_documents,
     persist_bookrag_raw_rows,
+    prepare_bookrag_table_csv,
     write_bookrag_raw_stage_file,
 )
 from app.services.unstructured_job_runner import (
@@ -176,7 +177,13 @@ BOOKRAG_LEGACY_GRAPH_TOGGLE_FIELDS: tuple[str, ...] = (
     "multi_format_bookrag_generate_entity_links",
     "multi_format_bookrag_generate_entity_relations",
 )
-BOOKRAG_UNSTRUCTURED_WORKERS_DEFAULT = 4
+BOOKRAG_UNSTRUCTURED_WORKERS_DEFAULT = 5
+BOOKRAG_CSV_PREPARE_WORKERS_DEFAULT = 5
+BOOKRAG_CSV_LOAD_WORKERS_DEFAULT = 5
+BOOKRAG_PARSE_MANIFEST_FILENAME = "manifest.json"
+BOOKRAG_PARSE_MANIFEST_SCHEMA_VERSION = 1
+BOOKRAG_CSV_MANIFEST_SCHEMA_VERSION = 1
+BOOKRAG_TRANSFORM_VERSION = "bookrag-json-to-csv-v1"
 
 
 def _resolve_bookrag_unstructured_workers(file_count: int) -> int:
@@ -186,6 +193,41 @@ def _resolve_bookrag_unstructured_workers(file_count: int) -> int:
         minimum=1,
     )
     return max(1, min(configured, max(1, file_count)))
+
+
+def _resolve_bookrag_csv_prepare_workers(file_count: int) -> int:
+    configured = _to_int(
+        os.getenv("BOOKRAG_CSV_PREPARE_WORKERS", str(BOOKRAG_CSV_PREPARE_WORKERS_DEFAULT)),
+        default=BOOKRAG_CSV_PREPARE_WORKERS_DEFAULT,
+        minimum=1,
+    )
+    return max(1, min(configured, max(1, file_count)))
+
+
+def _resolve_bookrag_csv_load_workers(csv_count: int) -> int:
+    configured = _to_int(
+        os.getenv("BOOKRAG_CSV_LOAD_WORKERS", str(BOOKRAG_CSV_LOAD_WORKERS_DEFAULT)),
+        default=BOOKRAG_CSV_LOAD_WORKERS_DEFAULT,
+        minimum=1,
+    )
+    return max(1, min(configured, max(1, csv_count)))
+
+
+def _merge_bookrag_insert_stats(target: dict[str, Any], source: dict[str, Any]) -> None:
+    for key, value in source.items():
+        if key == "csv_files":
+            files = target.setdefault(key, [])
+            for path in value if isinstance(value, list) else []:
+                if path not in files:
+                    files.append(path)
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            target[key] = round(float(target.get(key, 0) or 0) + float(value), 6)
+            if isinstance(value, int) and not isinstance(value, bool):
+                target[key] = int(target[key])
+        elif key == "native_csv_last_error":
+            target[key] = value
+        else:
+            target.setdefault(key, value)
 
 
 def _build_unstructured_table_ddl(
@@ -690,7 +732,7 @@ def _prepare_unstructured_debug_dir(vector_store_name: str) -> Path | None:
 
 def _prepare_bookrag_raw_stage_dir(vector_store_name: str) -> Path:
     vs_name = _sanitize_teradata_identifier(vector_store_name, fallback="bookrag")
-    run_id = time.strftime("%Y%m%d_%H%M%S")
+    run_id = f"{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
     raw_stage_dir = BOOKRAG_RAW_STAGE_DIR_DEFAULT / f"{vs_name}_{run_id}"
     raw_stage_dir.mkdir(parents=True, exist_ok=True)
     return raw_stage_dir
@@ -698,10 +740,97 @@ def _prepare_bookrag_raw_stage_dir(vector_store_name: str) -> Path:
 
 def _prepare_bookrag_csv_stage_dir(vector_store_name: str) -> Path:
     vs_name = _sanitize_teradata_identifier(vector_store_name, fallback="bookrag")
-    run_id = time.strftime("%Y%m%d_%H%M%S")
+    run_id = f"{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
     csv_stage_dir = BOOKRAG_CSV_STAGE_DIR_DEFAULT / f"{vs_name}_{run_id}"
     csv_stage_dir.mkdir(parents=True, exist_ok=True)
     return csv_stage_dir
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with temporary_path.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path.exists():
+            temporary_path.unlink()
+
+
+def _bookrag_config_snapshot(create_values: dict[str, str]) -> dict[str, str]:
+    blocked_fragments = ("api_key", "password", "secret", "token")
+    return {
+        str(key): str(value)
+        for key, value in create_values.items()
+        if str(key).startswith("multi_format_bookrag_")
+        and not any(fragment in str(key).lower() for fragment in blocked_fragments)
+    }
+
+
+def _resolve_bookrag_parse_manifest(parse_run_id: str) -> tuple[Path, dict[str, Any]]:
+    normalized_run_id = str(parse_run_id or "").strip()
+    if not normalized_run_id or Path(normalized_run_id).name != normalized_run_id:
+        raise RuntimeError("Select a valid document parsing run.")
+    raw_root = BOOKRAG_RAW_STAGE_DIR_DEFAULT.resolve()
+    run_dir = (raw_root / normalized_run_id).resolve()
+    if run_dir.parent != raw_root:
+        raise RuntimeError("Document parsing run is outside the raw JSON stage directory.")
+    manifest_path = run_dir / BOOKRAG_PARSE_MANIFEST_FILENAME
+    if not manifest_path.is_file():
+        raise RuntimeError(f"Document parsing manifest was not found: {normalized_run_id}")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as ex:
+        raise RuntimeError(f"Invalid document parsing manifest: {manifest_path}: {ex}") from ex
+    if not isinstance(manifest, dict):
+        raise RuntimeError(f"Invalid document parsing manifest object: {manifest_path}")
+    if manifest.get("artifact_type") != "bookrag_parse_run":
+        raise RuntimeError(f"Unsupported document parsing manifest type: {manifest_path}")
+    if _to_int(manifest.get("schema_version"), default=0) != BOOKRAG_PARSE_MANIFEST_SCHEMA_VERSION:
+        raise RuntimeError(f"Unsupported document parsing manifest schema version: {manifest_path}")
+    if str(manifest.get("parse_run_id") or "") != normalized_run_id:
+        raise RuntimeError(f"Document parsing manifest run ID does not match its directory: {manifest_path}")
+    return manifest_path, manifest
+
+
+def list_bookrag_parse_runs(*, include_incomplete: bool = False) -> list[dict[str, Any]]:
+    """List reusable document parsing manifests stored on the local server."""
+    root = BOOKRAG_RAW_STAGE_DIR_DEFAULT
+    if not root.exists():
+        return []
+    runs: list[dict[str, Any]] = []
+    for manifest_path in root.glob(f"*/{BOOKRAG_PARSE_MANIFEST_FILENAME}"):
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(manifest, dict):
+            continue
+        status = str(manifest.get("status") or "")
+        if not include_incomplete and status != "ready":
+            continue
+        parse_run_id = str(manifest.get("parse_run_id") or manifest_path.parent.name)
+        runs.append(
+            {
+                "parse_run_id": parse_run_id,
+                "created_at": str(manifest.get("created_at") or ""),
+                "vector_store_name": str(manifest.get("vector_store_name") or ""),
+                "file_count": _to_int(manifest.get("file_count"), default=0),
+                "status": status,
+                "manifest_path": str(manifest_path),
+            }
+        )
+    runs.sort(key=lambda item: (item["created_at"], item["parse_run_id"]), reverse=True)
+    return runs
 
 
 def _write_unstructured_debug_file(
@@ -1420,6 +1549,440 @@ def _new_unstructured_client():
     return _create_unstructured_client(api_key=api_key, api_url=api_url)
 
 
+def _build_bookrag_rows_from_raw_elements(
+    *,
+    doc_id: str,
+    filename: str,
+    source_file: str,
+    filetype: str,
+    filesize_bytes: int,
+    vector_store_name: str,
+    workflow_id: str,
+    workflow_name: str,
+    job_id: str,
+    processing_profile: str,
+    language_hint: str | None,
+    created_at: str,
+    raw_elements: list[dict[str, Any]],
+    graph_enabled: bool,
+) -> dict[str, Any]:
+    """Apply the shared BookRAG JSON-to-table-row algorithm without writing CSV or a database."""
+    raw_rows = build_bookrag_raw_rows(doc_id=doc_id, elements=raw_elements)
+    blocks = elements_to_bookrag_blocks(
+        doc_id=doc_id,
+        src=Path(filename),
+        content_type=filetype,
+        raw_elements=raw_elements,
+    )
+    page_count = max((_as_int(block.get("page_number")) or 0 for block in blocks), default=0)
+    document_row = build_bookrag_document_row(
+        doc_id=doc_id,
+        vector_store_name=vector_store_name,
+        workflow_id=workflow_id,
+        workflow_name=workflow_name,
+        job_id=job_id,
+        processing_profile=processing_profile,
+        filename=filename,
+        source_file=source_file,
+        filetype=filetype,
+        filesize_bytes=filesize_bytes,
+        page_count=page_count,
+        language_hint=language_hint,
+        created_at=created_at,
+    )
+    nodes = build_bookrag_nodes(document_row, blocks)
+    entities: list[dict[str, Any]] = []
+    entity_links: list[dict[str, Any]] = []
+    entity_relations: list[dict[str, Any]] = []
+    if graph_enabled:
+        entities, entity_links, entity_relations = build_bookrag_entities(document_row, raw_elements, nodes)
+    validate_bookrag_dataset_relationships(
+        document_row=document_row,
+        raw_rows=raw_rows,
+        blocks=blocks,
+        nodes=nodes,
+        entities=entities,
+        entity_links=entity_links,
+        entity_relations=entity_relations,
+        graph_enabled=graph_enabled,
+    )
+    return {
+        "document_row": document_row,
+        "raw_rows": raw_rows,
+        "blocks": blocks,
+        "nodes": nodes,
+        "entities": entities,
+        "entity_links": entity_links,
+        "entity_relations": entity_relations,
+    }
+
+
+def run_bookrag_document_parsing(
+    *,
+    create_values: dict[str, str],
+    vector_store_name: str,
+    uploaded_documents: list[dict[str, Any]],
+    connection_params: dict[str, Any] | None,
+    resolve_path_hint: Callable[[str], str],
+) -> dict[str, Any]:
+    """Run only the concurrent Unstructured-to-JSON phase for uploaded documents."""
+    if not uploaded_documents:
+        raise RuntimeError("Upload at least one document before parsing documents.")
+
+    partition_strategy = _resolve_partition_strategy(
+        create_values.get("multi_format_bookrag_strategy", "auto")
+    )
+    ocr_languages = _parse_langs(create_values.get("multi_format_bookrag_ocr_languages", ""))
+    image_parameters, image_warnings, image_summary = _resolve_bookrag_image_partition_options(create_values)
+    workflow_name, workflow_nodes, request_parameters, workflow_warnings, processing_profile = (
+        _build_bookrag_reusable_workflow_definition(
+            create_values=create_values,
+            partition_strategy=partition_strategy,
+            languages=ocr_languages,
+            image_partition_parameters=image_parameters,
+        )
+    )
+    api_key, api_url = _load_unstructured_runtime_config(connection_params)
+    request_timeout_ms = _resolve_unstructured_request_timeout_ms()
+    timeout_seconds, poll_interval_seconds = _resolve_bookrag_workflow_poll_config()
+    run_label = f"{vector_store_name or 'bookrag'}_parse_{uuid.uuid4().hex[:8]}"
+    raw_stage_dir = _prepare_bookrag_raw_stage_dir(run_label)
+
+    source_items: list[tuple[int, Path, str]] = []
+    for index, item in enumerate(uploaded_documents):
+        saved_path = str(item.get("saved_path") or "").strip()
+        doc_id = str(item.get("doc_id") or "").strip()[:64]
+        if not saved_path:
+            raise RuntimeError(f"Uploaded document has no saved path: index={index}")
+        src = Path(resolve_path_hint(saved_path))
+        if not src.exists() or not src.is_file():
+            raise RuntimeError(f"Uploaded document is missing: {saved_path}")
+        source_items.append((index, src, doc_id or uuid.uuid4().hex))
+
+    workers = _resolve_bookrag_unstructured_workers(len(source_items))
+    submission_lock = Lock()
+    last_job_submitted_at: float | None = None
+
+    def _parse_one(index: int, src: Path, doc_id: str) -> dict[str, Any]:
+        nonlocal last_job_submitted_at
+        started_at = time.perf_counter()
+        with submission_lock:
+            last_job_submitted_at = _enforce_unstructured_job_submission_spacing(last_job_submitted_at)
+        client = _create_unstructured_client(api_key=api_key, api_url=api_url, timeout_ms=request_timeout_ms)
+        raw_payload, _, _, job_id, workflow_id, workflow_name_for_job = _run_unstructured_workflow_job_for_file(
+            client,
+            request_parameters=request_parameters,
+            src=src,
+            timeout_seconds=timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+            api_key=api_key,
+            api_url=api_url,
+        )
+        raw_stage_file = write_bookrag_raw_stage_file(raw_stage_dir, src.name, doc_id, raw_payload)
+        elements = load_bookrag_raw_stage_file(raw_stage_file)
+        return {
+            "source_index": index,
+            "doc_id": doc_id,
+            "filename": src.name,
+            "source_file": str(src),
+            "filetype": mimetypes.guess_type(src.name)[0] or src.suffix.lower().lstrip("."),
+            "filesize_bytes": src.stat().st_size,
+            "job_id": job_id,
+            "workflow_id": workflow_id,
+            "workflow_name": workflow_name_for_job or workflow_name,
+            "raw_json_path": str(raw_stage_file),
+            "element_count": len(elements),
+            "elapsed_seconds": round(max(0.0, time.perf_counter() - started_at), 6),
+            "status": "success",
+            "error": "",
+        }
+
+    started_at = time.perf_counter()
+    results: list[dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="bookrag-document-parse") as executor:
+        future_map = {
+            executor.submit(_parse_one, index, src, doc_id): (index, src, doc_id)
+            for index, src, doc_id in source_items
+        }
+        for completed_future in as_completed(future_map):
+            index, src, doc_id = future_map[completed_future]
+            try:
+                results.append(completed_future.result())
+            except Exception as ex:
+                results.append(
+                    {
+                        "source_index": index,
+                        "doc_id": doc_id,
+                        "filename": src.name,
+                        "source_file": str(src),
+                        "filetype": mimetypes.guess_type(src.name)[0] or src.suffix.lower().lstrip("."),
+                        "filesize_bytes": src.stat().st_size,
+                        "job_id": "",
+                        "workflow_id": "",
+                        "workflow_name": workflow_name,
+                        "raw_json_path": "",
+                        "element_count": 0,
+                        "elapsed_seconds": 0.0,
+                        "status": "failed",
+                        "error": _sanitize_teradata_text(str(ex))[:2000],
+                    }
+                )
+    results.sort(key=lambda item: int(item["source_index"]))
+    success_count = sum(1 for item in results if item["status"] == "success")
+    failure_count = len(results) - success_count
+    parse_run_id = raw_stage_dir.name
+    created_at = _now_ts()
+    manifest_documents: list[dict[str, Any]] = []
+    for item in results:
+        raw_json_path = Path(str(item.get("raw_json_path") or ""))
+        raw_json_file = raw_json_path.name if raw_json_path.is_file() else ""
+        manifest_documents.append(
+            {
+                "source_index": int(item["source_index"]),
+                "doc_id": str(item["doc_id"]),
+                "filename": str(item["filename"]),
+                "source_file": str(item["source_file"]),
+                "filetype": str(item.get("filetype") or ""),
+                "filesize_bytes": int(item.get("filesize_bytes") or 0),
+                "job_id": str(item.get("job_id") or ""),
+                "workflow_id": str(item.get("workflow_id") or ""),
+                "workflow_name": str(item.get("workflow_name") or ""),
+                "raw_json_file": raw_json_file,
+                "raw_json_sha256": _file_sha256(raw_json_path) if raw_json_file else "",
+                "element_count": int(item.get("element_count") or 0),
+                "status": str(item["status"]),
+                "error": str(item.get("error") or ""),
+            }
+        )
+    manifest_path = raw_stage_dir / BOOKRAG_PARSE_MANIFEST_FILENAME
+    manifest = {
+        "schema_version": BOOKRAG_PARSE_MANIFEST_SCHEMA_VERSION,
+        "artifact_type": "bookrag_parse_run",
+        "parse_run_id": parse_run_id,
+        "status": "ready" if failure_count == 0 else "failed",
+        "created_at": created_at,
+        "vector_store_name": vector_store_name,
+        "file_count": len(results),
+        "success_count": success_count,
+        "failure_count": failure_count,
+        "partition_strategy": partition_strategy,
+        "ocr_languages": ocr_languages,
+        "processing_profile": processing_profile,
+        "workflow_name": workflow_name,
+        "image_partition_parameters": image_summary,
+        "create_values": _bookrag_config_snapshot(create_values),
+        "documents": manifest_documents,
+    }
+    _write_json_atomic(manifest_path, manifest)
+    summary = {
+        "status": "ok" if failure_count == 0 else ("partial" if success_count else "error"),
+        "parse_run_id": parse_run_id,
+        "manifest_path": str(manifest_path),
+        "file_count": len(results),
+        "success_count": success_count,
+        "failure_count": failure_count,
+        "workers": workers,
+        "elapsed_seconds": round(max(0.0, time.perf_counter() - started_at), 6),
+        "raw_stage_dir": str(raw_stage_dir),
+        "partition_strategy": partition_strategy,
+        "ocr_languages": ocr_languages,
+        "processing_profile": processing_profile,
+        "workflow_name": workflow_name,
+        "workflow_node_count": len(workflow_nodes),
+        "image_partition_parameters": image_summary,
+        "warnings": image_warnings + workflow_warnings,
+        "files": results,
+        "csv_files_created": 0,
+        "database_writes": 0,
+    }
+    return summary
+
+
+def run_bookrag_json_to_csv(
+    *,
+    parse_run_id: str,
+    create_values: dict[str, str],
+    vector_store_name: str = "",
+) -> dict[str, Any]:
+    """Regenerate per-document/per-table CSV files from a reusable raw JSON parsing run."""
+    parse_manifest_path, parse_manifest = _resolve_bookrag_parse_manifest(parse_run_id)
+    if str(parse_manifest.get("status") or "") != "ready":
+        raise RuntimeError("CSV generation requires a document parsing run in ready status.")
+    documents = parse_manifest.get("documents")
+    if not isinstance(documents, list) or not documents:
+        raise RuntimeError("Document parsing manifest contains no reusable JSON documents.")
+    if any(not isinstance(item, dict) or item.get("status") != "success" for item in documents):
+        raise RuntimeError("CSV generation requires every JSON document in the parsing run to be successful.")
+
+    effective_vector_store_name = (
+        str(vector_store_name or "").strip()
+        or str(parse_manifest.get("vector_store_name") or "").strip()
+        or "bookrag"
+    )
+    table_targets = build_bookrag_table_targets(effective_vector_store_name)
+    table_generation = _resolve_bookrag_table_generation_flags(create_values)
+    selected_entity_tables = any(table_generation[key] for key in BOOKRAG_ENTITY_TABLE_KEYS)
+    processing_profile = str(parse_manifest.get("processing_profile") or "")
+    ocr_languages = [str(value) for value in (parse_manifest.get("ocr_languages") or [])]
+    parse_run_dir = parse_manifest_path.parent.resolve()
+    csv_run_id = (
+        f"{_sanitize_teradata_identifier(parse_run_id, fallback='bookrag')}_csv_"
+        f"{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+    )
+    csv_stage_dir = BOOKRAG_CSV_STAGE_DIR_DEFAULT / csv_run_id
+    csv_stage_dir.mkdir(parents=True, exist_ok=False)
+    csv_manifest_path = csv_stage_dir / "manifest.json"
+    started_at = time.perf_counter()
+
+    running_manifest = {
+        "schema_version": BOOKRAG_CSV_MANIFEST_SCHEMA_VERSION,
+        "artifact_type": "bookrag_csv_run",
+        "csv_run_id": csv_run_id,
+        "source_parse_run_id": parse_run_id,
+        "source_parse_manifest": str(parse_manifest_path),
+        "status": "running",
+        "created_at": _now_ts(),
+        "vector_store_name": effective_vector_store_name,
+        "transform_version": BOOKRAG_TRANSFORM_VERSION,
+        "table_generation": table_generation,
+        "documents": [],
+    }
+    _write_json_atomic(csv_manifest_path, running_manifest)
+
+    def _transform_document(item: dict[str, Any]) -> dict[str, Any]:
+        source_index = int(item.get("source_index") or 0)
+        doc_id = str(item.get("doc_id") or "").strip()
+        filename = str(item.get("filename") or "").strip()
+        raw_json_file = str(item.get("raw_json_file") or "").strip()
+        if not doc_id or not filename or not raw_json_file or Path(raw_json_file).name != raw_json_file:
+            raise RuntimeError(f"Invalid document metadata at source_index={source_index}.")
+        raw_json_path = (parse_run_dir / raw_json_file).resolve()
+        if raw_json_path.parent != parse_run_dir or not raw_json_path.is_file():
+            raise RuntimeError(f"Raw JSON file was not found for {filename}: {raw_json_file}")
+        expected_sha256 = str(item.get("raw_json_sha256") or "").strip()
+        if expected_sha256 and _file_sha256(raw_json_path) != expected_sha256:
+            raise RuntimeError(f"Raw JSON checksum mismatch for {filename}.")
+
+        transform_started = time.perf_counter()
+        raw_elements = load_bookrag_raw_stage_file(raw_json_path)
+        if not raw_elements:
+            raise RuntimeError(f"Raw JSON contains no elements for {filename}.")
+        filetype = str(item.get("filetype") or "").strip() or (
+            mimetypes.guess_type(filename)[0] or Path(filename).suffix.lower().lstrip(".")
+        )
+        table_rows_by_name = _build_bookrag_rows_from_raw_elements(
+            doc_id=doc_id,
+            filename=filename,
+            source_file=str(item.get("source_file") or filename),
+            filetype=filetype,
+            filesize_bytes=int(item.get("filesize_bytes") or 0),
+            vector_store_name=effective_vector_store_name,
+            workflow_id=str(item.get("workflow_id") or ""),
+            workflow_name=str(item.get("workflow_name") or parse_manifest.get("workflow_name") or ""),
+            job_id=str(item.get("job_id") or ""),
+            processing_profile=processing_profile,
+            language_hint=",".join(ocr_languages) or None,
+            created_at=str(parse_manifest.get("created_at") or _now_ts()),
+            raw_elements=raw_elements,
+            graph_enabled=selected_entity_tables,
+        )
+
+        table_rows = {
+            "documents": [table_rows_by_name["document_row"]],
+            "raw": table_rows_by_name["raw_rows"],
+            "blocks": table_rows_by_name["blocks"],
+            "nodes": table_rows_by_name["nodes"],
+            "entities": table_rows_by_name["entities"],
+            "entity_links": table_rows_by_name["entity_links"],
+            "entity_relations": table_rows_by_name["entity_relations"],
+        }
+        safe_stem = re.sub(r"[^0-9A-Za-z._-]", "_", Path(filename).stem).strip("._") or "document"
+        file_csv_stage_dir = csv_stage_dir / f"{safe_stem}_{doc_id}"
+        csv_files: list[dict[str, Any]] = []
+        for table_key, rows in table_rows.items():
+            if not table_generation[table_key] or not rows:
+                continue
+            csv_path = prepare_bookrag_table_csv(
+                table_key=table_key,
+                table_targets=table_targets,
+                rows=rows,
+                csv_stage_dir=file_csv_stage_dir,
+            )
+            if csv_path:
+                csv_files.append(
+                    {
+                        "table_key": table_key,
+                        "row_count": len(rows),
+                        "csv_file": str(Path(csv_path).relative_to(csv_stage_dir)),
+                        "csv_sha256": _file_sha256(Path(csv_path)),
+                    }
+                )
+        return {
+            "source_index": source_index,
+            "doc_id": doc_id,
+            "filename": filename,
+            "raw_json_file": raw_json_file,
+            "status": "success",
+            "csv_files": csv_files,
+            "elapsed_seconds": round(max(0.0, time.perf_counter() - transform_started), 6),
+            "error": "",
+        }
+
+    workers = _resolve_bookrag_csv_prepare_workers(len(documents))
+    results: list[dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="bookrag-json-to-csv") as executor:
+        future_map = {executor.submit(_transform_document, item): item for item in documents}
+        for future in as_completed(future_map):
+            item = future_map[future]
+            try:
+                results.append(future.result())
+            except Exception as ex:
+                results.append(
+                    {
+                        "source_index": int(item.get("source_index") or 0),
+                        "doc_id": str(item.get("doc_id") or ""),
+                        "filename": str(item.get("filename") or ""),
+                        "raw_json_file": str(item.get("raw_json_file") or ""),
+                        "status": "failed",
+                        "csv_files": [],
+                        "elapsed_seconds": 0.0,
+                        "error": _sanitize_teradata_text(str(ex))[:2000],
+                    }
+                )
+    results.sort(key=lambda value: int(value["source_index"]))
+    success_count = sum(1 for item in results if item["status"] == "success")
+    failure_count = len(results) - success_count
+    csv_file_count = sum(len(item["csv_files"]) for item in results)
+    final_status = "ready" if failure_count == 0 else "failed"
+    final_manifest = {
+        **running_manifest,
+        "status": final_status,
+        "completed_at": _now_ts(),
+        "file_count": len(results),
+        "success_count": success_count,
+        "failure_count": failure_count,
+        "csv_file_count": csv_file_count,
+        "documents": results,
+    }
+    _write_json_atomic(csv_manifest_path, final_manifest)
+    return {
+        "status": final_status,
+        "parse_run_id": parse_run_id,
+        "csv_run_id": csv_run_id,
+        "manifest_path": str(csv_manifest_path),
+        "csv_stage_dir": str(csv_stage_dir),
+        "file_count": len(results),
+        "success_count": success_count,
+        "failure_count": failure_count,
+        "csv_files_created": csv_file_count,
+        "workers": workers,
+        "elapsed_seconds": round(max(0.0, time.perf_counter() - started_at), 6),
+        "transform_version": BOOKRAG_TRANSFORM_VERSION,
+        "database_writes": 0,
+        "files": results,
+    }
+
+
 def _apply_bookrag_tree_pipeline(
     exec_payload: dict,
     create_values: dict[str, str],
@@ -1534,7 +2097,10 @@ def _apply_bookrag_tree_pipeline(
     entity_relation_count: int | None = 0 if selected_entity_tables else None
     document_count = 0
     persisted_documents: list[dict[str, Any]] = []
-    flush_config: dict[str, Any] = {"mode": "per_file"}
+    flush_config: dict[str, Any] = {
+        "mode": "three_stage_parallel",
+        "csv_layout": "per_file_per_table",
+    }
     flush_batches: list[dict[str, Any]] = []
 
     qualified_tables = {
@@ -1620,208 +2186,280 @@ def _apply_bookrag_tree_pipeline(
             "json_stage_seconds": round(json_stage_seconds, 6),
         }
 
+    extracted_files: list[dict[str, Any]] = []
+    extraction_failures: list[str] = []
     with ThreadPoolExecutor(max_workers=unstructured_workers, thread_name_prefix="bookrag-unstructured") as executor:
         future_map = {
-            executor.submit(_extract_and_stage_file, src, doc_id): (src, doc_id)
-            for src, doc_id in source_items
+            executor.submit(_extract_and_stage_file, src, doc_id): (index, src, doc_id)
+            for index, (src, doc_id) in enumerate(source_items)
         }
         for completed_future in as_completed(future_map):
-            extracted = completed_future.result()
-            src = extracted["src"]
-            doc_id = extracted["doc_id"]
-            raw_stage_file = extracted["raw_stage_file"]
-            file_request_parameters = extracted["file_request_parameters"]
-            job_id = extracted["job_id"]
-            workflow_id = extracted["workflow_id"]
-            workflow_name_for_job = extracted["workflow_name_for_job"]
+            index, src, doc_id = future_map[completed_future]
+            try:
+                extracted = completed_future.result()
+                extracted["source_index"] = index
+                extracted_files.append(extracted)
+            except Exception as ex:
+                extraction_failures.append(f"file={src.name}, doc_id={doc_id}: {ex}")
+    if extraction_failures:
+        raise RuntimeError("BookRAG parallel document parsing failed: " + " | ".join(extraction_failures))
+    extracted_files.sort(key=lambda item: int(item["source_index"]))
 
-            job_ids.append(job_id)
-            if workflow_id:
-                workflow_ids.append(workflow_id)
-            if workflow_name_for_job:
-                workflow_names_seen.append(workflow_name_for_job)
-            raw_stage_files.append(str(raw_stage_file))
+    for extracted in extracted_files:
+        job_ids.append(extracted["job_id"])
+        if extracted["workflow_id"]:
+            workflow_ids.append(extracted["workflow_id"])
+        if extracted["workflow_name_for_job"]:
+            workflow_names_seen.append(extracted["workflow_name_for_job"])
+        raw_stage_files.append(str(extracted["raw_stage_file"]))
 
-            transform_started = time.perf_counter()
-            staged_raw_elements = load_bookrag_raw_stage_file(raw_stage_file)
-            reconciled_elements = staged_raw_elements
-            filetype = mimetypes.guess_type(src.name)[0] or src.suffix.lower().lstrip(".")
-            document_row = build_bookrag_document_row(
+    def _transform_and_prepare_csv(extracted: dict[str, Any]) -> dict[str, Any]:
+        src = extracted["src"]
+        doc_id = extracted["doc_id"]
+        raw_stage_file = extracted["raw_stage_file"]
+        workflow_id = extracted["workflow_id"]
+        workflow_name_for_job = extracted["workflow_name_for_job"]
+        job_id = extracted["job_id"]
+        transform_started = time.perf_counter()
+        staged_raw_elements = load_bookrag_raw_stage_file(raw_stage_file)
+        reconciled_elements = staged_raw_elements
+        filetype = mimetypes.guess_type(src.name)[0] or src.suffix.lower().lstrip(".")
+        try:
+            table_rows_by_name = _build_bookrag_rows_from_raw_elements(
                 doc_id=doc_id,
+                filename=src.name,
+                source_file=str(src),
+                filetype=filetype,
+                filesize_bytes=src.stat().st_size,
                 vector_store_name=vector_store_name,
                 workflow_id=workflow_id,
                 workflow_name=workflow_name_for_job or workflow_name,
                 job_id=job_id,
                 processing_profile=processing_profile,
-                filename=src.name,
-                source_file=str(raw_stage_file),
-                filetype=filetype,
-                filesize_bytes=src.stat().st_size,
-            )
-            raw_rows = build_bookrag_raw_rows(doc_id=doc_id, elements=staged_raw_elements)
-            blocks = elements_to_bookrag_blocks(
-                doc_id=doc_id,
-                src=src,
-                content_type=filetype,
+                language_hint=",".join(ocr_languages) or None,
+                created_at=_now_ts(),
                 raw_elements=reconciled_elements,
+                graph_enabled=selected_entity_tables,
             )
-            nodes = build_bookrag_nodes(document_row, blocks)
-            entities: list[dict[str, Any]] = []
-            entity_links: list[dict[str, Any]] = []
-            entity_relations: list[dict[str, Any]] = []
-            if selected_entity_tables:
-                entities, entity_links, entity_relations = build_bookrag_entities(document_row, reconciled_elements, nodes)
-            try:
-                validate_bookrag_dataset_relationships(
-                    document_row=document_row,
-                    raw_rows=raw_rows,
-                    blocks=blocks,
-                    nodes=nodes,
-                    entities=entities,
-                    entity_links=entity_links,
-                    entity_relations=entity_relations,
-                    graph_enabled=selected_entity_tables,
-                )
-            except RuntimeError as ex:
-                raise RuntimeError(
-                    f"BookRAG integrity validation failed for file={src.name}, doc_id={doc_id}: {ex}"
-                ) from ex
-            transform_seconds = max(0.0, time.perf_counter() - transform_started)
+        except RuntimeError as ex:
+            raise RuntimeError(
+                f"BookRAG integrity validation failed for file={src.name}, doc_id={doc_id}: {ex}"
+            ) from ex
+        document_row = table_rows_by_name["document_row"]
+        raw_rows = table_rows_by_name["raw_rows"]
+        blocks = table_rows_by_name["blocks"]
+        nodes = table_rows_by_name["nodes"]
+        entities = table_rows_by_name["entities"]
+        entity_links = table_rows_by_name["entity_links"]
+        entity_relations = table_rows_by_name["entity_relations"]
+        transform_seconds = max(0.0, time.perf_counter() - transform_started)
 
-            debug_file = _write_unstructured_debug_file(
-                debug_dir,
-                src,
-                reconciled_elements,
-                [],
-                file_request_parameters,
-                extra_payload={
-                    **_workflow_debug_payload(
-                        file_request_parameters,
-                        processing_profile=processing_profile,
-                        workflow_id=workflow_id,
-                        workflow_name=workflow_name_for_job or workflow_name,
-                        job_id=job_id,
-                        workflow_kind="bookrag",
-                    ),
-                    "bookrag_image_partition_parameters": image_partition_summary,
-                    "workflow_nodes": workflow_nodes,
-                    "raw_element_count_before_reconcile": len(staged_raw_elements),
-                    "raw_element_count_after_reconcile": len(reconciled_elements),
-                    "block_count": len(blocks),
-                    "node_count": len(nodes),
-                    "entity_count": len(entities),
-                    "entity_link_count": len(entity_links),
-                    "entity_relation_count": len(entity_relations),
-                    "bookrag_table_generation": table_generation,
-                },
-            )
-            if debug_file:
-                debug_files.append(debug_file)
-            if not raw_rows:
-                partition_warnings.append(f"No BookRAG raw elements extracted from file: {src.name}")
+        debug_file = _write_unstructured_debug_file(
+            debug_dir,
+            src,
+            reconciled_elements,
+            [],
+            extracted["file_request_parameters"],
+            extra_payload={
+                **_workflow_debug_payload(
+                    extracted["file_request_parameters"],
+                    processing_profile=processing_profile,
+                    workflow_id=workflow_id,
+                    workflow_name=workflow_name_for_job or workflow_name,
+                    job_id=job_id,
+                    workflow_kind="bookrag",
+                ),
+                "bookrag_image_partition_parameters": image_partition_summary,
+                "workflow_nodes": workflow_nodes,
+                "raw_element_count_before_reconcile": len(staged_raw_elements),
+                "raw_element_count_after_reconcile": len(reconciled_elements),
+                "block_count": len(blocks),
+                "node_count": len(nodes),
+                "entity_count": len(entities),
+                "entity_link_count": len(entity_links),
+                "entity_relation_count": len(entity_relations),
+                "bookrag_table_generation": table_generation,
+            },
+        )
+        result = {
+            **extracted,
+            "document_row": document_row,
+            "raw_rows": raw_rows,
+            "blocks": blocks,
+            "nodes": nodes,
+            "entities": entities,
+            "entity_links": entity_links,
+            "entity_relations": entity_relations,
+            "debug_file": debug_file,
+            "transform_seconds": round(transform_seconds, 6),
+            "csv_tasks": [],
+        }
+        if not raw_rows:
+            result["warning"] = f"No BookRAG raw elements extracted from file: {src.name}"
+            return result
+
+        safe_stem = re.sub(r"[^0-9A-Za-z._-]", "_", src.stem).strip("._") or "document"
+        file_csv_stage_dir = csv_stage_dir / f"{safe_stem}_{doc_id}"
+        result["file_csv_stage_dir"] = file_csv_stage_dir
+        table_rows = {
+            "documents": [document_row],
+            "raw": raw_rows,
+            "blocks": blocks,
+            "nodes": nodes,
+            "entities": entities,
+            "entity_links": entity_links,
+            "entity_relations": entity_relations,
+        }
+        csv_started = time.perf_counter()
+        for table_key, rows in table_rows.items():
+            if not table_generation[table_key] or not rows:
                 continue
-
-            safe_stem = re.sub(r"[^0-9A-Za-z._-]", "_", src.stem).strip("._") or "document"
-            file_csv_stage_dir = csv_stage_dir / f"{safe_stem}_{doc_id}"
-            persist_started = time.perf_counter()
-            inserted_for_file = 0
-            if table_generation["documents"]:
-                inserted_for_file += persist_bookrag_documents(
-                    schema_name=effective_schema_name,
-                    table_targets=bookrag_tables,
-                    rows=[document_row],
-                    execute_sql_fn=execute_sql_fn,
-                    csv_stage_dir=file_csv_stage_dir,
-                    stats=document_insert_stats,
-                )
-                persisted_documents.append(document_row)
-            if table_generation["raw"]:
-                inserted_for_file += persist_bookrag_raw_rows(
-                    schema_name=effective_schema_name,
-                    table_targets=bookrag_tables,
-                    rows=raw_rows,
-                    execute_sql_fn=execute_sql_fn,
-                    csv_stage_dir=file_csv_stage_dir,
-                    stats=raw_insert_stats,
-                )
-            if table_generation["blocks"]:
-                inserted_for_file += persist_bookrag_blocks(
-                    schema_name=effective_schema_name,
-                    table_targets=bookrag_tables,
-                    blocks=blocks,
-                    execute_sql_fn=execute_sql_fn,
-                    csv_stage_dir=file_csv_stage_dir,
-                    stats=block_insert_stats,
-                )
-            if table_generation["nodes"]:
-                inserted_for_file += persist_bookrag_nodes(
-                    schema_name=effective_schema_name,
-                    table_targets=bookrag_tables,
-                    nodes=nodes,
-                    execute_sql_fn=execute_sql_fn,
-                    csv_stage_dir=file_csv_stage_dir,
-                    stats=node_insert_stats,
-                )
-            if table_generation["entities"]:
-                inserted_for_file += persist_bookrag_entities(
-                    schema_name=effective_schema_name,
-                    table_targets=bookrag_tables,
-                    entities=entities,
-                    execute_sql_fn=execute_sql_fn,
-                    csv_stage_dir=file_csv_stage_dir,
-                    stats=entity_insert_stats,
-                )
-            if table_generation["entity_links"]:
-                inserted_for_file += persist_bookrag_entity_links(
-                    schema_name=effective_schema_name,
-                    table_targets=bookrag_tables,
-                    entity_links=entity_links,
-                    execute_sql_fn=execute_sql_fn,
-                    csv_stage_dir=file_csv_stage_dir,
-                    stats=entity_link_insert_stats,
-                )
-            if table_generation["entity_relations"]:
-                inserted_for_file += persist_bookrag_entity_relations(
-                    schema_name=effective_schema_name,
-                    table_targets=bookrag_tables,
-                    entity_relations=entity_relations,
-                    execute_sql_fn=execute_sql_fn,
-                    csv_stage_dir=file_csv_stage_dir,
-                    stats=entity_relation_insert_stats,
-                )
-            persist_seconds = max(0.0, time.perf_counter() - persist_started)
-
-            inserted_rows += inserted_for_file
-            document_count += 1
-            raw_element_count += len(raw_rows)
-            block_count += len(blocks)
-            node_count += len(nodes)
-            if selected_entity_tables:
-                entity_count = (entity_count or 0) + len(entities)
-                entity_link_count = (entity_link_count or 0) + len(entity_links)
-                entity_relation_count = (entity_relation_count or 0) + len(entity_relations)
-            flush_batches.append(
+            task_stats: dict[str, Any] = {}
+            csv_path = prepare_bookrag_table_csv(
+                table_key=table_key,
+                table_targets=bookrag_tables,
+                rows=rows,
+                csv_stage_dir=file_csv_stage_dir,
+                stats=task_stats,
+            )
+            result["csv_tasks"].append(
                 {
-                    "batch_index": len(flush_batches) + 1,
-                    "reason": "file_ready",
-                    "file_count": 1,
-                    "filename": src.name,
-                    "doc_id": doc_id,
-                    "csv_stage_dir": str(file_csv_stage_dir),
-                    "documents": 1,
-                    "raw": len(raw_rows),
-                    "blocks": len(blocks),
-                    "nodes": len(nodes),
-                    "entities": len(entities),
-                    "entity_links": len(entity_links),
-                    "entity_relations": len(entity_relations),
-                    "inserted_rows": inserted_for_file,
-                    "unstructured_seconds": extracted["unstructured_seconds"],
-                    "json_stage_seconds": extracted["json_stage_seconds"],
-                    "transform_seconds": round(transform_seconds, 6),
-                    "persist_seconds": round(persist_seconds, 6),
+                    "task_id": f"{extracted['source_index']}:{table_key}",
+                    "table_key": table_key,
+                    "rows": rows,
+                    "csv_path": csv_path,
+                    "stats": task_stats,
                 }
             )
+        result["csv_prepare_seconds"] = round(max(0.0, time.perf_counter() - csv_started), 6)
+        return result
+
+    csv_prepare_workers = _resolve_bookrag_csv_prepare_workers(len(extracted_files))
+    transformed_files: list[dict[str, Any]] = []
+    transform_failures: list[str] = []
+    with ThreadPoolExecutor(max_workers=csv_prepare_workers, thread_name_prefix="bookrag-csv-prepare") as executor:
+        future_map = {executor.submit(_transform_and_prepare_csv, extracted): extracted for extracted in extracted_files}
+        for completed_future in as_completed(future_map):
+            extracted = future_map[completed_future]
+            try:
+                transformed_files.append(completed_future.result())
+            except Exception as ex:
+                transform_failures.append(
+                    f"file={extracted['src'].name}, doc_id={extracted['doc_id']}: {ex}"
+                )
+    if transform_failures:
+        raise RuntimeError("BookRAG parallel JSON-to-CSV processing failed: " + " | ".join(transform_failures))
+    transformed_files.sort(key=lambda item: int(item["source_index"]))
+
+    csv_tasks = [task for item in transformed_files for task in item["csv_tasks"]]
+    csv_load_workers = _resolve_bookrag_csv_load_workers(len(csv_tasks))
+    persist_functions = {
+        "documents": (persist_bookrag_documents, "rows"),
+        "raw": (persist_bookrag_raw_rows, "rows"),
+        "blocks": (persist_bookrag_blocks, "blocks"),
+        "nodes": (persist_bookrag_nodes, "nodes"),
+        "entities": (persist_bookrag_entities, "entities"),
+        "entity_links": (persist_bookrag_entity_links, "entity_links"),
+        "entity_relations": (persist_bookrag_entity_relations, "entity_relations"),
+    }
+
+    def _load_prepared_csv(task: dict[str, Any]) -> dict[str, Any]:
+        persist_fn, rows_argument = persist_functions[task["table_key"]]
+        started = time.perf_counter()
+        inserted = persist_fn(
+            schema_name=effective_schema_name,
+            table_targets=bookrag_tables,
+            execute_sql_fn=execute_sql_fn,
+            csv_stage_dir=Path(task["csv_path"]).parent,
+            stats=task["stats"],
+            prepared_csv_path=task["csv_path"],
+            **{rows_argument: task["rows"]},
+        )
+        return {
+            "task_id": task["task_id"],
+            "inserted": inserted,
+            "persist_seconds": round(max(0.0, time.perf_counter() - started), 6),
+        }
+
+    load_results: dict[str, dict[str, Any]] = {}
+    load_failures: list[str] = []
+    if csv_tasks:
+        with ThreadPoolExecutor(max_workers=csv_load_workers, thread_name_prefix="bookrag-csv-load") as executor:
+            future_map = {executor.submit(_load_prepared_csv, task): task for task in csv_tasks}
+            for completed_future in as_completed(future_map):
+                task = future_map[completed_future]
+                try:
+                    result = completed_future.result()
+                    load_results[result["task_id"]] = result
+                except Exception as ex:
+                    load_failures.append(
+                        f"task={task['task_id']}, csv={task['csv_path']}, table={task['table_key']}: {ex}"
+                    )
+    if load_failures:
+        raise RuntimeError("BookRAG parallel CSV loading failed: " + " | ".join(load_failures))
+
+    aggregate_stats = {
+        "documents": document_insert_stats,
+        "raw": raw_insert_stats,
+        "blocks": block_insert_stats,
+        "nodes": node_insert_stats,
+        "entities": entity_insert_stats,
+        "entity_links": entity_link_insert_stats,
+        "entity_relations": entity_relation_insert_stats,
+    }
+    for task in csv_tasks:
+        _merge_bookrag_insert_stats(aggregate_stats[task["table_key"]], task["stats"])
+
+    for item in transformed_files:
+        if item.get("debug_file"):
+            debug_files.append(item["debug_file"])
+        if item.get("warning"):
+            partition_warnings.append(item["warning"])
+            continue
+        document_row = item["document_row"]
+        raw_rows = item["raw_rows"]
+        blocks = item["blocks"]
+        nodes = item["nodes"]
+        entities = item["entities"]
+        entity_links = item["entity_links"]
+        entity_relations = item["entity_relations"]
+        item_load_results = [load_results[task["task_id"]] for task in item["csv_tasks"]]
+        inserted_for_file = sum(int(result["inserted"]) for result in item_load_results)
+        persist_seconds = sum(float(result["persist_seconds"]) for result in item_load_results)
+        inserted_rows += inserted_for_file
+        document_count += 1
+        raw_element_count += len(raw_rows)
+        block_count += len(blocks)
+        node_count += len(nodes)
+        if table_generation["documents"]:
+            persisted_documents.append(document_row)
+        if selected_entity_tables:
+            entity_count = (entity_count or 0) + len(entities)
+            entity_link_count = (entity_link_count or 0) + len(entity_links)
+            entity_relation_count = (entity_relation_count or 0) + len(entity_relations)
+        flush_batches.append(
+            {
+                "batch_index": len(flush_batches) + 1,
+                "reason": "file_ready",
+                "file_count": 1,
+                "filename": item["src"].name,
+                "doc_id": item["doc_id"],
+                "csv_stage_dir": str(item["file_csv_stage_dir"]),
+                "documents": 1,
+                "raw": len(raw_rows),
+                "blocks": len(blocks),
+                "nodes": len(nodes),
+                "entities": len(entities),
+                "entity_links": len(entity_links),
+                "entity_relations": len(entity_relations),
+                "inserted_rows": inserted_for_file,
+                "unstructured_seconds": item["unstructured_seconds"],
+                "json_stage_seconds": item["json_stage_seconds"],
+                "transform_seconds": item["transform_seconds"],
+                "csv_prepare_seconds": item.get("csv_prepare_seconds", 0.0),
+                "persist_seconds": round(persist_seconds, 6),
+            }
+        )
 
     document_relation_count = 0
     document_relation_rule_count = 0
@@ -1961,6 +2599,8 @@ def _apply_bookrag_tree_pipeline(
         "bookrag_table_generation": table_generation,
         "bookrag_flush_config": flush_config,
         "bookrag_unstructured_workers": unstructured_workers,
+        "bookrag_csv_prepare_workers": csv_prepare_workers,
+        "bookrag_csv_load_workers": csv_load_workers,
         "bookrag_flush_count": len(flush_batches),
         "bookrag_flush_batches": flush_batches,
         "bookrag_persisted_table_row_counts": persisted_table_row_counts,

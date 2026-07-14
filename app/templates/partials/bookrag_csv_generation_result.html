@@ -1,0 +1,34 @@
+{% if bookrag_csv_generation_error %}
+<div class="bookrag-parse-result bookrag-parse-result-error" role="status">
+  <strong>CSV generation failed.</strong>
+  <p>{{ bookrag_csv_generation_error }}</p>
+</div>
+{% elif bookrag_csv_generation %}
+<div class="bookrag-parse-result {% if bookrag_csv_generation.failure_count %}bookrag-parse-result-error{% else %}bookrag-parse-result-ok{% endif %}" role="status">
+  <div class="bookrag-parse-result-head">
+    <strong>JSON to CSV {% if bookrag_csv_generation.status == 'ready' %}completed{% else %}failed{% endif %}.</strong>
+    <span>{{ bookrag_csv_generation.success_count }}/{{ bookrag_csv_generation.file_count }} JSON files succeeded</span>
+  </div>
+  <p>
+    Workers: {{ bookrag_csv_generation.workers }} ·
+    CSV files: {{ bookrag_csv_generation.csv_files_created }} ·
+    Elapsed: {{ '%.2f'|format(bookrag_csv_generation.elapsed_seconds) }}s ·
+    Database writes: 0
+  </p>
+  <p class="muted">CSV directory: {{ bookrag_csv_generation.csv_stage_dir }}</p>
+  <p class="muted">Manifest: {{ bookrag_csv_generation.manifest_path }}</p>
+  <div class="bookrag-parse-file-list">
+    {% for file in bookrag_csv_generation.files %}
+    <div class="bookrag-parse-file-row {% if file.status == 'failed' %}is-failed{% endif %}">
+      <span class="bookrag-parse-file-status">{% if file.status == 'success' %}OK{% else %}FAILED{% endif %}</span>
+      <strong title="{{ file.filename }}">{{ file.filename }}</strong>
+      {% if file.status == 'success' %}
+      <span>{{ file.csv_files|length }} CSV · {{ '%.2f'|format(file.elapsed_seconds) }}s</span>
+      {% else %}
+      <span title="{{ file.error }}">{{ file.error }}</span>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}

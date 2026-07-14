@@ -555,6 +555,165 @@
   gap: 0.6rem;
 }
 
+.bookrag-parse-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border: 1px solid #d9e2f1;
+  border-radius: 12px;
+  padding: 0.8rem 0.9rem;
+  background: #f8fbff;
+}
+
+.bookrag-parse-panel strong {
+  color: #202124;
+}
+
+.bookrag-parse-panel p,
+.bookrag-parse-result p {
+  margin: 0.2rem 0 0;
+}
+
+.bookrag-parse-btn {
+  flex: 0 0 auto;
+  min-width: 13rem;
+}
+
+.bookrag-csv-panel {
+  align-items: flex-end;
+}
+
+.bookrag-csv-actions {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.7rem;
+  min-width: min(44rem, 62%);
+}
+
+.bookrag-csv-actions label {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 0.3rem;
+  min-width: 16rem;
+  color: #3c4043;
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.bookrag-csv-actions select {
+  width: 100%;
+}
+
+.bookrag-parse-next-action {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 0.25rem;
+}
+
+.bookrag-parse-result-shell:empty {
+  display: none;
+}
+
+.bookrag-parse-result {
+  display: grid;
+  gap: 0.55rem;
+  border: 1px solid #cbd8ea;
+  border-radius: 12px;
+  padding: 0.85rem;
+  background: #fff;
+}
+
+.bookrag-parse-result-ok {
+  border-color: #83c69b;
+  background: #f2fbf5;
+}
+
+.bookrag-parse-result-warn {
+  border-color: #d7b35a;
+  background: #fffaf0;
+}
+
+.bookrag-parse-result-error {
+  border-color: #d77c7c;
+  background: #fff4f4;
+}
+
+.bookrag-parse-result-head,
+.bookrag-parse-file-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.bookrag-parse-file-list {
+  display: grid;
+  gap: 0.35rem;
+  max-height: 18rem;
+  overflow: auto;
+}
+
+.bookrag-parse-file-row {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr) minmax(10rem, auto);
+  border-top: 1px solid #e5eaf1;
+  padding-top: 0.35rem;
+  font-size: 0.78rem;
+}
+
+.bookrag-parse-file-row strong,
+.bookrag-parse-file-row span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bookrag-parse-file-status {
+  color: #2f7a48;
+  font-weight: 700;
+}
+
+.bookrag-parse-file-row.is-failed .bookrag-parse-file-status {
+  color: #a23535;
+}
+
+.bookrag-parse-warning-list {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+@media (max-width: 760px) {
+  .bookrag-parse-panel,
+  .bookrag-parse-result-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .bookrag-parse-btn {
+    width: 100%;
+  }
+
+  .bookrag-csv-actions {
+    align-items: stretch;
+    flex-direction: column;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .bookrag-csv-actions label {
+    min-width: 0;
+  }
+
+  .bookrag-parse-file-row {
+    grid-template-columns: 4.5rem minmax(0, 1fr);
+  }
+
+  .bookrag-parse-file-row span:last-child {
+    grid-column: 2;
+  }
+}
+
 .multi-format-enrichment-head {
   display: grid;
   gap: 0.1rem;

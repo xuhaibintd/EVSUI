@@ -29,6 +29,17 @@ from app.services.teradata_sql import (
 
 BOOKRAG_CSV_FASTLOAD_MIN_ROWS_DEFAULT = 100000
 
+BOOKRAG_TABLE_COLUMNS: dict[str, list[tuple[str, str]]] = {
+    "documents": BOOKRAG_DOCUMENT_COLUMNS,
+    "raw": BOOKRAG_RAW_COLUMNS,
+    "blocks": BOOKRAG_BLOCK_COLUMNS,
+    "nodes": BOOKRAG_NODE_COLUMNS,
+    "entities": BOOKRAG_ENTITY_COLUMNS,
+    "entity_links": BOOKRAG_ENTITY_LINK_COLUMNS,
+    "entity_relations": BOOKRAG_ENTITY_RELATION_COLUMNS,
+    "chunks": BOOKRAG_CHUNK_COLUMNS,
+}
+
 
 def _resolve_csv_fastload_min_rows() -> int:
     raw_value = str(
@@ -51,6 +62,35 @@ def _record_elapsed(stats: dict[str, Any] | None, key: str, started_at: float) -
         return
     elapsed = max(0.0, time.perf_counter() - started_at)
     stats[key] = round(float(stats.get(key, 0.0) or 0.0) + elapsed, 6)
+
+
+def _initialize_insert_stats(
+    stats: dict[str, Any] | None,
+    *,
+    table_name: str,
+    row_count: int,
+    add_input_rows: bool,
+) -> None:
+    if stats is None:
+        return
+    stats["insert_mode"] = "native_csv"
+    stats["table_name"] = table_name
+    if add_input_rows:
+        stats["input_rows"] = int(stats.get("input_rows", 0) or 0) + row_count
+    else:
+        stats.setdefault("input_rows", row_count)
+    stats.setdefault("csv_files", [])
+    stats.setdefault("csv_write_seconds", 0.0)
+    stats.setdefault("csv_flag_characters_replaced", 0)
+    stats.setdefault("csv_unsupported_characters_removed", 0)
+    stats.setdefault("csv_truncated_characters", 0)
+    stats.setdefault("csv_bytes", 0)
+    stats.setdefault("native_csv_calls", 0)
+    stats.setdefault("native_csv_rows", 0)
+    stats.setdefault("native_csv_batch_calls", 0)
+    stats.setdefault("native_csv_fastload_calls", 0)
+    stats.setdefault("native_csv_load_seconds", 0.0)
+    stats.setdefault("insert_total_seconds", 0.0)
 
 
 def _replace_flag_emoji(text: str) -> tuple[str, int]:
@@ -294,6 +334,9 @@ def build_bookrag_document_row(
     source_file: str,
     filetype: str | None,
     filesize_bytes: int | None,
+    page_count: int | None,
+    language_hint: str | None,
+    created_at: str | None,
 ) -> dict[str, Any]:
     return {
         "doc_id": doc_id,
@@ -306,9 +349,9 @@ def build_bookrag_document_row(
         "filename": _as_text(filename, max_len=255),
         "filetype": _as_text(filetype, max_len=100),
         "filesize_bytes": filesize_bytes,
-        "page_count": None,
-        "language_hint": None,
-        "created_at": None,
+        "page_count": _as_int(page_count),
+        "language_hint": _as_text(language_hint, max_len=200),
+        "created_at": _as_text(created_at, max_len=50),
     }
 
 
@@ -561,40 +604,33 @@ def _insert_rows(
     execute_sql_fn: ExecuteSqlFn | None,
     csv_stage_dir: Path | None = None,
     stats: dict[str, Any] | None = None,
+    prepared_csv_path: str | None = None,
 ) -> int:
     if execute_sql_fn is None:
         raise RuntimeError("teradataml.execute_sql is unavailable.")
     if not rows:
         return 0
-    if csv_stage_dir is None:
+    if csv_stage_dir is None and prepared_csv_path is None:
         raise RuntimeError("BookRAG native CSV loading requires csv_stage_dir.")
 
     insert_started = time.perf_counter()
-    if stats is not None:
-        stats["insert_mode"] = "native_csv"
-        stats["table_name"] = table_name
-        stats["input_rows"] = int(stats.get("input_rows", 0) or 0) + len(rows)
-        stats.setdefault("csv_files", [])
-        stats.setdefault("csv_write_seconds", 0.0)
-        stats.setdefault("csv_flag_characters_replaced", 0)
-        stats.setdefault("csv_unsupported_characters_removed", 0)
-        stats.setdefault("csv_truncated_characters", 0)
-        stats.setdefault("csv_bytes", 0)
-        stats.setdefault("native_csv_calls", 0)
-        stats.setdefault("native_csv_rows", 0)
-        stats.setdefault("native_csv_batch_calls", 0)
-        stats.setdefault("native_csv_fastload_calls", 0)
-        stats.setdefault("native_csv_load_seconds", 0.0)
-        stats.setdefault("insert_total_seconds", 0.0)
+    _initialize_insert_stats(
+        stats,
+        table_name=table_name,
+        row_count=len(rows),
+        add_input_rows=prepared_csv_path is None,
+    )
 
     try:
-        csv_path = _write_rows_csv(
-            csv_stage_dir,
-            table_name,
-            rows,
-            columns,
-            stats=stats,
-        )
+        csv_path = prepared_csv_path
+        if csv_path is None:
+            csv_path = _write_rows_csv(
+                csv_stage_dir,
+                table_name,
+                rows,
+                columns,
+                stats=stats,
+            )
         if not csv_path:
             raise RuntimeError(f"BookRAG CSV generation produced no file for {table_name}.")
         if stats is not None and csv_path not in stats["csv_files"]:
@@ -612,6 +648,45 @@ def _insert_rows(
         raise
     finally:
         _record_elapsed(stats, "insert_total_seconds", insert_started)
+
+
+def prepare_bookrag_table_csv(
+    *,
+    table_key: str,
+    table_targets: dict[str, str],
+    rows: list[dict[str, Any]],
+    csv_stage_dir: Path,
+    stats: dict[str, Any] | None = None,
+) -> str | None:
+    """Generate one existing BookRAG table CSV without loading it."""
+    if not rows:
+        return None
+    try:
+        columns = BOOKRAG_TABLE_COLUMNS[table_key]
+        table_name = table_targets[table_key]
+    except KeyError as ex:
+        raise RuntimeError(f"Unsupported BookRAG CSV table key: {table_key}") from ex
+
+    _initialize_insert_stats(
+        stats,
+        table_name=table_name,
+        row_count=len(rows),
+        add_input_rows=True,
+    )
+    csv_path = _write_rows_csv(
+        csv_stage_dir,
+        table_name,
+        rows,
+        columns,
+        stats=stats,
+    )
+    if not csv_path:
+        raise RuntimeError(f"BookRAG CSV generation produced no file for {table_name}.")
+    if stats is not None:
+        if csv_path not in stats["csv_files"]:
+            stats["csv_files"].append(csv_path)
+        stats["insert_total_seconds"] = round(float(stats.get("csv_write_seconds", 0.0) or 0.0), 6)
+    return csv_path
 
 
 def persist_bookrag_tree(
@@ -687,6 +762,7 @@ def persist_bookrag_blocks(
     execute_sql_fn: ExecuteSqlFn | None,
     csv_stage_dir: Path | None = None,
     stats: dict[str, Any] | None = None,
+    prepared_csv_path: str | None = None,
 ) -> int:
     return _insert_rows(
         schema_name,
@@ -696,6 +772,7 @@ def persist_bookrag_blocks(
         execute_sql_fn,
         csv_stage_dir=csv_stage_dir,
         stats=stats,
+        prepared_csv_path=prepared_csv_path,
     )
 
 
@@ -707,6 +784,7 @@ def persist_bookrag_nodes(
     execute_sql_fn: ExecuteSqlFn | None,
     csv_stage_dir: Path | None = None,
     stats: dict[str, Any] | None = None,
+    prepared_csv_path: str | None = None,
 ) -> int:
     return _insert_rows(
         schema_name,
@@ -716,6 +794,7 @@ def persist_bookrag_nodes(
         execute_sql_fn,
         csv_stage_dir=csv_stage_dir,
         stats=stats,
+        prepared_csv_path=prepared_csv_path,
     )
 
 
@@ -727,6 +806,7 @@ def persist_bookrag_entities(
     execute_sql_fn: ExecuteSqlFn | None,
     csv_stage_dir: Path | None = None,
     stats: dict[str, Any] | None = None,
+    prepared_csv_path: str | None = None,
 ) -> int:
     return _insert_rows(
         schema_name,
@@ -736,6 +816,7 @@ def persist_bookrag_entities(
         execute_sql_fn,
         csv_stage_dir=csv_stage_dir,
         stats=stats,
+        prepared_csv_path=prepared_csv_path,
     )
 
 
@@ -747,6 +828,7 @@ def persist_bookrag_entity_links(
     execute_sql_fn: ExecuteSqlFn | None,
     csv_stage_dir: Path | None = None,
     stats: dict[str, Any] | None = None,
+    prepared_csv_path: str | None = None,
 ) -> int:
     return _insert_rows(
         schema_name,
@@ -756,6 +838,7 @@ def persist_bookrag_entity_links(
         execute_sql_fn,
         csv_stage_dir=csv_stage_dir,
         stats=stats,
+        prepared_csv_path=prepared_csv_path,
     )
 
 
@@ -767,6 +850,7 @@ def persist_bookrag_entity_relations(
     execute_sql_fn: ExecuteSqlFn | None,
     csv_stage_dir: Path | None = None,
     stats: dict[str, Any] | None = None,
+    prepared_csv_path: str | None = None,
 ) -> int:
     return _insert_rows(
         schema_name,
@@ -776,6 +860,7 @@ def persist_bookrag_entity_relations(
         execute_sql_fn,
         csv_stage_dir=csv_stage_dir,
         stats=stats,
+        prepared_csv_path=prepared_csv_path,
     )
 
 
@@ -787,6 +872,7 @@ def persist_bookrag_documents(
     execute_sql_fn: ExecuteSqlFn | None,
     csv_stage_dir: Path | None = None,
     stats: dict[str, Any] | None = None,
+    prepared_csv_path: str | None = None,
 ) -> int:
     return _insert_rows(
         schema_name,
@@ -796,6 +882,7 @@ def persist_bookrag_documents(
         execute_sql_fn,
         csv_stage_dir=csv_stage_dir,
         stats=stats,
+        prepared_csv_path=prepared_csv_path,
     )
 
 
@@ -807,6 +894,7 @@ def persist_bookrag_raw_rows(
     execute_sql_fn: ExecuteSqlFn | None,
     csv_stage_dir: Path | None = None,
     stats: dict[str, Any] | None = None,
+    prepared_csv_path: str | None = None,
 ) -> int:
     return _insert_rows(
         schema_name,
@@ -816,6 +904,7 @@ def persist_bookrag_raw_rows(
         execute_sql_fn,
         csv_stage_dir=csv_stage_dir,
         stats=stats,
+        prepared_csv_path=prepared_csv_path,
     )
 
 

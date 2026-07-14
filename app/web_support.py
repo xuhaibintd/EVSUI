@@ -26,6 +26,7 @@ from app.services.doc_modes.constants import DOC_PIPELINE_OPTIONS
 from app.services.doc_modes.ui_fields import build_multi_format_bookrag_ui_fields, build_multi_format_ui_fields
 from app.services.precision_eval import build_precision_eval_panel_context, build_precision_eval_prototype_context
 from app.services.bookrag_section_rules import BOOKRAG_SECTION_RULES_PATH, load_bookrag_section_rules
+from app.services.multi_format import list_bookrag_parse_runs
 from app.services.unstructured_json_inspector import build_unstructured_json_inspector_context
 from app.session_state import (
     activate_session_state,
@@ -320,10 +321,16 @@ def _cleanup_context() -> dict[str, str]:
     return result
 
 
-def _ensure_connected_runtime_for_session(request: Request, app) -> None:
+def _ensure_connected_runtime_for_session(
+    request: Request,
+    app,
+    *,
+    allow_saved_params: bool = False,
+) -> None:
     _activate_session_state(request, app)
     state = app.state.evs_state
-    if not state.get("connected"):
+    was_connected = bool(state.get("connected"))
+    if not was_connected and not allow_saved_params:
         raise RuntimeError("Step 1 is not connected for the active session.")
     if create_context is None or set_auth_token is None:
         raise RuntimeError(f"teradataml/teradatagenai runtime is unavailable: {TERADATA_IMPORT_ERROR}")
@@ -353,6 +360,11 @@ def _ensure_connected_runtime_for_session(request: Request, app) -> None:
     elif pem_hint:
         auth_kwargs["pem_file"] = pem_hint
     set_auth_token(**auth_kwargs)
+    if not was_connected:
+        state["connected"] = True
+        state["connected_at"] = _now_ts()
+        state["last_error"] = ""
+        state["last_success"] = "Connection restored from saved parameters."
 
 
 def _cleanup_result_status(cleanup_result: dict[str, str]) -> str:
@@ -586,6 +598,7 @@ def _build_home_context(request: Request, app) -> dict:
         "doc_pipeline_options": DOC_PIPELINE_OPTIONS,
         "create_result": app.state.last_create_operation,
         "document_uploads": app.state.document_uploads,
+        "bookrag_parse_runs": list_bookrag_parse_runs(),
         "document_relation_admin": {
             "vector_store_options": list(state.get("chat_vs_options") or []),
             "selected_vector_store": str(
@@ -605,6 +618,7 @@ def _build_home_context(request: Request, app) -> dict:
             "table_initialized": False,
             "status": None,
             "source": "database",
+            "auto_refresh": True,
         },
         "document_upload_error": "",
         "document_upload_notices": app.state.document_upload_notices,

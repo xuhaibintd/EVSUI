@@ -143,6 +143,7 @@
     const documentFiles = createForm.querySelector("[name='document_files']");
     const uploadInput = createForm.querySelector("input[type='file'][name='files']");
     const uploadedPreview = createForm.querySelector("[data-selected-doc-paths]");
+    const parseButton = createForm.querySelector("[data-bookrag-parse-button]");
     const createResult = document.querySelector("#create-result");
 
     const getUploadedCount = () => {
@@ -201,7 +202,7 @@
     };
 
     const clearSubmitProgress = () => {
-      const submitButton = createForm.querySelector("[data-progress-button]");
+      const submitButton = createForm.querySelector("button[type='submit'][data-progress-button]");
       if (!(submitButton instanceof HTMLButtonElement)) {
         return;
       }
@@ -233,6 +234,11 @@
       }
       createForm.dataset.uploadMissing =
         uploadedCount === 0 && selectedFileCount === 0 && documentFileCount === 0 ? "1" : "0";
+      if (parseButton instanceof HTMLButtonElement && !parseButton.classList.contains("is-loading")) {
+        const isBookrag = docPipelineMode instanceof HTMLSelectElement && docPipelineMode.value === "multi_format_bookrag";
+        const formLocked = createForm.classList.contains("disabled-block");
+        parseButton.disabled = formLocked || !isBookrag || isUploadInProgress() || uploadedCount === 0;
+      }
       if (objectNames instanceof HTMLInputElement) {
         objectNames.required = false;
       }
@@ -320,7 +326,7 @@
   }
 
   function enforceCreateInputLength(scope = document) {
-    const fields = scope.querySelectorAll("#section-create input:not([type='file']), #section-create textarea");
+    const fields = scope.querySelectorAll("#section-create input:not([type='file']):not([type='hidden']), #section-create textarea");
     const clamp = (field) => {
       if (!(field instanceof HTMLInputElement) && !(field instanceof HTMLTextAreaElement)) {
         return;
@@ -352,7 +358,7 @@
       createForm.addEventListener(
         "submit",
         () => {
-          const submitFields = createForm.querySelectorAll("input:not([type='file']), textarea");
+          const submitFields = createForm.querySelectorAll("input:not([type='file']):not([type='hidden']), textarea");
           submitFields.forEach((item) => clamp(item));
         },
         true
@@ -370,4 +376,3 @@
   app.registerBinder(enforceCreateInputLength);
   app.registerBinder(bindCreateValidation);
 })(window);
-

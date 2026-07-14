@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
 import uuid
@@ -35,7 +36,9 @@ from app.services.bookrag_document_relations import (
     save_document_relation,
     validate_document_relations,
 )
-from app.services.create_config import default_create_values
+from app.services.create_config import CREATE_FIELD_MAX_LEN, default_create_values
+from app.services.doc_modes.constants import collect_doc_pipeline_ui_values
+from app.services.multi_format import run_bookrag_document_parsing, run_bookrag_json_to_csv
 from app.teradata_runtime import (
     TERADATA_IMPORT_ERROR,
     VSManager,
@@ -62,6 +65,7 @@ from app.web_support import (
     _collect_upload_files,
     _default_evs_state,
     _derive_base_url,
+    _ensure_connected_runtime_for_session,
     _format_preview,
     _is_logged_in,
     _is_poc_auth_configured,
@@ -132,6 +136,7 @@ def _document_relation_admin_context(
     *,
     vector_store_name: str = "",
     status: dict | None = None,
+    auto_refresh: bool = False,
 ) -> dict:
     state = app.state.evs_state
     options = list(dict.fromkeys(
@@ -157,6 +162,7 @@ def _document_relation_admin_context(
         "table_initialized": False,
         "status": status,
         "source": "database",
+        "auto_refresh": auto_refresh,
     }
     if not selected:
         return context
@@ -187,6 +193,39 @@ def _document_relation_admin_context(
                 "detail": str(ex),
             }
     return context
+
+
+def _refresh_document_relation_vector_store_options(request: Request) -> dict[str, str]:
+    state = request.app.state.evs_state
+    if VSManager is None or not callable(getattr(VSManager, "list", None)):
+        return {
+            "kind": "error",
+            "title": "Vector Store Refresh Failed",
+            "detail": f"VSManager.list() is unavailable. {TERADATA_IMPORT_ERROR}".strip(),
+        }
+
+    try:
+        _ensure_connected_runtime_for_session(
+            request,
+            request.app,
+            allow_saved_params=True,
+        )
+        previous_selected = str(state.get("selected_vs_name") or "").strip()
+        list_output = VSManager.list()
+        visible_rows, total_rows, _username_filter = _apply_chat_list_output_to_state(state, list_output)
+        state["selected_vs_name"] = previous_selected
+        total_label = str(total_rows) if total_rows is not None else str(visible_rows)
+        return {
+            "kind": "ok",
+            "title": "Vector Stores Refreshed",
+            "detail": f"Loaded {visible_rows} selectable Vector Store(s) from {total_label} row(s).",
+        }
+    except Exception as ex:
+        return {
+            "kind": "error",
+            "title": "Vector Store Refresh Failed",
+            "detail": str(ex),
+        }
 
 @router.get("/", response_class=HTMLResponse)
 async def home(request: Request):
@@ -583,6 +622,76 @@ async def upload_documents_for_create(request: Request):
             "document_uploads": request.app.state.document_uploads,
             "document_upload_error": upload_error,
             "document_upload_notices": notices,
+        },
+    )
+
+
+@router.post("/ui/create/parse-documents", response_class=HTMLResponse)
+async def parse_documents_for_create(request: Request):
+    if not _is_logged_in(request, request.app):
+        return HTMLResponse("Unauthorized", status_code=401)
+    _activate_session_state(request, request.app)
+    form = await request.form()
+    uploaded_documents = [dict(item) for item in request.app.state.document_uploads]
+    create_values = default_create_values()
+    create_values.update(collect_doc_pipeline_ui_values(form, field_max_len=CREATE_FIELD_MAX_LEN))
+    vector_store_name = str(form.get("vector_store_name") or "").strip()
+
+    summary = None
+    error = ""
+    try:
+        summary = await asyncio.to_thread(
+            run_bookrag_document_parsing,
+            create_values=create_values,
+            vector_store_name=vector_store_name,
+            uploaded_documents=uploaded_documents,
+            connection_params=dict(request.app.state.evs_state.get("params") or {}),
+            resolve_path_hint=_resolve_path_hint,
+        )
+    except Exception as ex:
+        error = str(ex)
+
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "partials/bookrag_document_parsing_result.html",
+        {
+            "bookrag_document_parsing": summary,
+            "bookrag_document_parsing_error": error,
+        },
+    )
+
+
+@router.post("/ui/create/generate-csv", response_class=HTMLResponse)
+async def generate_csv_for_create(request: Request):
+    if not _is_logged_in(request, request.app):
+        return HTMLResponse("Unauthorized", status_code=401)
+    _activate_session_state(request, request.app)
+    form = await request.form()
+    parse_run_id = str(
+        form.get("bookrag_parse_run_id_current")
+        or form.get("bookrag_parse_run_id")
+        or ""
+    ).strip()
+    create_values = default_create_values()
+    create_values.update(collect_doc_pipeline_ui_values(form, field_max_len=CREATE_FIELD_MAX_LEN))
+
+    summary = None
+    error = ""
+    try:
+        summary = await asyncio.to_thread(
+            run_bookrag_json_to_csv,
+            parse_run_id=parse_run_id,
+            create_values=create_values,
+        )
+    except Exception as ex:
+        error = str(ex)
+
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "partials/bookrag_csv_generation_result.html",
+        {
+            "bookrag_csv_generation": summary,
+            "bookrag_csv_generation_error": error,
         },
     )
 
@@ -984,16 +1093,27 @@ async def update_bookrag_section_rules_panel(request: Request):
 
 
 @router.get("/ui/admin/document-relations", response_class=HTMLResponse)
-async def load_document_relations_admin(request: Request, vector_store_name: str = ""):
+async def load_document_relations_admin(
+    request: Request,
+    vector_store_name: str = "",
+    refresh: bool = False,
+):
     if not _is_logged_in(request, request.app):
         return HTMLResponse("Unauthorized", status_code=401)
     _activate_session_state(request, request.app)
+    selected = vector_store_name.strip()
+    if selected:
+        request.app.state.evs_state["selected_vs_name"] = selected
+    status = _refresh_document_relation_vector_store_options(request) if refresh else None
+    if refresh:
+        _persist_active_session_state(request, request.app)
     return request.app.state.templates.TemplateResponse(
         request,
         "partials/document_relation_admin.html",
         {"document_relation_admin": _document_relation_admin_context(
             request.app,
-            vector_store_name=vector_store_name,
+            vector_store_name=selected,
+            status=status,
         )},
     )
 

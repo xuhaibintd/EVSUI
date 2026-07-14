@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 from pathlib import Path
+from unittest import mock
 
 from jinja2 import Environment, FileSystemLoader
 
@@ -58,6 +59,99 @@ class CreatePanelBookRAGToggleTests(unittest.TestCase):
         self.assertNotIn("Document Relationships", source)
         self.assertNotIn("document_relations_json", source)
         self.assertNotIn("data-document-relation-editor", source)
+
+    def test_document_parse_button_is_after_enrichment_nodes(self):
+        source = (
+            TEMPLATES_DIR / "partials" / "create_doc_modes" / "multi_format_bookrag_fields.html"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('hx-post="/ui/create/parse-documents"', source)
+        self.assertIn('data-bookrag-parse-button', source)
+        self.assertIn('hx-post="/ui/create/generate-csv"', source)
+        self.assertIn('name="bookrag_parse_run_id"', source)
+        self.assertLess(source.index("Named Entity Recognition"), source.index("Document Parsing"))
+
+
+class DocumentParseRouteTests(unittest.IsolatedAsyncioTestCase):
+    async def test_route_submits_uploaded_documents_and_current_bookrag_settings(self):
+        class Request:
+            def __init__(self, app):
+                self.app = app
+
+            async def form(self):
+                return {
+                    "vector_store_name": "demo_vs",
+                    "multi_format_bookrag_strategy": "vlm",
+                    "multi_format_bookrag_ocr_languages": "jpn",
+                }
+
+        captured_response = {}
+
+        def template_response(request, template_name, context):
+            captured_response.update(template=template_name, context=context)
+            return captured_response
+
+        uploads = [{"doc_id": "doc-1", "saved_path": "uploads/documents/doc-1/sample.pdf"}]
+        app = SimpleNamespace(
+            state=SimpleNamespace(
+                document_uploads=uploads,
+                evs_state={"params": {"unstructured_api_key": "key"}},
+                templates=SimpleNamespace(TemplateResponse=template_response),
+            )
+        )
+        summary = {"status": "ok", "file_count": 1, "success_count": 1, "failure_count": 0}
+
+        with mock.patch.object(web_router_module, "_is_logged_in", return_value=True), mock.patch.object(
+            web_router_module, "_activate_session_state"
+        ), mock.patch.object(
+            web_router_module, "run_bookrag_document_parsing", return_value=summary
+        ) as parse_mock:
+            response = await web_router_module.parse_documents_for_create(Request(app))
+
+        self.assertEqual(response["template"], "partials/bookrag_document_parsing_result.html")
+        self.assertEqual(response["context"]["bookrag_document_parsing"], summary)
+        call_kwargs = parse_mock.call_args.kwargs
+        self.assertEqual(call_kwargs["vector_store_name"], "demo_vs")
+        self.assertEqual(call_kwargs["uploaded_documents"], uploads)
+        self.assertEqual(call_kwargs["create_values"]["multi_format_bookrag_strategy"], "vlm")
+        self.assertEqual(call_kwargs["create_values"]["multi_format_bookrag_ocr_languages"], "jpn")
+
+    async def test_generate_csv_route_uses_selected_manifest_and_does_not_load_database(self):
+        class Request:
+            def __init__(self, app):
+                self.app = app
+
+            async def form(self):
+                return {
+                    "bookrag_parse_run_id": "old-run",
+                    "bookrag_parse_run_id_current": "current-run",
+                    "multi_format_bookrag_generate_raw": "true",
+                }
+
+        captured_response = {}
+
+        def template_response(request, template_name, context):
+            captured_response.update(template=template_name, context=context)
+            return captured_response
+
+        app = SimpleNamespace(
+            state=SimpleNamespace(
+                templates=SimpleNamespace(TemplateResponse=template_response),
+            )
+        )
+        summary = {"status": "ready", "file_count": 2, "success_count": 2, "failure_count": 0}
+
+        with mock.patch.object(web_router_module, "_is_logged_in", return_value=True), mock.patch.object(
+            web_router_module, "_activate_session_state"
+        ), mock.patch.object(
+            web_router_module, "run_bookrag_json_to_csv", return_value=summary
+        ) as csv_mock:
+            response = await web_router_module.generate_csv_for_create(Request(app))
+
+        self.assertEqual(response["template"], "partials/bookrag_csv_generation_result.html")
+        self.assertEqual(response["context"]["bookrag_csv_generation"], summary)
+        self.assertEqual(csv_mock.call_args.kwargs["parse_run_id"], "current-run")
+        self.assertEqual(csv_mock.call_args.kwargs["create_values"]["multi_format_bookrag_generate_raw"], "true")
 
 
 class ConnectPanelTemplateTests(unittest.TestCase):
@@ -122,6 +216,58 @@ class UnstructuredAdminPanelTests(unittest.TestCase):
         self.assertIn("Business Configuration", html)
         self.assertIn('class="admin-rule-tab-panel admin-rule-panel-business"', html)
         self.assertIn("Unstructured IO", html)
+
+
+class DocumentRelationshipAdminTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)))
+        cls.template = cls.env.get_template("partials/document_relation_admin.html")
+
+    def test_initial_panel_auto_refreshes_and_exposes_manual_refresh(self):
+        html = self.template.render(document_relation_admin={"auto_refresh": True})
+
+        self.assertIn('hx-get="/ui/admin/document-relations?refresh=true"', html)
+        self.assertIn('hx-trigger="load"', html)
+        self.assertIn('name="refresh" value="true"', html)
+        self.assertIn("Refresh Vector Stores", html)
+
+    def test_refresh_uses_vsmanager_list_without_changing_selection(self):
+        original_manager = web_router_module.VSManager
+        original_ensure = web_router_module._ensure_connected_runtime_for_session
+        original_apply = web_router_module._apply_chat_list_output_to_state
+        try:
+            state = {
+                "connected": False,
+                "selected_vs_name": "mubk_wm3",
+                "chat_vs_options": [],
+            }
+            request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(evs_state=state)))
+            web_router_module.VSManager = SimpleNamespace(list=lambda: object())
+
+            def _ensure(request, app, *, allow_saved_params=False):
+                self.assertTrue(allow_saved_params)
+                app.state.evs_state["connected"] = True
+
+            web_router_module._ensure_connected_runtime_for_session = _ensure
+
+            def _apply(current_state, _list_output):
+                current_state["chat_vs_options"] = ["mubk_wm3", "another_store"]
+                current_state["selected_vs_name"] = "another_store"
+                return 2, 2, ""
+
+            web_router_module._apply_chat_list_output_to_state = _apply
+
+            status = web_router_module._refresh_document_relation_vector_store_options(request)
+
+            self.assertEqual(status["kind"], "ok")
+            self.assertTrue(state["connected"])
+            self.assertEqual(state["chat_vs_options"], ["mubk_wm3", "another_store"])
+            self.assertEqual(state["selected_vs_name"], "mubk_wm3")
+        finally:
+            web_router_module.VSManager = original_manager
+            web_router_module._ensure_connected_runtime_for_session = original_ensure
+            web_router_module._apply_chat_list_output_to_state = original_apply
 
 
 class ConnectResetRouteTests(unittest.IsolatedAsyncioTestCase):

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -15,6 +16,194 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
         values = dict(DOC_PIPELINE_UI_DEFAULTS)
         values.update(overrides)
         return values
+
+    def test_bookrag_unstructured_workers_default_to_five_and_cap_at_file_count(self) -> None:
+        with mock.patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(multi_format._resolve_bookrag_unstructured_workers(42), 5)
+            self.assertEqual(multi_format._resolve_bookrag_unstructured_workers(3), 3)
+            self.assertEqual(multi_format._resolve_bookrag_csv_prepare_workers(42), 5)
+            self.assertEqual(multi_format._resolve_bookrag_csv_prepare_workers(3), 3)
+            self.assertEqual(multi_format._resolve_bookrag_csv_load_workers(42), 5)
+            self.assertEqual(multi_format._resolve_bookrag_csv_load_workers(3), 3)
+
+    def test_document_parsing_runs_only_parallel_json_stage(self) -> None:
+        payloads = {
+            "one.txt": [{"type": "NarrativeText", "element_id": "one", "text": "One", "metadata": {}}],
+            "two.txt": [{"type": "NarrativeText", "element_id": "two", "text": "Two", "metadata": {}}],
+        }
+        parse_barrier = threading.Barrier(2)
+
+        def _run_job(client=None, *, src, **kwargs):
+            parse_barrier.wait(timeout=5)
+            payload = payloads[src.name]
+            return payload, payload, {}, f"job-{src.stem}", "workflow-1", "BookRAG_Test"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            sources = [tmp_path / "one.txt", tmp_path / "two.txt"]
+            for src in sources:
+                src.write_text("demo", encoding="utf-8")
+            raw_stage_dir = tmp_path / "raw"
+            uploads = [
+                {"doc_id": f"doc-{index}", "saved_path": str(src), "filename": src.name}
+                for index, src in enumerate(sources, start=1)
+            ]
+
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(mock.patch.dict("os.environ", {"BOOKRAG_UNSTRUCTURED_WORKERS": "2"}))
+                stack.enter_context(mock.patch("app.services.multi_format._load_unstructured_runtime_config", return_value=("key", "https://example.invalid")))
+                stack.enter_context(mock.patch("app.services.multi_format._resolve_unstructured_request_timeout_ms", return_value=120000))
+                stack.enter_context(mock.patch("app.services.multi_format._resolve_bookrag_workflow_poll_config", return_value=(30, 1)))
+                stack.enter_context(mock.patch("app.services.multi_format._enforce_unstructured_job_submission_spacing", side_effect=lambda value: value))
+                stack.enter_context(mock.patch("app.services.multi_format._create_unstructured_client", return_value=object()))
+                stack.enter_context(mock.patch("app.services.multi_format._prepare_bookrag_raw_stage_dir", return_value=raw_stage_dir))
+                stack.enter_context(mock.patch("app.services.multi_format._resolve_bookrag_image_partition_options", return_value=({}, [], {})))
+                stack.enter_context(mock.patch("app.services.multi_format._build_bookrag_reusable_workflow_definition", return_value=("BookRAG_Test", [], {"workflow_name": "BookRAG_Test", "workflow_nodes": []}, [], "partition:fast")))
+                stack.enter_context(mock.patch("app.services.multi_format._run_unstructured_workflow_job_for_file", side_effect=_run_job))
+
+                summary = multi_format.run_bookrag_document_parsing(
+                    create_values=self._create_values(multi_format_bookrag_strategy="fast"),
+                    vector_store_name="demo",
+                    uploaded_documents=uploads,
+                    connection_params={},
+                    resolve_path_hint=lambda value: value,
+                )
+
+            self.assertEqual(summary["status"], "ok")
+            self.assertEqual(summary["file_count"], 2)
+            self.assertEqual(summary["success_count"], 2)
+            self.assertEqual(summary["failure_count"], 0)
+            self.assertEqual(summary["workers"], 2)
+            self.assertEqual(summary["csv_files_created"], 0)
+            self.assertEqual(summary["database_writes"], 0)
+            self.assertEqual([item["element_count"] for item in summary["files"]], [1, 1])
+            self.assertTrue(all(Path(item["raw_json_path"]).is_file() for item in summary["files"]))
+            self.assertTrue(Path(summary["manifest_path"]).is_file())
+            manifest = multi_format.json.loads(Path(summary["manifest_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(manifest["status"], "ready")
+            self.assertEqual(manifest["parse_run_id"], summary["parse_run_id"])
+            self.assertEqual(len(manifest["documents"]), 2)
+            self.assertTrue(all(item["raw_json_sha256"] for item in manifest["documents"]))
+
+    def test_existing_json_can_generate_csv_concurrently_without_reparsing_or_overwriting(self) -> None:
+        transform_barrier = threading.Barrier(2)
+
+        def _blocks(*, doc_id, raw_elements, **kwargs):
+            transform_barrier.wait(timeout=5)
+            return [
+                {
+                    "doc_id": doc_id,
+                    "element_id": raw_elements[0]["element_id"],
+                    "parent_id": None,
+                    "category_depth": None,
+                    "heading_level": None,
+                    "page_number": 1,
+                    "ordinal": 1,
+                    "text": raw_elements[0]["text"],
+                    "type": "NarrativeText",
+                    "text_as_html": None,
+                    "image_caption": None,
+                    "image_context": None,
+                }
+            ]
+
+        def _write_csv(*, table_key, table_targets, rows, csv_stage_dir, **kwargs):
+            csv_stage_dir.mkdir(parents=True, exist_ok=True)
+            path = csv_stage_dir / f"{table_targets[table_key]}.csv"
+            path.write_text("header\nvalue\n", encoding="utf-8")
+            return str(path)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            raw_root = tmp_path / "raw"
+            csv_root = tmp_path / "csv"
+            parse_run_id = "demo_parse_run"
+            parse_dir = raw_root / parse_run_id
+            parse_dir.mkdir(parents=True)
+            documents = []
+            for index, filename in enumerate(("one.txt", "two.txt"), start=1):
+                raw_path = parse_dir / f"{Path(filename).stem}_doc-{index}.json"
+                raw_path.write_text(
+                    multi_format.json.dumps(
+                        [{"type": "NarrativeText", "element_id": f"e-{index}", "text": filename, "metadata": {}}]
+                    ),
+                    encoding="utf-8",
+                )
+                documents.append(
+                    {
+                        "source_index": index - 1,
+                        "doc_id": f"doc-{index}",
+                        "filename": filename,
+                        "source_file": f"deleted/{filename}",
+                        "filetype": "text/plain",
+                        "filesize_bytes": 4,
+                        "job_id": f"job-{index}",
+                        "workflow_id": "workflow-1",
+                        "workflow_name": "BookRAG_Test",
+                        "raw_json_file": raw_path.name,
+                        "raw_json_sha256": multi_format._file_sha256(raw_path),
+                        "element_count": 1,
+                        "status": "success",
+                        "error": "",
+                    }
+                )
+            manifest = {
+                "schema_version": 1,
+                "artifact_type": "bookrag_parse_run",
+                "parse_run_id": parse_run_id,
+                "status": "ready",
+                "created_at": "2026-07-15 12:00:00",
+                "vector_store_name": "demo",
+                "file_count": 2,
+                "success_count": 2,
+                "failure_count": 0,
+                "ocr_languages": ["jpn"],
+                "processing_profile": "partition:fast",
+                "workflow_name": "BookRAG_Test",
+                "documents": documents,
+            }
+            (parse_dir / "manifest.json").write_text(
+                multi_format.json.dumps(manifest), encoding="utf-8"
+            )
+
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(mock.patch.object(multi_format, "BOOKRAG_RAW_STAGE_DIR_DEFAULT", raw_root))
+                stack.enter_context(mock.patch.object(multi_format, "BOOKRAG_CSV_STAGE_DIR_DEFAULT", csv_root))
+                stack.enter_context(mock.patch.dict("os.environ", {"BOOKRAG_CSV_PREPARE_WORKERS": "2"}))
+                parse_mock = stack.enter_context(
+                    mock.patch("app.services.multi_format._run_unstructured_workflow_job_for_file")
+                )
+                stack.enter_context(mock.patch("app.services.multi_format.elements_to_bookrag_blocks", side_effect=_blocks))
+                stack.enter_context(
+                    mock.patch(
+                        "app.services.multi_format.build_bookrag_nodes",
+                        side_effect=lambda document_row, blocks: [
+                            {"doc_id": document_row["doc_id"], "node_id": f"node-{document_row['doc_id']}"}
+                        ],
+                    )
+                )
+                stack.enter_context(mock.patch("app.services.multi_format.validate_bookrag_dataset_relationships"))
+                stack.enter_context(mock.patch("app.services.multi_format.prepare_bookrag_table_csv", side_effect=_write_csv))
+
+                first = multi_format.run_bookrag_json_to_csv(
+                    parse_run_id=parse_run_id,
+                    create_values=self._create_values(),
+                )
+                transform_barrier.reset()
+                second = multi_format.run_bookrag_json_to_csv(
+                    parse_run_id=parse_run_id,
+                    create_values=self._create_values(),
+                )
+
+            parse_mock.assert_not_called()
+            self.assertEqual(first["status"], "ready")
+            self.assertEqual(first["success_count"], 2)
+            self.assertEqual(first["csv_files_created"], 8)
+            self.assertEqual(first["database_writes"], 0)
+            self.assertNotEqual(first["csv_run_id"], second["csv_run_id"])
+            self.assertNotEqual(first["csv_stage_dir"], second["csv_stage_dir"])
+            self.assertTrue(Path(first["manifest_path"]).is_file())
+            self.assertTrue(Path(second["manifest_path"]).is_file())
 
     def test_bookrag_table_groups_keep_core_indivisible_and_graph_all_or_nothing(self) -> None:
         flags = multi_format._resolve_bookrag_table_generation_flags(
@@ -653,10 +842,16 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
             source_file='raw_stage/AS_20190130_doc-1.json',
             filetype='application/pdf',
             filesize_bytes=123,
+            page_count=2,
+            language_hint='jpn',
+            created_at='2026-07-14 03:10:00',
         )
         nodes = build_bookrag_nodes(document_row, [])
 
         self.assertEqual(document_row['filename'], src.name)
+        self.assertEqual(document_row['page_count'], 2)
+        self.assertEqual(document_row['language_hint'], 'jpn')
+        self.assertEqual(document_row['created_at'], '2026-07-14 03:10:00')
         self.assertEqual(nodes[0]['title'], src.name)
         self.assertEqual(nodes[0]['path'], src.name)
 
@@ -777,9 +972,9 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
         self.assertEqual(summary['entity_link_count'], 0)
         self.assertEqual(summary['entity_relation_count'], 0)
         self.assertEqual(captured['nodes'][1]['source_element_id'], 'raw-1')
-        self.assertEqual(captured['entities'], [])
-        self.assertEqual(captured['entity_links'], [])
-        self.assertEqual(captured['entity_relations'], [])
+        self.assertEqual(captured.get('entities', []), [])
+        self.assertEqual(captured.get('entity_links', []), [])
+        self.assertEqual(captured.get('entity_relations', []), [])
 
     def test_bookrag_pipeline_persists_tree_outputs(self) -> None:
         create_values = self._create_values(
@@ -927,6 +1122,10 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
         self.assertEqual(summary['vectorstore_source_object'], 'demo_schema.demo_bk_bnode')
         self.assertEqual(len(captured['document_rows']), 1)
         self.assertEqual(captured['document_rows'][0]['doc_id'], 'upload-doc-id')
+        self.assertEqual(captured['document_rows'][0]['source_file'], str(src))
+        self.assertEqual(captured['document_rows'][0]['page_count'], 1)
+        self.assertEqual(captured['document_rows'][0]['language_hint'], 'jpn')
+        self.assertTrue(captured['document_rows'][0]['created_at'])
         self.assertEqual(len(captured['raw_rows']), 2)
         self.assertEqual(len(captured['blocks']), 2)
         self.assertEqual(len(captured['nodes']), 3)
@@ -934,10 +1133,92 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
         self.assertEqual(len(captured['entity_links']), 2)
         self.assertEqual(len(captured['entity_relations']), 1)
         self.assertEqual(summary['bookrag_csv_stage_dir'], str(csv_stage_dir))
-        self.assertEqual(summary['bookrag_csv_stage_files'], [])
+        self.assertEqual(len(summary['bookrag_csv_stage_files']), 7)
 
 
-    def test_bookrag_pipeline_flushes_after_file_threshold(self) -> None:
+    def test_bookrag_document_parsing_runs_in_parallel_and_finishes_before_csv_stage(self) -> None:
+        create_values = self._create_values()
+        raw_payload_by_name = {
+            'sample1.txt': [{'type': 'NarrativeText', 'element_id': 'text-1', 'text': 'One', 'metadata': {'page_number': 1}}],
+            'sample2.txt': [{'type': 'NarrativeText', 'element_id': 'text-2', 'text': 'Two', 'metadata': {'page_number': 1}}],
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            sources = [tmp_path / 'sample1.txt', tmp_path / 'sample2.txt']
+            for src in sources:
+                src.write_text('demo', encoding='utf-8')
+            persist_mocks: list[mock.Mock] = []
+            parse_barrier = threading.Barrier(2)
+            stage_lock = threading.Lock()
+            jobs_finished = 0
+            csv_stage_observations: list[int] = []
+
+            def _run_job(client=None, *, src, **kwargs):
+                nonlocal jobs_finished
+                parse_barrier.wait(timeout=5)
+                payload = raw_payload_by_name[src.name]
+                with stage_lock:
+                    jobs_finished += 1
+                return payload, payload, {}, f'job-{src.stem}', 'workflow-1', 'BookRAG_Test'
+
+            def _stop_at_csv_stage(**kwargs):
+                with stage_lock:
+                    csv_stage_observations.append(jobs_finished)
+                raise RuntimeError('stop after isolated document parsing test')
+
+            with contextlib.ExitStack() as stack:
+                for patch_target in (
+                    'prepare_bookrag_document_table',
+                    'prepare_bookrag_raw_table',
+                    'prepare_bookrag_block_table',
+                    'prepare_bookrag_node_table',
+                    'prepare_bookrag_document_relation_table',
+                ):
+                    stack.enter_context(mock.patch(f'app.services.multi_format.{patch_target}', return_value=[]))
+                stack.enter_context(mock.patch('app.services.multi_format._load_unstructured_runtime_config', return_value=('key', 'https://example.invalid')))
+                stack.enter_context(mock.patch('app.services.multi_format._resolve_unstructured_request_timeout_ms', return_value=120000))
+                stack.enter_context(mock.patch('app.services.multi_format._create_unstructured_client', return_value=object()))
+                stack.enter_context(mock.patch('app.services.multi_format._prepare_unstructured_debug_dir', return_value=tmp_path / 'debug'))
+                stack.enter_context(mock.patch('app.services.multi_format._prepare_bookrag_raw_stage_dir', return_value=tmp_path / 'raw'))
+                stack.enter_context(mock.patch('app.services.multi_format._prepare_bookrag_csv_stage_dir', return_value=tmp_path / 'csv'))
+                stack.enter_context(mock.patch('app.services.multi_format._resolve_bookrag_workflow_poll_config', return_value=(30, 1)))
+                stack.enter_context(mock.patch('app.services.multi_format._enforce_unstructured_job_submission_spacing', side_effect=lambda value: value))
+                stack.enter_context(mock.patch('app.services.multi_format._build_bookrag_reusable_workflow_definition', return_value=('BookRAG_Test', [], {'workflow_name': 'BookRAG_Test', 'workflow_nodes': []}, [], 'partition:fast')))
+                stack.enter_context(mock.patch('app.services.multi_format._run_unstructured_workflow_job_for_file', side_effect=_run_job))
+                stack.enter_context(mock.patch('app.services.multi_format._write_unstructured_debug_file', return_value=''))
+                stack.enter_context(mock.patch('app.services.multi_format.prepare_bookrag_table_csv', side_effect=_stop_at_csv_stage))
+                for patch_target in (
+                    'persist_bookrag_documents',
+                    'persist_bookrag_raw_rows',
+                    'persist_bookrag_blocks',
+                    'persist_bookrag_nodes',
+                ):
+                    persist_mocks.append(
+                        stack.enter_context(mock.patch(f'app.services.multi_format.{patch_target}'))
+                    )
+
+                with self.assertRaisesRegex(RuntimeError, 'parallel JSON-to-CSV processing failed'):
+                    multi_format._apply_bookrag_tree_pipeline(
+                        exec_payload={'document_files': [str(src) for src in sources]},
+                        create_values=create_values,
+                        vector_store_name='demo',
+                        execute_sql_fn=mock.Mock(),
+                        resolve_path_hint=lambda value: value,
+                        effective_schema_name='demo_schema',
+                        document_files=[str(src) for src in sources],
+                        partition_strategy='fast',
+                        ocr_languages=['eng'],
+                        target_warnings=[],
+                    )
+
+            for persist_mock in persist_mocks:
+                persist_mock.assert_not_called()
+            self.assertEqual(jobs_finished, 2)
+            self.assertTrue(csv_stage_observations)
+            self.assertEqual(set(csv_stage_observations), {2})
+
+    def test_bookrag_csv_prepare_and_load_stages_run_concurrently_after_barriers(self) -> None:
         create_values = self._create_values()
         raw_payload_by_name = {
             'sample1.txt': [
@@ -972,25 +1253,62 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
             block_batch_sizes: list[int] = []
             node_batch_sizes: list[int] = []
             document_relation_rows: list[dict] = []
+            stage_lock = threading.Lock()
+            csv_prepare_barrier = threading.Barrier(2)
+            csv_load_barrier = threading.Barrier(2)
+            jobs_finished = 0
+            csv_prepared = 0
+            loads_started = 0
+            stage_violations: list[str] = []
+            real_prepare_csv = multi_format.prepare_bookrag_table_csv
 
             def _run_job(client=None, *, src, **kwargs):
+                nonlocal jobs_finished
                 payload = raw_payload_by_name[src.name]
+                with stage_lock:
+                    jobs_finished += 1
                 return payload, payload, {'workflow_name': 'BookRAG_Test'}, f'job-{src.stem}', 'workflow-1', 'BookRAG_Test'
 
+            def _prepare_csv(*, table_key, **kwargs):
+                nonlocal csv_prepared
+                with stage_lock:
+                    if jobs_finished != len(sources):
+                        stage_violations.append('CSV preparation started before every JSON completed.')
+                if table_key == 'documents':
+                    csv_prepare_barrier.wait(timeout=2)
+                csv_path = real_prepare_csv(table_key=table_key, **kwargs)
+                with stage_lock:
+                    csv_prepared += 1
+                return csv_path
+
+            def _before_csv_load() -> None:
+                nonlocal loads_started
+                with stage_lock:
+                    if csv_prepared != len(sources) * 4:
+                        stage_violations.append('CSV loading started before every CSV completed.')
+                    load_index = loads_started
+                    loads_started += 1
+                if load_index < 2:
+                    csv_load_barrier.wait(timeout=2)
+
             def _persist_documents(*, rows, csv_stage_dir=None, **kwargs):
+                _before_csv_load()
                 document_batch_sizes.append(len(rows))
                 document_csv_dirs.append(Path(csv_stage_dir))
                 return len(rows)
 
             def _persist_raw(*, rows, **kwargs):
+                _before_csv_load()
                 raw_batch_sizes.append(len(rows))
                 return len(rows)
 
             def _persist_blocks(*, blocks, **kwargs):
+                _before_csv_load()
                 block_batch_sizes.append(len(blocks))
                 return len(blocks)
 
             def _persist_nodes(*, nodes, **kwargs):
+                _before_csv_load()
                 node_batch_sizes.append(len(nodes))
                 return len(nodes)
 
@@ -1033,6 +1351,7 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
                 stack.enter_context(mock.patch('app.services.multi_format._build_bookrag_reusable_workflow_definition', return_value=('BookRAG_Test', [{'name': 'Partitioner'}], {'workflow_name': 'BookRAG_Test', 'workflow_nodes': [{'name': 'Partitioner'}]}, [], 'partition:vlm:vlm')))
                 stack.enter_context(mock.patch('app.services.multi_format._run_unstructured_workflow_job_for_file', side_effect=_run_job))
                 stack.enter_context(mock.patch('app.services.multi_format._write_unstructured_debug_file', return_value=''))
+                stack.enter_context(mock.patch('app.services.multi_format.prepare_bookrag_table_csv', side_effect=_prepare_csv))
                 stack.enter_context(mock.patch('app.services.multi_format.persist_bookrag_documents', side_effect=_persist_documents))
                 stack.enter_context(mock.patch('app.services.multi_format.persist_bookrag_raw_rows', side_effect=_persist_raw))
                 stack.enter_context(mock.patch('app.services.multi_format.persist_bookrag_blocks', side_effect=_persist_blocks))
@@ -1055,9 +1374,18 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
                 )
 
         self.assertEqual(summary['document_count'], 2)
-        self.assertEqual(summary['bookrag_flush_config'], {'mode': 'per_file'})
+        self.assertEqual(
+            summary['bookrag_flush_config'],
+            {'mode': 'three_stage_parallel', 'csv_layout': 'per_file_per_table'},
+        )
         self.assertEqual(summary['bookrag_flush_count'], 2)
         self.assertEqual(summary['bookrag_unstructured_workers'], 2)
+        self.assertEqual(summary['bookrag_csv_prepare_workers'], 2)
+        self.assertEqual(summary['bookrag_csv_load_workers'], 5)
+        self.assertEqual(jobs_finished, 2)
+        self.assertEqual(csv_prepared, 8)
+        self.assertEqual(loads_started, 8)
+        self.assertEqual(stage_violations, [])
         self.assertEqual(len(set(document_csv_dirs)), 2)
         self.assertTrue(all(path.parent == csv_stage_dir for path in document_csv_dirs))
         self.assertEqual([batch['reason'] for batch in summary['bookrag_flush_batches']], ['file_ready', 'file_ready'])

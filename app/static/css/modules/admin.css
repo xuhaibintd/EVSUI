@@ -905,18 +905,34 @@
   display: none;
 }
 
-#section-admin.menu-section.active:has(#admin-rule-tab-external:checked),
-#section-admin.menu-section.active:has(#admin-rule-tab-business:checked) {
+#section-admin.menu-section.active:has(#admin-rule-tab-external:checked) {
   height: auto !important;
   min-height: 0 !important;
   align-self: start;
   overflow: visible !important;
 }
 
-#section-admin.menu-section.active:has(#admin-rule-tab-external:checked) .panel-content,
-#section-admin.menu-section.active:has(#admin-rule-tab-business:checked) .panel-content {
+#section-admin.menu-section.active:has(#admin-rule-tab-external:checked) .panel-content {
   flex: 0 0 auto;
   overflow: visible !important;
+}
+
+/* Business configuration can be taller than the application viewport. Keep the
+   section inside the fixed shell and give its content a real scroll container. */
+#section-admin.menu-section.active:has(#admin-rule-tab-business:checked) {
+  height: 100% !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
+
+#section-admin.menu-section.active:has(#admin-rule-tab-business:checked) .panel-content {
+  flex: 1 1 auto;
+  height: 0;
+  min-height: 0;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 #section-admin.menu-section.active:has(#admin-rule-tab-external:checked) #bookrag-admin-panel,
@@ -1033,6 +1049,7 @@
 }
 
 .document-relation-admin-table-wrap {
+  max-width: 100%;
   overflow: auto;
 }
 

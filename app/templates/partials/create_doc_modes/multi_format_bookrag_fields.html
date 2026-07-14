@@ -173,4 +173,74 @@
     </div>
   </div>
 
+  <div class="bookrag-parse-panel">
+    <div>
+      <strong>Document Parsing</strong>
+      <p>Generate reusable raw JSON with the configured Unstructured parsing settings. CSV generation and database loading run later.</p>
+    </div>
+    <button
+      type="button"
+      class="ghost progress-btn bookrag-parse-btn"
+      data-progress-button
+      data-progress-show-seconds
+      data-bookrag-parse-button
+      hx-post="/ui/create/parse-documents"
+      hx-include="closest form"
+      hx-target="#bookrag-document-parsing-result"
+      hx-swap="innerHTML"
+      hx-disabled-elt="this"
+      {% if not evs.connected or not document_uploads %}disabled{% endif %}
+    >
+      <span class="progress-btn-label">Parse Documents</span>
+      <span class="progress-btn-loading">
+        <span class="progress-btn-spinner" aria-hidden="true"></span>
+        <span data-progress-loading-text>Parsing...</span>
+      </span>
+    </button>
+  </div>
+  <div id="bookrag-document-parsing-result" class="bookrag-parse-result-shell" aria-live="polite"></div>
+
+  <div class="bookrag-parse-panel bookrag-csv-panel">
+    <div>
+      <strong>Generate CSV from JSON</strong>
+      <p>Reuse a completed parsing run. This stage reads local JSON only and does not parse documents or write to the database.</p>
+    </div>
+    <div class="bookrag-csv-actions">
+      <label>
+        <span>JSON parsing run</span>
+        <select name="bookrag_parse_run_id" data-bookrag-parse-run-select>
+          {% if bookrag_parse_runs %}
+            {% for run in bookrag_parse_runs %}
+            <option value="{{ run.parse_run_id }}">
+              {{ run.created_at }} · {{ run.vector_store_name or 'bookrag' }} · {{ run.file_count }} files
+            </option>
+            {% endfor %}
+          {% else %}
+            <option value="">No reusable JSON parsing run</option>
+          {% endif %}
+        </select>
+      </label>
+      <button
+        type="button"
+        class="ghost progress-btn bookrag-parse-btn"
+        data-progress-button
+        data-progress-show-seconds
+        data-bookrag-csv-button
+        hx-post="/ui/create/generate-csv"
+        hx-include="closest form"
+        hx-target="#bookrag-csv-generation-result"
+        hx-swap="innerHTML"
+        hx-disabled-elt="this"
+        {% if not bookrag_parse_runs %}disabled{% endif %}
+      >
+        <span class="progress-btn-label">Generate CSV</span>
+        <span class="progress-btn-loading">
+          <span class="progress-btn-spinner" aria-hidden="true"></span>
+          <span data-progress-loading-text>Generating...</span>
+        </span>
+      </button>
+    </div>
+  </div>
+  <div id="bookrag-csv-generation-result" class="bookrag-parse-result-shell" aria-live="polite"></div>
+
 </div>

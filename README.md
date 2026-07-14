@@ -280,19 +280,25 @@ Create-time filename initialization is deliberately conservative:
 
 ### Creation and Persistence Flow
 
+The **Document Parsing** action below **3. Enrichment Nodes** submits the current BookRAG parsing settings and all uploaded documents, runs the concurrent Unstructured-to-JSON stage, and reports per-file success, element count, and elapsed time. It stores a `manifest.json` beside the per-document JSON files with stable document metadata and JSON checksums. The generated raw JSON is the reusable source artifact for later CSV generation; this stage does not create CSV files, prepare Teradata tables, or write database rows.
+
+The **Generate CSV from JSON** action can select any locally stored parsing manifest in `ready` status. It verifies every JSON checksum and runs the shared JSON-to-table-row algorithm concurrently for all documents. Each generation creates a new CSV run directory and manifest, so rerunning after an algorithm change never overwrites an earlier result. A CSV run is marked `ready` only when every document succeeds; this stage never invokes Unstructured and never writes database rows.
+
 1. Upload saves each file under its UUID `doc_id` and records `{doc_id, filename, saved_path}` in the document manifest.
 2. The upload UI stops at the file catalog; it does not render or submit document relationships.
-3. Unstructured jobs run concurrently (worker count is controlled by `BOOKRAG_UNSTRUCTURED_WORKERS`). Each completed job immediately writes its per-file raw JSON stage file.
-4. Completed files are consumed in completion order. EVSUI transforms one JSON result into `bdoc`, `braw`, `bblk`, `bnode`, and optional Graph rows, validates all within-document relationships, and writes per-file/per-table UTF-8 CSV stage files.
-5. Each complete CSV is loaded into its target table before the next completed file is persisted. This avoids building one very large CSV for all documents and isolates failures by `doc_id`.
+3. Unstructured jobs run concurrently (default `5`; override with `BOOKRAG_UNSTRUCTURED_WORKERS`). Each completed job writes its fixed per-file raw JSON stage file. The pipeline waits for every JSON job before continuing.
+4. After the JSON barrier, files are transformed concurrently (default `5`; override with `BOOKRAG_CSV_PREPARE_WORKERS`). Each JSON keeps the existing fixed per-file/per-table CSV mapping; CSV files are neither merged nor split. The pipeline waits for every CSV to be ready before loading any rows.
+5. After the CSV barrier, all prepared CSV load tasks run concurrently (default `5`; override with `BOOKRAG_CSV_LOAD_WORKERS`) and their results are collected together.
 6. After all documents exist in `bdoc`, the pipeline creates `bdrel` like the other Core tables, derives conservative filename-rule relationships, validates both endpoints against `bdoc`, and inserts the suggestions as inactive rows for administrative review.
 7. When the embedding option is enabled, `VectorStore.create()` uses the physical `bnode` table, `content` as data, and `(doc_id, node_id)` as its composite key. When disabled, table preprocessing completes without vector creation.
+
+`bdoc.source_file` stores the original uploaded document path. `page_count` is derived from the maximum extracted block page, `language_hint` records the configured OCR languages when present, and `created_at` records when the document row was built. Raw JSON stage paths remain available in the preprocessing summary/debug artifacts and are not stored as the source document path.
 
 Unstructured processing is concurrent, but job submission is rate-limited separately. EVSUI spaces submissions by 1.35 seconds and, when the service returns HTTP 429, follows `retry_after` with an additional safety margin and retries up to six times. A transient submission limit must not fail the complete multi-file run.
 
 If preprocessing fails after BookRAG tables have been created but before any rows are inserted, retrying with the same vector store name reuses each empty table after validating that all columns required by the current table contract are present. A table with existing rows, an unverifiable row count, or incompatible columns is never reused; choose a new vector store name in those cases.
 
-CSV loading uses native Teradata driver protocols. A CSV with fewer than `BOOKRAG_CSV_FASTLOAD_MIN_ROWS` rows (default `100000`) uses the driver's `teradata_read_csv` path; larger CSVs use `teradataml.read_csv(..., use_fastload=True)`. The application term “batch” refers only to one completed per-file flush and is not a Teradata product/protocol name.
+CSV loading uses native Teradata driver protocols. A CSV with fewer than `BOOKRAG_CSV_FASTLOAD_MIN_ROWS` rows (default `100000`) uses the driver's `teradata_read_csv` path; larger CSVs use `teradataml.read_csv(..., use_fastload=True)`. The application term “batch” refers to one completed per-file result summary and is not a Teradata product/protocol name.
 
 ### Retrieval Contract
 
@@ -310,6 +316,7 @@ For external MCP/SQL applications, call `GET /api/bookrag/schema?vector_store_na
 
 - **Vector Store Creation -> Upload PDF / Documents** is file upload only. `bdrel` is created during Create together with `bdoc`, `bblk`, and `bnode`.
 - Create-time filename-rule rows begin inactive. Use **Administration -> Business Configuration -> Document Relationships** to load, review, add, edit, activate/deactivate, delete, import, or export rows.
+- The Document Relationships panel refreshes its own Vector Store list on load and provides **Refresh Vector Stores**; it does not depend on running the Retrieval page's list action first.
 - If an older vector store has `bdoc` but no `bdrel`, click **Initialize bdrel**. This only creates the empty table after verifying that `bdoc` contains documents; it does not invent or activate relationships.
 - CSV import may identify endpoints by `doc_id`. A filename-only import is accepted only when that filename is present and unique in `bdoc`; stored filenames are then canonicalized from `bdoc`.
 - Adding or changing `bdrel` rows does not require re-running Unstructured or rebuilding embeddings because document relationships are loaded at retrieval time.
