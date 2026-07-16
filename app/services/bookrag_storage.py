@@ -794,6 +794,69 @@ def validate_prepared_bookrag_table_csv(*, table_key: str, csv_path: str) -> Non
         )
 
 
+def prepare_unstructured_table_csv(
+    *,
+    table_name: str,
+    rows: list[dict[str, Any]],
+    columns: list[tuple[str, str]],
+    csv_stage_dir: Path,
+    stats: dict[str, Any] | None = None,
+) -> str:
+    """Write one standard Multi-Format unstructured-table CSV."""
+    _initialize_insert_stats(
+        stats,
+        table_name=table_name,
+        row_count=len(rows),
+        add_input_rows=True,
+    )
+    csv_path = _write_rows_csv(csv_stage_dir, table_name, rows, columns, stats=stats)
+    if not csv_path:
+        raise RuntimeError(f"Multi-Format CSV generation produced no file for {table_name}.")
+    if stats is not None:
+        if csv_path not in stats["csv_files"]:
+            stats["csv_files"].append(csv_path)
+        stats["insert_total_seconds"] = round(float(stats.get("csv_write_seconds", 0.0) or 0.0), 6)
+    return csv_path
+
+
+def validate_prepared_unstructured_table_csv(
+    *,
+    csv_path: str,
+    columns: list[tuple[str, str]],
+) -> None:
+    expected_columns = [name for name, _ in columns]
+    actual_columns = _csv_header(csv_path)
+    if actual_columns != expected_columns:
+        raise RuntimeError(
+            "Multi-Format prepared CSV header mismatch: "
+            f"expected={expected_columns}, actual={actual_columns}"
+        )
+
+
+def load_prepared_unstructured_table_csv(
+    *,
+    schema_name: str | None,
+    table_name: str,
+    csv_path: str,
+    row_count: int,
+    columns: list[tuple[str, str]],
+    stats: dict[str, Any] | None = None,
+) -> int:
+    """Load one verified Multi-Format CSV into its unstructured table."""
+    if row_count <= 0:
+        raise RuntimeError(f"Multi-Format prepared CSV row count must be positive: {row_count}")
+    validate_prepared_unstructured_table_csv(csv_path=csv_path, columns=columns)
+    _initialize_insert_stats(
+        stats,
+        table_name=table_name,
+        row_count=row_count,
+        add_input_rows=False,
+    )
+    if stats is not None:
+        stats["csv_files"].append(str(Path(csv_path)))
+    return _load_csv_to_teradata(schema_name, table_name, csv_path, row_count, stats=stats)
+
+
 def persist_bookrag_tree(
     *,
     schema_name: str | None,

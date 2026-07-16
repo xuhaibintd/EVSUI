@@ -74,9 +74,9 @@
       {% for field in row.get('fields', []) %}
       {% if field.get('name') == 'vector_store_name' %}
       <label
-        class="{{ field.get('wrapper_class', 'field') }} basic-inline-field{% if _doc_pipeline_mode not in ['text_core', 'multi_format'] %} doc-mode-hidden{% endif %}"
-        data-doc-mode-for="text_core multi_format"
-        {% if _doc_pipeline_mode not in ['text_core', 'multi_format'] %}hidden aria-hidden="true"{% endif %}
+        class="{{ field.get('wrapper_class', 'field') }} basic-inline-field{% if _doc_pipeline_mode != 'text_core' %} doc-mode-hidden{% endif %}"
+        data-doc-mode-for="text_core"
+        {% if _doc_pipeline_mode != 'text_core' %}hidden aria-hidden="true"{% endif %}
       >
         <span class="field-label">Vector Store Name</span>
         <input
@@ -84,9 +84,10 @@
           name="vector_store_name"
           value="{{ create_values.get('vector_store_name', '') }}"
           required
-          {% if not evs.connected or _doc_pipeline_mode not in ['text_core', 'multi_format'] %}disabled{% endif %}
+          {% if not evs.connected or _doc_pipeline_mode != 'text_core' %}disabled{% endif %}
         />
       </label>
+      {% include "partials/multi_format_vector_store_name_field.html" %}
       {% include "partials/bookrag_vector_store_name_field.html" %}
       {% else %}
       <label class="{{ field.get('wrapper_class', 'field') }} basic-inline-field">

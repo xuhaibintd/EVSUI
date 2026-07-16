@@ -40,9 +40,13 @@ from app.services.create_config import CREATE_FIELD_MAX_LEN, default_create_valu
 from app.services.doc_modes.constants import collect_doc_pipeline_ui_values
 from app.services.multi_format import (
     list_bookrag_csv_runs,
+    list_multi_format_csv_runs,
     run_bookrag_csv_load,
     run_bookrag_document_parsing,
     run_bookrag_json_to_csv,
+    run_multi_format_csv_load,
+    run_multi_format_document_parsing,
+    run_multi_format_json_to_csv,
 )
 from app.teradata_runtime import (
     TERADATA_IMPORT_ERROR,
@@ -769,6 +773,128 @@ async def load_csv_tables(request: Request):
             "evs": request.app.state.evs_state,
         },
     )
+
+
+@router.post("/ui/create/multi-format/parse-documents", response_class=HTMLResponse)
+async def parse_multi_format_documents_for_create(request: Request):
+    if not _is_logged_in(request, request.app):
+        return HTMLResponse("Unauthorized", status_code=401)
+    _activate_session_state(request, request.app)
+    form = await request.form()
+    create_values = default_create_values()
+    create_values.update(collect_doc_pipeline_ui_values(form, field_max_len=CREATE_FIELD_MAX_LEN))
+    summary = None
+    error = ""
+    try:
+        summary = await asyncio.to_thread(
+            run_multi_format_document_parsing,
+            create_values=create_values,
+            vector_store_name=str(form.get("vector_store_name") or "").strip(),
+            uploaded_documents=[dict(item) for item in request.app.state.document_uploads],
+            connection_params=dict(request.app.state.evs_state.get("params") or {}),
+            resolve_path_hint=_resolve_path_hint,
+        )
+    except Exception as ex:
+        error = str(ex)
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "partials/multi_format_document_parsing_result.html",
+        {"multi_format_document_parsing": summary, "multi_format_document_parsing_error": error},
+    )
+
+
+@router.post("/ui/create/multi-format/generate-csv", response_class=HTMLResponse)
+async def generate_multi_format_csv_for_create(request: Request):
+    if not _is_logged_in(request, request.app):
+        return HTMLResponse("Unauthorized", status_code=401)
+    _activate_session_state(request, request.app)
+    form = await request.form()
+    parse_run_id = str(
+        form.get("multi_format_parse_run_id_current")
+        or form.get("multi_format_parse_run_id")
+        or ""
+    ).strip()
+    evs_state = getattr(request.app.state, "evs_state", {}) or {}
+    connection_params = dict(evs_state.get("params") or {})
+    summary = None
+    error = ""
+    try:
+        summary = await asyncio.to_thread(
+            run_multi_format_json_to_csv,
+            parse_run_id=parse_run_id,
+            vector_store_name=str(form.get("multi_format_csv_vector_store_name") or "").strip(),
+            target_database=str(
+                form.get("multi_format_csv_target_database")
+                or form.get("target_database")
+                or connection_params.get("username")
+                or ""
+            ).strip(),
+        )
+    except Exception as ex:
+        error = str(ex)
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "partials/multi_format_csv_generation_result.html",
+        {
+            "multi_format_csv_generation": summary,
+            "multi_format_csv_generation_error": error,
+            "multi_format_load_csv_runs": [summary] if summary and summary.get("status") == "ready" else [],
+            "multi_format_selected_load_csv_run_id": str(summary.get("csv_run_id") or "") if summary else "",
+            "multi_format_load_panel_oob": bool(summary and summary.get("status") == "ready"),
+            "evs": request.app.state.evs_state,
+        },
+    )
+
+
+@router.post("/ui/create/multi-format/load-csv-table", response_class=HTMLResponse)
+async def load_multi_format_csv_table(request: Request):
+    if not _is_logged_in(request, request.app):
+        return HTMLResponse("Unauthorized", status_code=401)
+    _activate_session_state(request, request.app)
+    form = await request.form()
+    csv_run_id = str(
+        form.get("multi_format_csv_run_id_current")
+        or form.get("multi_format_csv_run_id")
+        or ""
+    ).strip()
+    summary = None
+    error = ""
+    try:
+        if not request.app.state.evs_state.get("connected"):
+            raise RuntimeError("Connect/authenticate in Step 1 before loading CSV files.")
+        if execute_sql is None:
+            raise RuntimeError(f"Teradata SQL runtime is unavailable: {TERADATA_IMPORT_ERROR}")
+        if not any(item["csv_run_id"] == csv_run_id for item in list_multi_format_csv_runs()):
+            raise RuntimeError("Select a Multi-Format CSV generation run in ready status.")
+        summary = await asyncio.to_thread(
+            run_multi_format_csv_load,
+            csv_run_id=csv_run_id,
+            execute_sql_fn=execute_sql,
+        )
+        request.app.state.evs_state["last_error"] = ""
+        request.app.state.evs_state["last_success"] = (
+            f"Multi-Format CSV run '{csv_run_id}' loaded into the verified unstructured table."
+        )
+        _persist_active_session_state(request, request.app)
+    except Exception as ex:
+        error = str(ex)
+        request.app.state.evs_state["last_success"] = ""
+        request.app.state.evs_state["last_error"] = error
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "partials/multi_format_csv_load_result.html",
+        {
+            "multi_format_csv_load": summary,
+            "multi_format_csv_load_error": error,
+            "multi_format_loaded_csv_runs": [summary] if summary else [],
+            "multi_format_selected_loaded_csv_run_id": csv_run_id if summary else "",
+            "multi_format_vector_name_oob": bool(summary),
+            "create_values": getattr(request.app.state, "create_form_values", {}),
+            "evs": request.app.state.evs_state,
+        },
+    )
+
+
 @router.post("/ui/evs/health", response_class=HTMLResponse)
 async def evs_run_health(request: Request):
     if not _is_logged_in(request, request.app):
@@ -1264,7 +1390,6 @@ async def save_document_relations_admin(
                 "to_doc_id": to_doc_id,
                 "relation_description": relation_description,
                 "source_type": "human",
-                "confidence": 1.0,
             },
             documents=documents,
             execute_sql_fn=execute_sql,
@@ -1349,7 +1474,6 @@ async def export_document_relations_admin(request: Request, vector_store_name: s
         "to_filename",
         "relation_description",
         "source_type",
-        "confidence",
     ]
     buffer = io.StringIO(newline="")
     writer = csv.DictWriter(buffer, fieldnames=fieldnames, extrasaction="ignore")

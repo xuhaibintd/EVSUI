@@ -435,7 +435,6 @@ def _normalize_document_relation_row(row: dict[str, Any], *, matched_doc_id: str
         "to_filename": _as_text(row.get("to_filename")),
         "relation_description": _as_text(row.get("relation_description")),
         "source_type": _as_text(row.get("source_type")),
-        "confidence": _as_float(row.get("confidence")),
         "direction": "outgoing" if from_doc_id == matched_doc_id else "incoming",
         "related_doc_id": to_doc_id if from_doc_id == matched_doc_id else from_doc_id,
         "related_filename": (

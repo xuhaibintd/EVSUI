@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import csv
 import tempfile
 import threading
 import unittest
@@ -1494,7 +1495,6 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
                         "to_filename": older["filename"],
                         "relation_description": "Filename rule created an initial relationship.",
                         "source_type": "rule",
-                        "confidence": 1.0,
                     }
                 ]
 
@@ -1570,6 +1570,173 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
         self.assertEqual(len(document_relation_rows), 1)
         self.assertNotIn('is_active', document_relation_rows[0])
         self.assertNotIn('confirmed', document_relation_rows[0])
+
+
+class MultiFormatStagedPipelineTests(unittest.TestCase):
+    def test_document_parsing_uses_standard_multi_format_workflow_and_writes_json_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            src = tmp_path / "sample.pdf"
+            src.write_text("demo", encoding="utf-8")
+            raw_dir = tmp_path / "raw-run"
+            raw_dir.mkdir()
+            payload = [
+                {"type": "CompositeElement", "element_id": "chunk-1", "text": "chunk", "metadata": {}}
+            ]
+            create_values = dict(DOC_PIPELINE_UI_DEFAULTS)
+            create_values.update(
+                {
+                    "multi_format_strategy": "hi_res",
+                    "multi_format_chunk_size": "700",
+                    "multi_format_chunk_overlap": "70",
+                }
+            )
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(mock.patch.object(multi_format, "_prepare_multi_format_raw_stage_dir", return_value=raw_dir))
+                stack.enter_context(mock.patch.object(multi_format, "_load_unstructured_runtime_config", return_value=("key", "url")))
+                stack.enter_context(mock.patch.object(multi_format, "_resolve_unstructured_request_timeout_ms", return_value=1000))
+                stack.enter_context(mock.patch.object(multi_format, "_resolve_multi_format_workflow_poll_config", return_value=(30, 1)))
+                stack.enter_context(mock.patch.object(multi_format, "_load_unstructured_runtime_settings", return_value={}))
+                stack.enter_context(mock.patch.object(multi_format, "_create_unstructured_client", return_value=object()))
+                stack.enter_context(mock.patch.object(multi_format, "_enforce_unstructured_job_submission_spacing", side_effect=lambda value: value))
+                stack.enter_context(
+                    mock.patch.object(
+                        multi_format,
+                        "_multi_format_partition_options_for_file",
+                        return_value=("hi_res", ["eng"], False, [], False),
+                    )
+                )
+                workflow_builder = stack.enter_context(
+                    mock.patch.object(
+                        multi_format,
+                        "_workflow_builder_build_multi_format_workflow_definition",
+                        return_value=(
+                            {"workflow_name": "Multi_Format", "workflow_nodes": [{"name": "Partitioner"}, {"name": "Chunker"}]},
+                            [],
+                            "partition:hi_res,chunk:chunk_by_character",
+                        ),
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        multi_format,
+                        "_run_unstructured_workflow_job_for_file",
+                        return_value=(payload, payload, {}, "job-1", "workflow-1", "Multi_Format"),
+                    )
+                )
+                csv_mock = stack.enter_context(mock.patch.object(multi_format, "prepare_unstructured_table_csv"))
+                load_mock = stack.enter_context(mock.patch.object(multi_format, "load_prepared_unstructured_table_csv"))
+                summary = multi_format.run_multi_format_document_parsing(
+                    create_values=create_values,
+                    vector_store_name="demo",
+                    uploaded_documents=[{"doc_id": "doc-1", "saved_path": str(src)}],
+                    connection_params={},
+                    resolve_path_hint=lambda value: value,
+                )
+
+            self.assertEqual(summary["status"], "ok")
+            self.assertEqual(summary["csv_files_created"], 0)
+            self.assertEqual(summary["database_writes"], 0)
+            self.assertTrue(Path(summary["files"][0]["raw_json_path"]).is_file())
+            manifest = multi_format.json.loads(Path(summary["manifest_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(manifest["artifact_type"], "multi_format_parse_run")
+            self.assertEqual(manifest["chunk_size"], 700)
+            workflow_builder.assert_called_once()
+            self.assertEqual(workflow_builder.call_args.kwargs["chunk_size"], 700)
+            csv_mock.assert_not_called()
+            load_mock.assert_not_called()
+
+    def test_json_to_csv_keeps_standard_unstructured_mapping_and_loads_one_table(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            raw_root = tmp_path / "raw"
+            csv_root = tmp_path / "csv"
+            parse_run_id = "multi_parse_run"
+            parse_dir = raw_root / parse_run_id
+            parse_dir.mkdir(parents=True)
+            payloads = [
+                [
+                    {"type": "NarrativeText", "element_id": "one", "text": "One", "metadata": {"filename": "one.pdf"}},
+                    {"type": "Image", "element_id": "empty", "text": "", "metadata": {}},
+                ],
+                [
+                    {"type": "TableChunk", "element_id": "two", "text": "Two", "metadata": {"filename": "two.pdf", "text_as_html": "<table></table>"}},
+                ],
+            ]
+            documents = []
+            for index, payload in enumerate(payloads):
+                json_path = parse_dir / f"doc-{index}.json"
+                json_path.write_text(multi_format.json.dumps(payload), encoding="utf-8")
+                documents.append(
+                    {
+                        "source_index": index,
+                        "doc_id": f"doc-{index}",
+                        "filename": f"doc-{index}.pdf",
+                        "filetype": "application/pdf",
+                        "raw_json_file": json_path.name,
+                        "raw_json_sha256": multi_format._file_sha256(json_path),
+                        "element_count": len(payload),
+                        "status": "success",
+                    }
+                )
+            manifest = {
+                "schema_version": multi_format.MULTI_FORMAT_PARSE_MANIFEST_SCHEMA_VERSION,
+                "artifact_type": "multi_format_parse_run",
+                "parse_run_id": parse_run_id,
+                "status": "ready",
+                "created_at": "2026-07-16 00:00:00",
+                "file_count": len(documents),
+                "documents": documents,
+            }
+            (parse_dir / "manifest.json").write_text(
+                multi_format.json.dumps(manifest), encoding="utf-8"
+            )
+
+            with mock.patch.object(multi_format, "MULTI_FORMAT_RAW_STAGE_DIR_DEFAULT", raw_root), mock.patch.object(
+                multi_format, "MULTI_FORMAT_CSV_STAGE_DIR_DEFAULT", csv_root
+            ):
+                generated = multi_format.run_multi_format_json_to_csv(
+                    parse_run_id=parse_run_id,
+                    vector_store_name="demo",
+                    target_database="demo_schema",
+                )
+
+                self.assertEqual(generated["status"], "ready")
+                self.assertEqual(generated["qualified_table"], "demo_schema.demo_unstructured")
+                self.assertEqual(generated["csv_file_count"], 2)
+                self.assertEqual(generated["row_count"], 2)
+                ids = []
+                for result in generated["files"]:
+                    with (Path(generated["csv_stage_dir"]) / result["csv_file"]).open(
+                        "r", encoding="utf-8-sig", newline=""
+                    ) as handle:
+                        rows = list(csv.DictReader(handle))
+                    ids.extend(row["id"] for row in rows)
+                    self.assertEqual(list(rows[0]), [name for name, _ in multi_format.UNSTRUCTURED_CHUNK_COLUMNS])
+                self.assertEqual(ids, ["000000000001", "000000000003"])
+
+                with mock.patch.object(
+                    multi_format, "_ensure_unstructured_teradata_table", return_value=[]
+                ) as ensure_table, mock.patch.object(
+                    multi_format,
+                    "load_prepared_unstructured_table_csv",
+                    side_effect=lambda **kwargs: kwargs["row_count"],
+                ) as load_csv, mock.patch.object(
+                    multi_format, "_count_teradata_rows", return_value=2
+                ):
+                    loaded = multi_format.run_multi_format_csv_load(
+                        csv_run_id=generated["csv_run_id"], execute_sql_fn=mock.Mock()
+                    )
+
+            self.assertEqual(loaded["persisted_row_count"], 2)
+            self.assertEqual(loaded["qualified_table"], "demo_schema.demo_unstructured")
+            ensure_table.assert_called_once_with(
+                schema_name="demo_schema",
+                table_name="demo_unstructured",
+                execute_sql_fn=mock.ANY,
+                clear_rows=True,
+            )
+            self.assertEqual(load_csv.call_count, 2)
 
 
 if __name__ == '__main__':

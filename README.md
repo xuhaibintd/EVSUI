@@ -21,7 +21,7 @@ EVSUI is a `FastAPI + Jinja2 + HTMX` interface for working with Teradata Vector 
 - Supports multi-file upload
 - Full `VectorStore.create(...)` parameter form
 - Built-in parameter sets for `VECTORDISTANCE / KMEANS / HNSW`
-- `Multi Format` mode uses Unstructured Workflow Endpoint on-demand jobs, creates a Teradata table first, and writes processed chunk rows into `<Vector Store Name>_unstructured`.
+- `Multi Format` mode uses Unstructured Workflow Endpoint on-demand jobs and a reusable three-stage flow: raw JSON, standard unstructured CSV, then `<Vector Store Name>_unstructured` table loading. Its JSON-to-row mapping and table contract remain unchanged.
 - `Multi-Format BookRAG` mode uses Unstructured Workflow Endpoint on-demand jobs with inline `job_nodes`, builds document-scoped Teradata tables, and can optionally run `VectorStore.create()` from `bnode.content` with `(doc_id, node_id)` as the vector key. See [BookRAG Pipeline: Data Structures and Processing Flow](docs/bookrag_pipeline_diagram.md) for the visual pipeline and table model.
 - BookRAG is intended for industrial-grade, audit-ready document QA where section paths, tables, images, entities, relations, and multi-evidence reasoning matter. See [BookRAG for Industrial-Grade Applications / 産業用途における BookRAG のユースケース](docs/bookrag_industrial_use_cases.md) for English and Japanese scenario guidance.
 
@@ -124,6 +124,8 @@ Official references:
   - `chunk_by_title`
   - `chunk_by_page`
   - `chunk_by_similarity`
+- The UI separates processing into **Document Parsing**, **Generate CSV from JSON**, and **Load CSV to Unstructured Table**. The CSV stage only applies the existing `UNSTRUCTURED_CHUNK_COLUMNS` mapping; it does not build BookRAG nodes, graphs, or auxiliary tables.
+- After loading and row-count verification, the table-ready run can be selected in Basic and used by `VectorStore.create()` with `text` as the data column and `id` as the key column.
 
 2. **Unstructured BookRAG** (`doc_pipeline_mode=multi_format_bookrag`)
 - Uses the **Workflow Endpoint**.
@@ -265,7 +267,6 @@ Columns:
 | `relation_type` | One of `summary_of`, `next_issue_of`, `updates`, `supplement_to`, `follow_up_to`, `references`, `related_to` |
 | `relation_description` | Human-readable business explanation used as retrieval context |
 | `source_type` | Provenance: `human`, `rule`, `import`, or `llm` |
-| `confidence` | Optional value from `0.0` to `1.0` |
 | `created_by`, `created_at`, `updated_by`, `updated_at` | Audit fields maintained during persistence/editing |
 
 Relationship direction is meaningful. For example, `A summary_of B` means A is the summary and B is the full report; `A next_issue_of B` means A is the newer issue and B is the preceding issue. A row cannot point to itself. Duplicate `(from_doc_id, relation_type, to_doc_id)` values are rejected.
@@ -323,7 +324,7 @@ For external MCP/SQL applications, call `GET /api/bookrag/schema?vector_store_na
 - Create-time filename-rule rows are effective immediately. Use **Administration -> Business Configuration -> Document Relationships** to load, review, add, edit, delete, import, or export rows.
 - The Document Relationships panel refreshes its own Vector Store list on load and provides **Refresh Vector Stores**; it does not depend on running the Retrieval page's list action first.
 - If an older vector store has `bdoc` but no `bdrel`, click **Initialize bdrel**. This only creates the empty table after verifying that `bdoc` contains documents; it does not invent relationships.
-- When an existing legacy `bdrel` table is next initialized or changed, the obsolete `is_active` column is dropped without deleting rows. Retrieval already treats every legacy row as effective.
+- When an existing legacy `bdrel` table is next initialized or changed, obsolete `is_active` and `confidence` columns are dropped without deleting rows. Retrieval already treats every legacy row as effective.
 - CSV import may identify endpoints by `doc_id`. A filename-only import is accepted only when that filename is present and unique in `bdoc`; stored filenames are then canonicalized from `bdoc`.
 - Adding or changing `bdrel` rows does not require re-running Unstructured or rebuilding embeddings because document relationships are loaded at retrieval time.
 - New uploads use stable upload-instance UUIDs throughout one create flow. Re-uploading or rebuilding from a newly generated manifest assigns new IDs, so any external references or imported `bdrel` rows must be remapped to the new `bdoc.doc_id` values.

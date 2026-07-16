@@ -184,7 +184,6 @@ def _draft_relation(
         "to_filename": target["filename"],
         "relation_description": description,
         "source_type": "rule",
-        "confidence": 1.0,
     }
 
 
@@ -210,10 +209,6 @@ def validate_document_relation(
     source_type = _as_text(relation.get("source_type") or "human", max_len=32).lower()
     if source_type not in BOOKRAG_DOCUMENT_RELATION_SOURCE_TYPES:
         raise ValueError(f"Unsupported document relation source: {source_type}.")
-    raw_confidence = relation.get("confidence")
-    confidence = None if raw_confidence in (None, "") else float(raw_confidence)
-    if confidence is not None and not 0.0 <= confidence <= 1.0:
-        raise ValueError("Document relation confidence must be between 0 and 1.")
     return {
         "from_doc_id": from_doc_id,
         "from_filename": document_map[from_doc_id],
@@ -222,7 +217,6 @@ def validate_document_relation(
         "to_filename": document_map[to_doc_id],
         "relation_description": _as_text(relation.get("relation_description"), max_len=4000) or None,
         "source_type": source_type,
-        "confidence": confidence,
     }
 
 
@@ -422,7 +416,6 @@ def save_document_relation(
             "to_filename": normalized["to_filename"],
             "relation_description": normalized["relation_description"],
             "source_type": normalized["source_type"],
-            "confidence": normalized["confidence"],
             "updated_by": _as_text(username, max_len=128) or None,
             "updated_at": now,
         }

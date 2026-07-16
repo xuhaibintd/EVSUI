@@ -25,6 +25,8 @@ from app.services.unstructured_runtime import (
     BOOKRAG_PDF_IMAGE_EXTENSIONS,
     BOOKRAG_RAW_STAGE_DIR_DEFAULT,
     EXCEL_EXTENSIONS,
+    MULTI_FORMAT_CSV_STAGE_DIR_DEFAULT,
+    MULTI_FORMAT_RAW_STAGE_DIR_DEFAULT,
     UNSTRUCTURED_DEBUG_DIR_DEFAULT,
     UNSTRUCTURED_FAST_UNSAFE_IMAGE_EXTENSIONS,
     UNSTRUCTURED_TERADATA_FLUSH_WAIT_INTERVAL_DEFAULT,
@@ -70,8 +72,11 @@ from app.services.bookrag_storage import (
     persist_bookrag_documents,
     persist_bookrag_raw_rows,
     load_prepared_bookrag_table_csv,
+    load_prepared_unstructured_table_csv,
+    prepare_unstructured_table_csv,
     prepare_bookrag_table_csv,
     validate_prepared_bookrag_table_csv,
+    validate_prepared_unstructured_table_csv,
     write_bookrag_raw_stage_file,
 )
 from app.services.unstructured_job_runner import (
@@ -188,6 +193,14 @@ BOOKRAG_CSV_MANIFEST_SCHEMA_VERSION = 1
 BOOKRAG_CSV_MANIFEST_FILENAME = "manifest.json"
 BOOKRAG_TRANSFORM_VERSION = "bookrag-json-to-csv-v1"
 BOOKRAG_COMPLETE_TABLE_CONTRACT = "core-audit-graph-v1"
+MULTI_FORMAT_PARSE_MANIFEST_FILENAME = "manifest.json"
+MULTI_FORMAT_PARSE_MANIFEST_SCHEMA_VERSION = 1
+MULTI_FORMAT_CSV_MANIFEST_FILENAME = "manifest.json"
+MULTI_FORMAT_CSV_MANIFEST_SCHEMA_VERSION = 1
+MULTI_FORMAT_TRANSFORM_VERSION = "multi-format-json-to-unstructured-csv-v1"
+MULTI_FORMAT_UNSTRUCTURED_WORKERS_DEFAULT = 5
+MULTI_FORMAT_CSV_PREPARE_WORKERS_DEFAULT = 5
+MULTI_FORMAT_CSV_LOAD_WORKERS_DEFAULT = 5
 
 
 def _resolve_bookrag_unstructured_workers(file_count: int) -> int:
@@ -215,6 +228,29 @@ def _resolve_bookrag_csv_load_workers(csv_count: int) -> int:
         minimum=1,
     )
     return max(1, min(configured, max(1, csv_count)))
+
+
+def _resolve_multi_format_workers(env_name: str, default: int, task_count: int) -> int:
+    configured = _to_int(os.getenv(env_name, str(default)), default=default, minimum=1)
+    return max(1, min(configured, max(1, task_count)))
+
+
+def _resolve_multi_format_unstructured_workers(file_count: int) -> int:
+    return _resolve_multi_format_workers(
+        "MULTI_FORMAT_UNSTRUCTURED_WORKERS", MULTI_FORMAT_UNSTRUCTURED_WORKERS_DEFAULT, file_count
+    )
+
+
+def _resolve_multi_format_csv_prepare_workers(file_count: int) -> int:
+    return _resolve_multi_format_workers(
+        "MULTI_FORMAT_CSV_PREPARE_WORKERS", MULTI_FORMAT_CSV_PREPARE_WORKERS_DEFAULT, file_count
+    )
+
+
+def _resolve_multi_format_csv_load_workers(csv_count: int) -> int:
+    return _resolve_multi_format_workers(
+        "MULTI_FORMAT_CSV_LOAD_WORKERS", MULTI_FORMAT_CSV_LOAD_WORKERS_DEFAULT, csv_count
+    )
 
 
 def _merge_bookrag_insert_stats(target: dict[str, Any], source: dict[str, Any]) -> None:
@@ -738,6 +774,14 @@ def _prepare_bookrag_csv_stage_dir(vector_store_name: str) -> Path:
     return csv_stage_dir
 
 
+def _prepare_multi_format_raw_stage_dir(run_label: str) -> Path:
+    safe_label = _sanitize_teradata_identifier(run_label, fallback="multi_format")
+    run_id = f"{safe_label}_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+    raw_stage_dir = MULTI_FORMAT_RAW_STAGE_DIR_DEFAULT / run_id
+    raw_stage_dir.mkdir(parents=True, exist_ok=False)
+    return raw_stage_dir
+
+
 def _file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -766,6 +810,128 @@ def _bookrag_config_snapshot(create_values: dict[str, str]) -> dict[str, str]:
         if str(key).startswith("multi_format_bookrag_")
         and not any(fragment in str(key).lower() for fragment in blocked_fragments)
     }
+
+
+def _multi_format_config_snapshot(create_values: dict[str, str]) -> dict[str, str]:
+    blocked_fragments = ("api_key", "password", "secret", "token")
+    return {
+        str(key): str(value)
+        for key, value in create_values.items()
+        if str(key).startswith("multi_format_")
+        and not str(key).startswith("multi_format_bookrag_")
+        and not any(fragment in str(key).lower() for fragment in blocked_fragments)
+    }
+
+
+def _resolve_multi_format_manifest(
+    run_id: str,
+    *,
+    root: Path,
+    artifact_type: str,
+    schema_version: int,
+    run_id_key: str,
+    invalid_message: str,
+) -> tuple[Path, dict[str, Any]]:
+    normalized_run_id = str(run_id or "").strip()
+    if not normalized_run_id or Path(normalized_run_id).name != normalized_run_id:
+        raise RuntimeError(invalid_message)
+    resolved_root = root.resolve()
+    run_dir = (resolved_root / normalized_run_id).resolve()
+    if run_dir.parent != resolved_root:
+        raise RuntimeError(f"{invalid_message} Run directory is outside its stage root.")
+    manifest_path = run_dir / "manifest.json"
+    if not manifest_path.is_file():
+        raise RuntimeError(f"Multi-Format run manifest was not found: {normalized_run_id}")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as ex:
+        raise RuntimeError(f"Invalid Multi-Format run manifest: {manifest_path}: {ex}") from ex
+    if not isinstance(manifest, dict):
+        raise RuntimeError(f"Invalid Multi-Format run manifest object: {manifest_path}")
+    if manifest.get("artifact_type") != artifact_type:
+        raise RuntimeError(f"Unsupported Multi-Format run manifest type: {manifest_path}")
+    if _to_int(manifest.get("schema_version"), default=0) != schema_version:
+        raise RuntimeError(f"Unsupported Multi-Format run manifest schema version: {manifest_path}")
+    if str(manifest.get(run_id_key) or "") != normalized_run_id:
+        raise RuntimeError(f"Multi-Format manifest run ID does not match its directory: {manifest_path}")
+    return manifest_path, manifest
+
+
+def _resolve_multi_format_parse_manifest(parse_run_id: str) -> tuple[Path, dict[str, Any]]:
+    return _resolve_multi_format_manifest(
+        parse_run_id,
+        root=MULTI_FORMAT_RAW_STAGE_DIR_DEFAULT,
+        artifact_type="multi_format_parse_run",
+        schema_version=MULTI_FORMAT_PARSE_MANIFEST_SCHEMA_VERSION,
+        run_id_key="parse_run_id",
+        invalid_message="Select a valid Multi-Format document parsing run.",
+    )
+
+
+def _resolve_multi_format_csv_manifest(csv_run_id: str) -> tuple[Path, dict[str, Any]]:
+    return _resolve_multi_format_manifest(
+        csv_run_id,
+        root=MULTI_FORMAT_CSV_STAGE_DIR_DEFAULT,
+        artifact_type="multi_format_csv_run",
+        schema_version=MULTI_FORMAT_CSV_MANIFEST_SCHEMA_VERSION,
+        run_id_key="csv_run_id",
+        invalid_message="Select a valid Multi-Format CSV generation run.",
+    )
+
+
+def _list_multi_format_manifests(
+    *,
+    root: Path,
+    artifact_type: str,
+    run_id_key: str,
+    include_incomplete: bool,
+) -> list[dict[str, Any]]:
+    if not root.exists():
+        return []
+    runs: list[dict[str, Any]] = []
+    for manifest_path in root.glob("*/manifest.json"):
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(manifest, dict) or manifest.get("artifact_type") != artifact_type:
+            continue
+        status = str(manifest.get("status") or "")
+        if not include_incomplete and status != "ready":
+            continue
+        runs.append(
+            {
+                run_id_key: str(manifest.get(run_id_key) or manifest_path.parent.name),
+                "created_at": str(manifest.get("created_at") or ""),
+                "vector_store_name": str(manifest.get("vector_store_name") or ""),
+                "target_database": str(manifest.get("target_database") or ""),
+                "file_count": _to_int(manifest.get("file_count"), default=0),
+                "csv_file_count": _to_int(manifest.get("csv_file_count"), default=0),
+                "status": status,
+                "load_status": str(manifest.get("load_status") or "not_started"),
+                "manifest_path": str(manifest_path),
+            }
+        )
+    runs.sort(key=lambda item: (item["created_at"], item[run_id_key]), reverse=True)
+    return runs
+
+
+def list_multi_format_parse_runs(*, include_incomplete: bool = False) -> list[dict[str, Any]]:
+    return _list_multi_format_manifests(
+        root=MULTI_FORMAT_RAW_STAGE_DIR_DEFAULT,
+        artifact_type="multi_format_parse_run",
+        run_id_key="parse_run_id",
+        include_incomplete=include_incomplete,
+    )
+
+
+def list_multi_format_csv_runs(*, include_incomplete: bool = False) -> list[dict[str, Any]]:
+    return _list_multi_format_manifests(
+        root=MULTI_FORMAT_CSV_STAGE_DIR_DEFAULT,
+        artifact_type="multi_format_csv_run",
+        run_id_key="csv_run_id",
+        include_incomplete=include_incomplete,
+    )
 
 
 def _resolve_bookrag_parse_manifest(parse_run_id: str) -> tuple[Path, dict[str, Any]]:
@@ -1700,6 +1866,554 @@ def _build_bookrag_rows_from_raw_elements(
         "entity_links": entity_links,
         "entity_relations": entity_relations,
     }
+
+
+def run_multi_format_document_parsing(
+    *,
+    create_values: dict[str, str],
+    vector_store_name: str,
+    uploaded_documents: list[dict[str, Any]],
+    connection_params: dict[str, Any] | None,
+    resolve_path_hint: Callable[[str], str],
+) -> dict[str, Any]:
+    """Run the existing standard Multi-Format workflow and persist only reusable JSON."""
+    if not uploaded_documents:
+        raise RuntimeError("Upload at least one document before parsing documents.")
+
+    partition_strategy = _resolve_partition_strategy(create_values.get("multi_format_strategy", "auto"))
+    if partition_strategy == "ocr_only":
+        raise RuntimeError(
+            "Multi-Format does not expose 'ocr_only' as a supported workflow route. Use hi_res or vlm instead."
+        )
+    ocr_languages = _parse_langs(create_values.get("multi_format_ocr_languages", ""))
+    chunk_size = _to_int(
+        create_values.get("multi_format_chunk_size", "600"), default=600, minimum=100, maximum=8000
+    )
+    chunk_overlap = _to_int(
+        create_values.get("multi_format_chunk_overlap", "80"), default=80, minimum=0, maximum=2000
+    )
+    if chunk_overlap >= chunk_size:
+        chunk_overlap = max(0, chunk_size // 5)
+
+    api_key, api_url = _load_unstructured_runtime_config(connection_params)
+    request_timeout_ms = _resolve_unstructured_request_timeout_ms()
+    timeout_seconds, poll_interval_seconds = _resolve_multi_format_workflow_poll_config()
+    raw_stage_dir = _prepare_multi_format_raw_stage_dir(vector_store_name or "multi_format_parse")
+
+    source_items: list[tuple[int, Path, str]] = []
+    for index, item in enumerate(uploaded_documents):
+        saved_path = str(item.get("saved_path") or "").strip()
+        doc_id = str(item.get("doc_id") or "").strip()[:64]
+        if not saved_path:
+            raise RuntimeError(f"Uploaded document has no saved path: index={index}")
+        src = Path(resolve_path_hint(saved_path))
+        if not src.exists() or not src.is_file():
+            raise RuntimeError(f"Uploaded document is missing: {saved_path}")
+        source_items.append((index, src, doc_id or uuid.uuid4().hex))
+
+    workers = _resolve_multi_format_unstructured_workers(len(source_items))
+    runtime_settings = _load_unstructured_runtime_settings()
+    submission_lock = Lock()
+    last_job_submitted_at: float | None = None
+
+    def _parse_one(index: int, src: Path, doc_id: str) -> dict[str, Any]:
+        nonlocal last_job_submitted_at
+        started_at = time.perf_counter()
+        (
+            file_partition_strategy,
+            file_ocr_languages,
+            include_orig_elements,
+            file_warnings,
+            scan_ocr_fallback_applied,
+        ) = _multi_format_partition_options_for_file(
+            src,
+            default_strategy=partition_strategy,
+            default_languages=ocr_languages,
+            include_orig_elements=False,
+        )
+        request_parameters, workflow_warnings, processing_profile = (
+            _workflow_builder_build_multi_format_workflow_definition(
+                create_values=create_values,
+                src=src,
+                partition_strategy=file_partition_strategy,
+                languages=file_ocr_languages,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                include_orig_elements=include_orig_elements,
+                overlap_all=True,
+                runtime=runtime_settings,
+            )
+        )
+        with submission_lock:
+            last_job_submitted_at = _enforce_unstructured_job_submission_spacing(last_job_submitted_at)
+        client = _create_unstructured_client(api_key=api_key, api_url=api_url, timeout_ms=request_timeout_ms)
+        raw_payload, _, _, job_id, workflow_id, workflow_name = _run_unstructured_workflow_job_for_file(
+            client,
+            request_parameters=request_parameters,
+            src=src,
+            timeout_seconds=timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+            api_key=api_key,
+            api_url=api_url,
+        )
+        raw_stage_file = write_bookrag_raw_stage_file(raw_stage_dir, src.name, doc_id, raw_payload)
+        elements = load_bookrag_raw_stage_file(raw_stage_file)
+        return {
+            "source_index": index,
+            "doc_id": doc_id,
+            "filename": src.name,
+            "source_file": str(src),
+            "filetype": mimetypes.guess_type(src.name)[0] or src.suffix.lower().lstrip("."),
+            "filesize_bytes": src.stat().st_size,
+            "job_id": job_id,
+            "workflow_id": workflow_id,
+            "workflow_name": workflow_name or str(request_parameters.get("workflow_name") or ""),
+            "processing_profile": processing_profile,
+            "partition_strategy": file_partition_strategy,
+            "ocr_languages": file_ocr_languages,
+            "scan_ocr_fallback_applied": scan_ocr_fallback_applied,
+            "warnings": file_warnings + workflow_warnings,
+            "raw_json_path": str(raw_stage_file),
+            "element_count": len(elements),
+            "elapsed_seconds": round(max(0.0, time.perf_counter() - started_at), 6),
+            "status": "success",
+            "error": "",
+        }
+
+    started_at = time.perf_counter()
+    results: list[dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="multi-format-document-parse") as executor:
+        future_map = {
+            executor.submit(_parse_one, index, src, doc_id): (index, src, doc_id)
+            for index, src, doc_id in source_items
+        }
+        for future in as_completed(future_map):
+            index, src, doc_id = future_map[future]
+            try:
+                results.append(future.result())
+            except Exception as ex:
+                results.append(
+                    {
+                        "source_index": index,
+                        "doc_id": doc_id,
+                        "filename": src.name,
+                        "source_file": str(src),
+                        "filetype": mimetypes.guess_type(src.name)[0] or src.suffix.lower().lstrip("."),
+                        "filesize_bytes": src.stat().st_size,
+                        "job_id": "",
+                        "workflow_id": "",
+                        "workflow_name": "",
+                        "processing_profile": "",
+                        "partition_strategy": partition_strategy,
+                        "ocr_languages": ocr_languages,
+                        "scan_ocr_fallback_applied": False,
+                        "warnings": [],
+                        "raw_json_path": "",
+                        "element_count": 0,
+                        "elapsed_seconds": 0.0,
+                        "status": "failed",
+                        "error": _sanitize_teradata_text(str(ex))[:2000],
+                    }
+                )
+    results.sort(key=lambda item: int(item["source_index"]))
+    success_count = sum(1 for item in results if item["status"] == "success")
+    failure_count = len(results) - success_count
+    parse_run_id = raw_stage_dir.name
+    documents: list[dict[str, Any]] = []
+    for item in results:
+        raw_json_path = Path(str(item.get("raw_json_path") or ""))
+        raw_json_file = raw_json_path.name if raw_json_path.is_file() else ""
+        documents.append(
+            {
+                key: item.get(key)
+                for key in (
+                    "source_index", "doc_id", "filename", "source_file", "filetype", "filesize_bytes",
+                    "job_id", "workflow_id", "workflow_name", "processing_profile", "partition_strategy",
+                    "ocr_languages", "scan_ocr_fallback_applied", "warnings", "element_count", "status", "error",
+                )
+            }
+            | {
+                "raw_json_file": raw_json_file,
+                "raw_json_sha256": _file_sha256(raw_json_path) if raw_json_file else "",
+            }
+        )
+    manifest_path = raw_stage_dir / MULTI_FORMAT_PARSE_MANIFEST_FILENAME
+    manifest = {
+        "schema_version": MULTI_FORMAT_PARSE_MANIFEST_SCHEMA_VERSION,
+        "artifact_type": "multi_format_parse_run",
+        "parse_run_id": parse_run_id,
+        "status": "ready" if failure_count == 0 else "failed",
+        "created_at": _now_ts(),
+        "vector_store_name": vector_store_name,
+        "file_count": len(results),
+        "success_count": success_count,
+        "failure_count": failure_count,
+        "partition_strategy": partition_strategy,
+        "ocr_languages": ocr_languages,
+        "chunk_size": chunk_size,
+        "chunk_overlap": chunk_overlap,
+        "create_values": _multi_format_config_snapshot(create_values),
+        "documents": documents,
+    }
+    _write_json_atomic(manifest_path, manifest)
+    return {
+        "status": "ok" if failure_count == 0 else ("partial" if success_count else "error"),
+        "parse_run_id": parse_run_id,
+        "manifest_path": str(manifest_path),
+        "file_count": len(results),
+        "success_count": success_count,
+        "failure_count": failure_count,
+        "workers": workers,
+        "elapsed_seconds": round(max(0.0, time.perf_counter() - started_at), 6),
+        "raw_stage_dir": str(raw_stage_dir),
+        "partition_strategy": partition_strategy,
+        "ocr_languages": ocr_languages,
+        "chunk_size": chunk_size,
+        "chunk_overlap": chunk_overlap,
+        "warnings": [warning for item in results for warning in (item.get("warnings") or [])],
+        "files": results,
+        "csv_files_created": 0,
+        "database_writes": 0,
+    }
+
+
+def run_multi_format_json_to_csv(
+    *,
+    parse_run_id: str,
+    vector_store_name: str,
+    target_database: str,
+) -> dict[str, Any]:
+    """Map stored JSON through the existing chunk-row mapping into unstructured CSV files."""
+    parse_manifest_path, parse_manifest = _resolve_multi_format_parse_manifest(parse_run_id)
+    if str(parse_manifest.get("status") or "") != "ready":
+        raise RuntimeError("CSV generation requires a Multi-Format parsing run in ready status.")
+    documents = parse_manifest.get("documents")
+    if not isinstance(documents, list) or not documents:
+        raise RuntimeError("Multi-Format parsing manifest contains no reusable JSON documents.")
+    if any(not isinstance(item, dict) or item.get("status") != "success" for item in documents):
+        raise RuntimeError("CSV generation requires every JSON document to be successful.")
+
+    effective_vector_store_name = str(vector_store_name or "").strip()
+    if not effective_vector_store_name:
+        raise RuntimeError("Target Vector Store Name is required before generating CSV files.")
+    effective_target_database = _sanitize_teradata_identifier(
+        str(target_database or "").strip(), fallback="", allow_empty=True
+    )
+    if not effective_target_database:
+        raise RuntimeError("Target Database is required before generating CSV files.")
+    table_name, _, qualified_table, target_warnings = _resolve_multi_format_table_target(
+        {"target_database": effective_target_database},
+        {"target_database": effective_target_database},
+        effective_vector_store_name,
+    )
+    qualified_table = f"{effective_target_database}.{table_name}"
+
+    csv_run_id = (
+        f"{_sanitize_teradata_identifier(parse_run_id, fallback='multi_format')}_csv_"
+        f"{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+    )
+    csv_stage_dir = MULTI_FORMAT_CSV_STAGE_DIR_DEFAULT / csv_run_id
+    csv_stage_dir.mkdir(parents=True, exist_ok=False)
+    manifest_path = csv_stage_dir / MULTI_FORMAT_CSV_MANIFEST_FILENAME
+    parse_run_dir = parse_manifest_path.parent.resolve()
+    running_manifest = {
+        "schema_version": MULTI_FORMAT_CSV_MANIFEST_SCHEMA_VERSION,
+        "artifact_type": "multi_format_csv_run",
+        "csv_run_id": csv_run_id,
+        "source_parse_run_id": parse_run_id,
+        "status": "running",
+        "created_at": _now_ts(),
+        "vector_store_name": effective_vector_store_name,
+        "target_database": effective_target_database,
+        "table_name": table_name,
+        "qualified_table": qualified_table,
+        "transform_version": MULTI_FORMAT_TRANSFORM_VERSION,
+        "load_status": "not_started",
+        "documents": [],
+    }
+    _write_json_atomic(manifest_path, running_manifest)
+
+    sequence_offsets: dict[int, int] = {}
+    next_offset = 0
+    for document in sorted(documents, key=lambda item: int(item.get("source_index") or 0)):
+        source_index = int(document.get("source_index") or 0)
+        sequence_offsets[source_index] = next_offset
+        next_offset += max(0, int(document.get("element_count") or 0))
+
+    def _transform_one(item: dict[str, Any]) -> dict[str, Any]:
+        started = time.perf_counter()
+        source_index = int(item.get("source_index") or 0)
+        filename = str(item.get("filename") or "").strip()
+        doc_id = str(item.get("doc_id") or "").strip()
+        raw_json_file = str(item.get("raw_json_file") or "").strip()
+        if not filename or not doc_id or not raw_json_file or Path(raw_json_file).name != raw_json_file:
+            raise RuntimeError(f"Invalid Multi-Format document metadata at source_index={source_index}.")
+        raw_json_path = (parse_run_dir / raw_json_file).resolve()
+        if raw_json_path.parent != parse_run_dir or not raw_json_path.is_file():
+            raise RuntimeError(f"Raw JSON file was not found for {filename}: {raw_json_file}")
+        expected_sha256 = str(item.get("raw_json_sha256") or "").strip()
+        if not expected_sha256 or _file_sha256(raw_json_path) != expected_sha256:
+            raise RuntimeError(f"Raw JSON checksum mismatch for {filename}.")
+        raw_elements = load_bookrag_raw_stage_file(raw_json_path)
+        content_type = str(item.get("filetype") or "").strip() or (
+            mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        )
+        rows: list[dict[str, Any]] = []
+        base_sequence = sequence_offsets[source_index]
+        for ordinal, element in enumerate(raw_elements, start=1):
+            row = _element_to_chunk_row(
+                element,
+                src=Path(filename),
+                content_type=content_type,
+                row_sequence=base_sequence + ordinal,
+            )
+            if row:
+                rows.append(row)
+        file_stage_dir = csv_stage_dir / f"{_safe_stem(Path(filename))}_{doc_id}"
+        csv_path = prepare_unstructured_table_csv(
+            table_name=table_name,
+            rows=rows,
+            columns=UNSTRUCTURED_CHUNK_COLUMNS,
+            csv_stage_dir=file_stage_dir,
+        )
+        csv_file = str(Path(csv_path).relative_to(csv_stage_dir))
+        return {
+            "source_index": source_index,
+            "doc_id": doc_id,
+            "filename": filename,
+            "raw_json_file": raw_json_file,
+            "status": "success",
+            "row_count": len(rows),
+            "csv_file": csv_file,
+            "csv_sha256": _file_sha256(Path(csv_path)),
+            "elapsed_seconds": round(max(0.0, time.perf_counter() - started), 6),
+            "error": "",
+        }
+
+    started_at = time.perf_counter()
+    workers = _resolve_multi_format_csv_prepare_workers(len(documents))
+    results: list[dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="multi-format-json-to-csv") as executor:
+        future_map = {executor.submit(_transform_one, item): item for item in documents}
+        for future in as_completed(future_map):
+            item = future_map[future]
+            try:
+                results.append(future.result())
+            except Exception as ex:
+                results.append(
+                    {
+                        "source_index": int(item.get("source_index") or 0),
+                        "doc_id": str(item.get("doc_id") or ""),
+                        "filename": str(item.get("filename") or ""),
+                        "raw_json_file": str(item.get("raw_json_file") or ""),
+                        "status": "failed",
+                        "row_count": 0,
+                        "csv_file": "",
+                        "csv_sha256": "",
+                        "elapsed_seconds": 0.0,
+                        "error": _sanitize_teradata_text(str(ex))[:2000],
+                    }
+                )
+    results.sort(key=lambda item: int(item["source_index"]))
+    success_count = sum(1 for item in results if item["status"] == "success")
+    failure_count = len(results) - success_count
+    csv_file_count = success_count
+    total_rows = sum(int(item.get("row_count") or 0) for item in results)
+    final_status = "ready" if failure_count == 0 and total_rows > 0 else "failed"
+    final_manifest = {
+        **running_manifest,
+        "status": final_status,
+        "completed_at": _now_ts(),
+        "file_count": len(results),
+        "success_count": success_count,
+        "failure_count": failure_count,
+        "csv_file_count": csv_file_count,
+        "row_count": total_rows,
+        "warnings": target_warnings,
+        "run_error": "" if total_rows > 0 else "Generated CSV files contain no loadable unstructured rows.",
+        "documents": results,
+    }
+    _write_json_atomic(manifest_path, final_manifest)
+    return {
+        "status": final_status,
+        "created_at": running_manifest["created_at"],
+        "parse_run_id": parse_run_id,
+        "csv_run_id": csv_run_id,
+        "manifest_path": str(manifest_path),
+        "csv_stage_dir": str(csv_stage_dir),
+        "vector_store_name": effective_vector_store_name,
+        "target_database": effective_target_database,
+        "table_name": table_name,
+        "qualified_table": qualified_table,
+        "file_count": len(results),
+        "success_count": success_count,
+        "failure_count": failure_count,
+        "csv_files_created": csv_file_count,
+        "csv_file_count": csv_file_count,
+        "row_count": total_rows,
+        "run_error": final_manifest["run_error"],
+        "workers": workers,
+        "elapsed_seconds": round(max(0.0, time.perf_counter() - started_at), 6),
+        "transform_version": MULTI_FORMAT_TRANSFORM_VERSION,
+        "database_writes": 0,
+        "warnings": target_warnings,
+        "files": results,
+    }
+
+
+def run_multi_format_csv_load(
+    *,
+    csv_run_id: str,
+    execute_sql_fn: ExecuteSqlFn | None,
+) -> dict[str, Any]:
+    """Load a ready standard Multi-Format CSV run into one unstructured table."""
+    if execute_sql_fn is None:
+        raise RuntimeError("Teradata SQL execution is unavailable.")
+    manifest_path, manifest = _resolve_multi_format_csv_manifest(csv_run_id)
+    if str(manifest.get("status") or "") != "ready":
+        raise RuntimeError("Database loading requires a Multi-Format CSV run in ready status.")
+    if str(manifest.get("load_status") or "not_started") == "ready":
+        summary = manifest.get("load_summary")
+        if not isinstance(summary, dict):
+            raise RuntimeError("Multi-Format CSV manifest has no completed load summary.")
+        return {**summary, "already_loaded": True}
+    if str(manifest.get("load_status") or "") == "loading":
+        raise RuntimeError("This Multi-Format CSV run is already being loaded.")
+
+    target_database = _sanitize_teradata_identifier(
+        str(manifest.get("target_database") or "").strip(), fallback="", allow_empty=True
+    )
+    table_name = _sanitize_teradata_identifier(
+        str(manifest.get("table_name") or "").strip(), fallback="", allow_empty=True
+    )
+    vector_store_name = str(manifest.get("vector_store_name") or "").strip()
+    if not target_database or not table_name or not vector_store_name:
+        raise RuntimeError("Multi-Format CSV manifest is missing its target table.")
+    expected_table_name, _, _, _ = _resolve_multi_format_table_target(
+        {"target_database": target_database},
+        {"target_database": target_database},
+        vector_store_name,
+    )
+    if table_name != expected_table_name:
+        raise RuntimeError("Multi-Format CSV manifest table does not match its Vector Store name.")
+    documents = manifest.get("documents")
+    if not isinstance(documents, list) or not documents:
+        raise RuntimeError("Multi-Format CSV manifest contains no document outputs.")
+
+    csv_run_dir = manifest_path.parent.resolve()
+    load_tasks: list[dict[str, Any]] = []
+    seen_files: set[str] = set()
+    expected_rows = 0
+    for document in documents:
+        if not isinstance(document, dict) or document.get("status") != "success":
+            raise RuntimeError("CSV loading requires every Multi-Format document output to be successful.")
+        relative_csv = str(document.get("csv_file") or "").strip()
+        csv_path = (csv_run_dir / relative_csv).resolve()
+        if csv_run_dir not in csv_path.parents or not csv_path.is_file():
+            raise RuntimeError(f"Multi-Format CSV file is outside its run or missing: {relative_csv}")
+        if str(csv_path) in seen_files:
+            raise RuntimeError(f"Multi-Format CSV manifest contains a duplicate file: {relative_csv}")
+        seen_files.add(str(csv_path))
+        expected_sha256 = str(document.get("csv_sha256") or "").strip()
+        if not expected_sha256 or _file_sha256(csv_path) != expected_sha256:
+            raise RuntimeError(f"Multi-Format CSV checksum mismatch: {relative_csv}")
+        validate_prepared_unstructured_table_csv(
+            csv_path=str(csv_path), columns=UNSTRUCTURED_CHUNK_COLUMNS
+        )
+        row_count = _to_int(document.get("row_count"), default=0, minimum=0)
+        expected_rows += row_count
+        if row_count > 0:
+            load_tasks.append({"csv_path": str(csv_path), "row_count": row_count})
+    if expected_rows <= 0 or not load_tasks:
+        raise RuntimeError("Multi-Format CSV run contains no loadable unstructured rows.")
+
+    manifest["load_status"] = "loading"
+    manifest["load_started_at"] = _now_ts()
+    manifest["load_error"] = ""
+    _write_json_atomic(manifest_path, manifest)
+    started_at = time.perf_counter()
+    try:
+        warnings = _ensure_unstructured_teradata_table(
+            schema_name=target_database,
+            table_name=table_name,
+            execute_sql_fn=execute_sql_fn,
+            clear_rows=True,
+        )
+        workers = _resolve_multi_format_csv_load_workers(len(load_tasks))
+
+        def _load_one(task: dict[str, Any]) -> dict[str, Any]:
+            inserted = load_prepared_unstructured_table_csv(
+                schema_name=target_database,
+                table_name=table_name,
+                csv_path=task["csv_path"],
+                row_count=task["row_count"],
+                columns=UNSTRUCTURED_CHUNK_COLUMNS,
+            )
+            return {**task, "inserted_rows": inserted}
+
+        load_results: list[dict[str, Any]] = []
+        failures: list[str] = []
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="multi-format-csv-load") as executor:
+            future_map = {executor.submit(_load_one, task): task for task in load_tasks}
+            for future in as_completed(future_map):
+                task = future_map[future]
+                try:
+                    load_results.append(future.result())
+                except Exception as ex:
+                    failures.append(f"csv={task['csv_path']}: {ex}")
+        if failures:
+            raise RuntimeError("Parallel Multi-Format CSV loading failed: " + " | ".join(failures))
+        persisted_rows = _count_teradata_rows(
+            schema_name=target_database,
+            table_name=table_name,
+            execute_sql_fn=execute_sql_fn,
+        )
+        if persisted_rows is None:
+            raise RuntimeError("Could not verify the loaded Multi-Format row count.")
+        if persisted_rows != expected_rows:
+            raise RuntimeError(
+                f"Loaded Multi-Format row count mismatch: expected={expected_rows}, actual={persisted_rows}"
+            )
+        summary = {
+            "status": "ready",
+            "csv_run_id": csv_run_id,
+            "vector_store_name": vector_store_name,
+            "target_database": target_database,
+            "table_name": table_name,
+            "qualified_table": f"{target_database}.{table_name}",
+            "task_count": len(load_tasks),
+            "csv_file_count": len(seen_files),
+            "workers": workers,
+            "inserted_rows": sum(int(item["inserted_rows"]) for item in load_results),
+            "expected_row_count": expected_rows,
+            "persisted_row_count": persisted_rows,
+            "elapsed_seconds": round(max(0.0, time.perf_counter() - started_at), 6),
+            "warnings": warnings,
+            "already_loaded": False,
+        }
+        manifest["load_status"] = "ready"
+        manifest["load_completed_at"] = _now_ts()
+        manifest["load_summary"] = summary
+        _write_json_atomic(manifest_path, manifest)
+        return summary
+    except Exception as ex:
+        manifest["load_status"] = "failed"
+        manifest["load_completed_at"] = _now_ts()
+        manifest["load_error"] = _sanitize_teradata_text(str(ex))[:4000]
+        _write_json_atomic(manifest_path, manifest)
+        raise
+
+
+def get_ready_multi_format_csv_load_summary(*, csv_run_id: str) -> dict[str, Any]:
+    _, manifest = _resolve_multi_format_csv_manifest(csv_run_id)
+    if str(manifest.get("status") or "") != "ready":
+        raise RuntimeError("Vector Store creation requires a ready Multi-Format CSV run.")
+    if str(manifest.get("load_status") or "not_started") != "ready":
+        raise RuntimeError("Load the Multi-Format CSV run before creating the Vector Store.")
+    summary = manifest.get("load_summary")
+    if not isinstance(summary, dict):
+        raise RuntimeError("Multi-Format CSV manifest contains no completed load summary.")
+    return {**summary, "already_loaded": True}
 
 
 def run_bookrag_document_parsing(

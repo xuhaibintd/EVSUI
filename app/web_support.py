@@ -26,7 +26,12 @@ from app.services.doc_modes.constants import DOC_PIPELINE_OPTIONS
 from app.services.doc_modes.ui_fields import build_multi_format_bookrag_ui_fields, build_multi_format_ui_fields
 from app.services.precision_eval import build_precision_eval_panel_context, build_precision_eval_prototype_context
 from app.services.bookrag_section_rules import BOOKRAG_SECTION_RULES_PATH, load_bookrag_section_rules
-from app.services.multi_format import list_bookrag_csv_runs, list_bookrag_parse_runs
+from app.services.multi_format import (
+    list_bookrag_csv_runs,
+    list_bookrag_parse_runs,
+    list_multi_format_csv_runs,
+    list_multi_format_parse_runs,
+)
 from app.services.unstructured_json_inspector import build_unstructured_json_inspector_context
 from app.session_state import (
     activate_session_state,
@@ -593,6 +598,10 @@ def _build_home_context(request: Request, app) -> dict:
         for run in bookrag_csv_runs
         if run.get("load_status") == "ready" and run.get("vector_store_status") != "ready"
     ]
+    multi_format_csv_runs = list_multi_format_csv_runs()
+    multi_format_loaded_csv_runs = [
+        run for run in multi_format_csv_runs if run.get("load_status") == "ready"
+    ]
     return {
         "messages": app.state.chat_history,
         "evs": state,
@@ -607,6 +616,9 @@ def _build_home_context(request: Request, app) -> dict:
         "bookrag_parse_runs": list_bookrag_parse_runs(),
         "bookrag_csv_runs": bookrag_csv_runs,
         "bookrag_loaded_csv_runs": bookrag_loaded_csv_runs,
+        "multi_format_parse_runs": list_multi_format_parse_runs(),
+        "multi_format_csv_runs": multi_format_csv_runs,
+        "multi_format_loaded_csv_runs": multi_format_loaded_csv_runs,
         "document_relation_admin": {
             "vector_store_options": list(state.get("chat_vs_options") or []),
             "selected_vector_store": str(

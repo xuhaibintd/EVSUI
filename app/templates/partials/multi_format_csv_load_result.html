@@ -1,0 +1,11 @@
+{% if multi_format_csv_load_error %}
+<div class="bookrag-parse-result bookrag-parse-result-error" role="status"><strong>CSV table loading failed.</strong><p>{{ multi_format_csv_load_error }}</p></div>
+{% elif multi_format_csv_load %}
+<div class="bookrag-parse-result bookrag-parse-result-ok" role="status">
+  <div class="bookrag-parse-result-head"><strong>Unstructured table is ready.</strong><span>{{ multi_format_csv_load.target_database }}</span></div>
+  <p>Loaded {{ multi_format_csv_load.inserted_rows }} rows from {{ multi_format_csv_load.task_count }} CSV files · Workers: {{ multi_format_csv_load.workers }} · Load elapsed: {{ '%.2f'|format(multi_format_csv_load.elapsed_seconds / 60) }} min</p>
+  <p>Source table: <strong>{{ multi_format_csv_load.qualified_table }}</strong></p><p>Table loading is complete. Continue with <strong>Create Vector Store</strong> below.</p>
+  {% if multi_format_csv_load.warnings %}<ul class="bookrag-parse-warning-list">{% for warning in multi_format_csv_load.warnings %}<li>{{ warning }}</li>{% endfor %}</ul>{% endif %}
+</div>
+{% set multi_format_vector_name_oob = true %}{% set multi_format_selected_loaded_csv_run_id = multi_format_csv_load.csv_run_id %}{% include "partials/multi_format_vector_store_name_field.html" %}
+{% endif %}

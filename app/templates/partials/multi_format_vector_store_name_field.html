@@ -1,0 +1,8 @@
+{% set selected_loaded_run_id = (multi_format_selected_loaded_csv_run_id|default('')) or create_values.get('multi_format_loaded_csv_run_id', '') %}
+{% set current_mode = (_doc_pipeline_mode|default('multi_format')) %}
+<label id="multi-format-loaded-vector-store-field" class="field basic-inline-field{% if current_mode != 'multi_format' %} doc-mode-hidden{% endif %}" data-doc-mode-for="multi_format" {% if current_mode != 'multi_format' %}hidden aria-hidden="true"{% endif %} {% if multi_format_vector_name_oob|default(false) %}hx-swap-oob="outerHTML"{% endif %}>
+  <span class="field-label">Vector Store Name</span>
+  <select name="multi_format_loaded_csv_run_id" data-multi-format-loaded-run-select required {% if not evs.connected or current_mode != 'multi_format' %}disabled{% endif %}>
+    {% if multi_format_loaded_csv_runs %}{% for run in multi_format_loaded_csv_runs %}<option value="{{ run.csv_run_id }}" {% if selected_loaded_run_id == run.csv_run_id %}selected{% endif %}>{{ run.vector_store_name }} · {{ run.target_database }} · unstructured table ready</option>{% endfor %}{% else %}<option value="" selected>No loaded unstructured table run</option>{% endif %}
+  </select>
+</label>

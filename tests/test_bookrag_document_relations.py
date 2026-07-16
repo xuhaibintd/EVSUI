@@ -111,6 +111,7 @@ class BookRAGDocumentRelationTests(unittest.IsolatedAsyncioTestCase):
         ddl = _build_table_ddl('"db"."vs_bk_bdrel"', BOOKRAG_DOCUMENT_RELATION_COLUMNS)
         self.assertIn('PRIMARY KEY ("from_doc_id", "relation_type", "to_doc_id")', ddl)
         self.assertNotIn('"is_active"', ddl)
+        self.assertNotIn('"confidence"', ddl)
         contract = build_bookrag_relationship_contract("demo")
         self.assertEqual(contract["tables"]["document_relations"]["role"], "core")
         names = {row["name"] for row in contract["relationships"]}
@@ -136,26 +137,29 @@ class BookRAGDocumentRelationTests(unittest.IsolatedAsyncioTestCase):
 
         query = execute_sql.call_args.args[0]
         self.assertNotIn("is_active", query)
+        self.assertNotIn("confidence", query)
         self.assertIn('"from_doc_id" IN (\'doc-a\')', query)
         self.assertIn('"to_doc_id" IN (\'doc-a\')', query)
 
-    def test_legacy_activity_column_is_dropped_without_row_deletion(self) -> None:
+    def test_legacy_metadata_columns_are_dropped_without_row_deletion(self) -> None:
         execute_sql = mock.Mock()
         with mock.patch(
             "app.services.bookrag_schema._teradata_table_exists",
             return_value=True,
         ):
-            migrated = migrate_legacy_document_relation_table(
+            removed = migrate_legacy_document_relation_table(
                 schema_name="db",
                 table_name="demo_bk_bdrel",
                 execute_sql_fn=execute_sql,
             )
 
-        self.assertTrue(migrated)
+        self.assertEqual(removed, ("is_active", "confidence"))
         queries = [call.args[0] for call in execute_sql.call_args_list]
-        self.assertEqual(len(queries), 2)
+        self.assertEqual(len(queries), 4)
         self.assertIn('SELECT TOP 1 "is_active"', queries[0])
         self.assertIn('ALTER TABLE "db"."demo_bk_bdrel" DROP "is_active"', queries[1])
+        self.assertIn('SELECT TOP 1 "confidence"', queries[2])
+        self.assertIn('ALTER TABLE "db"."demo_bk_bdrel" DROP "confidence"', queries[3])
         self.assertTrue(all("DELETE" not in query for query in queries))
 
     def test_retrieval_render_includes_human_readable_document_relation(self) -> None:

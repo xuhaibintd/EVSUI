@@ -1,0 +1,13 @@
+{% if multi_format_csv_generation_error %}
+<div class="bookrag-parse-result bookrag-parse-result-error" role="status"><strong>CSV generation failed.</strong><p>{{ multi_format_csv_generation_error }}</p></div>
+{% elif multi_format_csv_generation %}
+<div class="bookrag-parse-result {% if multi_format_csv_generation.status == 'ready' %}bookrag-parse-result-ok{% else %}bookrag-parse-result-error{% endif %}" role="status">
+  <div class="bookrag-parse-result-head"><strong>JSON to unstructured CSV {% if multi_format_csv_generation.status == 'ready' %}completed{% else %}failed{% endif %}.</strong><span>{{ multi_format_csv_generation.success_count }}/{{ multi_format_csv_generation.file_count }} JSON files succeeded</span></div>
+  <p>Workers: {{ multi_format_csv_generation.workers }} · CSV files: {{ multi_format_csv_generation.csv_files_created }} · Rows: {{ multi_format_csv_generation.row_count }} · Elapsed: {{ '%.2f'|format(multi_format_csv_generation.elapsed_seconds / 60) }} min · Database writes: 0</p>
+  <p>Target table: <strong>{{ multi_format_csv_generation.qualified_table }}</strong></p>
+  {% if multi_format_csv_generation.run_error %}<p class="bookrag-parse-error">{{ multi_format_csv_generation.run_error }}</p>{% endif %}
+  <p class="muted">CSV directory: {{ multi_format_csv_generation.csv_stage_dir }}</p><p class="muted">Manifest: {{ multi_format_csv_generation.manifest_path }}</p>
+  <div class="bookrag-parse-file-list{% if multi_format_csv_generation.files|length > 10 %} is-scrollable{% endif %}">{% for file in multi_format_csv_generation.files %}<div class="bookrag-parse-file-row {% if file.status == 'failed' %}is-failed{% endif %}"><span class="bookrag-parse-file-status">{% if file.status == 'success' %}OK{% else %}FAILED{% endif %}</span><strong title="{{ file.filename }}">{{ file.filename }}</strong>{% if file.status == 'success' %}<span>{{ file.row_count }} rows · {{ '%.2f'|format(file.elapsed_seconds) }}s</span>{% else %}<span title="{{ file.error }}">{{ file.error }}</span>{% endif %}</div>{% endfor %}</div>
+</div>
+{% if multi_format_csv_generation.status == 'ready' %}{% include "partials/multi_format_csv_load_panel.html" %}{% endif %}
+{% endif %}

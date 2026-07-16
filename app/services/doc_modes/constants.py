@@ -64,10 +64,11 @@ DOC_PIPELINE_UI_DEFAULTS = {
     "multi_format_bookrag_generate_graph": "true",
     "multi_format_bookrag_run_embedding": "true",
     "bookrag_loaded_csv_run_id": "",
+    "multi_format_loaded_csv_run_id": "",
 }
 
 DOC_PIPELINE_CHECKBOX_FIELDS: set[str] = set()
-DOC_PIPELINE_UNTRUNCATED_FIELDS = {"bookrag_loaded_csv_run_id"}
+DOC_PIPELINE_UNTRUNCATED_FIELDS = {"bookrag_loaded_csv_run_id", "multi_format_loaded_csv_run_id"}
 
 DOC_PIPELINE_OPTIONS = [
     {"value": "text_core", "label": "Text PDF Only"},

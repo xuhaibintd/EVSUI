@@ -146,7 +146,6 @@ BOOKRAG_DOCUMENT_RELATION_COLUMNS: list[tuple[str, str]] = [
     ("to_filename", "VARCHAR(255) CHARACTER SET UNICODE NOT NULL"),
     ("relation_description", "VARCHAR(4000) CHARACTER SET UNICODE"),
     ("source_type", "VARCHAR(32) NOT NULL"),
-    ("confidence", "DECIMAL(5,4)"),
     ("created_by", "VARCHAR(128) CHARACTER SET UNICODE"),
     ("created_at", "TIMESTAMP(6)"),
     ("updated_by", "VARCHAR(128) CHARACTER SET UNICODE"),
@@ -529,13 +528,20 @@ def prepare_bookrag_document_relation_table(
             execute_sql_fn,
         )
     )
-    if table_existed and migrate_legacy_document_relation_table(
-        schema_name=schema_name,
-        table_name=table_name,
-        execute_sql_fn=execute_sql_fn,
-    ):
+    removed_columns = (
+        migrate_legacy_document_relation_table(
+            schema_name=schema_name,
+            table_name=table_name,
+            execute_sql_fn=execute_sql_fn,
+        )
+        if table_existed
+        else ()
+    )
+    if removed_columns:
         warnings.append(
-            "Removed legacy is_active from the document relationship table; every stored relationship is effective."
+            "Removed legacy document relationship column(s): "
+            + ", ".join(removed_columns)
+            + "."
         )
     return warnings
 
@@ -545,24 +551,27 @@ def migrate_legacy_document_relation_table(
     schema_name: str | None,
     table_name: str,
     execute_sql_fn: ExecuteSqlFn | None,
-) -> bool:
-    """Drop the obsolete activity flag while preserving every relationship row."""
+) -> tuple[str, ...]:
+    """Drop obsolete metadata columns while preserving every relationship row."""
     if execute_sql_fn is None:
         raise RuntimeError("teradataml.execute_sql is unavailable.")
     qualified_table = _qualified_table_sql(schema_name, table_name)
     if not _teradata_table_exists(qualified_table, execute_sql_fn):
-        return False
-    try:
-        execute_sql_fn(f'SELECT TOP 1 "is_active" FROM {qualified_table}')
-    except Exception as ex:
-        message = str(ex).lower()
-        if "3810" in message or (
-            "column" in message and ("does not exist" in message or "not found" in message)
-        ):
-            return False
-        raise
-    execute_sql_fn(f'ALTER TABLE {qualified_table} DROP "is_active"')
-    return True
+        return ()
+    removed: list[str] = []
+    for column_name in ("is_active", "confidence"):
+        try:
+            execute_sql_fn(f'SELECT TOP 1 "{column_name}" FROM {qualified_table}')
+        except Exception as ex:
+            message = str(ex).lower()
+            if "3810" in message or (
+                "column" in message and ("does not exist" in message or "not found" in message)
+            ):
+                continue
+            raise
+        execute_sql_fn(f'ALTER TABLE {qualified_table} DROP "{column_name}"')
+        removed.append(column_name)
+    return tuple(removed)
 
 
 def prepare_bookrag_entity_table(

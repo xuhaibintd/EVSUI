@@ -20,6 +20,7 @@ from app.services.doc_modes.constants import collect_doc_pipeline_ui_values
 from app.services.doc_modes.registry import get_doc_pipeline_handler
 from app.services.multi_format import (
     get_ready_bookrag_csv_load_summary,
+    get_ready_multi_format_csv_load_summary,
     normalize_document_files_for_create,
     strip_create_ingestor_params,
     strip_file_based_create_params,
@@ -414,12 +415,22 @@ async def handle_upload_and_prepare_create(
 
     raw_doc_pipeline_mode = str(form.get("doc_pipeline_mode", "")).strip()
     doc_pipeline_mode = raw_doc_pipeline_mode
-    loaded_csv_run_id = str(form.get("bookrag_loaded_csv_run_id") or "").strip()
+    bookrag_loaded_csv_run_id = str(form.get("bookrag_loaded_csv_run_id") or "").strip()
+    multi_format_loaded_csv_run_id = str(form.get("multi_format_loaded_csv_run_id") or "").strip()
+    loaded_csv_run_id = ""
     loaded_summary: dict | None = None
     loaded_run_error = ""
-    if raw_doc_pipeline_mode == "multi_format_bookrag" and loaded_csv_run_id:
+    if raw_doc_pipeline_mode == "multi_format_bookrag" and bookrag_loaded_csv_run_id:
+        loaded_csv_run_id = bookrag_loaded_csv_run_id
         try:
             loaded_summary = get_ready_bookrag_csv_load_summary(csv_run_id=loaded_csv_run_id)
+            vector_store_name = str(loaded_summary.get("vector_store_name") or "").strip()
+        except Exception as ex:
+            loaded_run_error = str(ex)
+    elif raw_doc_pipeline_mode == "multi_format" and multi_format_loaded_csv_run_id:
+        loaded_csv_run_id = multi_format_loaded_csv_run_id
+        try:
+            loaded_summary = get_ready_multi_format_csv_load_summary(csv_run_id=loaded_csv_run_id)
             vector_store_name = str(loaded_summary.get("vector_store_name") or "").strip()
         except Exception as ex:
             loaded_run_error = str(ex)
@@ -455,8 +466,8 @@ async def handle_upload_and_prepare_create(
         required_missing.append("embeddings_model")
     has_document_files = bool(_split_document_file_hints(form.get("document_files", "")))
     has_uploaded_documents = bool(saved or app.state.document_uploads)
-    uses_loaded_bookrag_tables = raw_doc_pipeline_mode == "multi_format_bookrag" and bool(loaded_csv_run_id)
-    if not (has_uploaded_documents or has_document_files or uses_loaded_bookrag_tables):
+    uses_loaded_tables = raw_doc_pipeline_mode in {"multi_format", "multi_format_bookrag"} and bool(loaded_csv_run_id)
+    if not (has_uploaded_documents or has_document_files or uses_loaded_tables):
         required_missing.append("document_source")
 
     if required_missing:
@@ -615,7 +626,7 @@ async def handle_upload_and_prepare_create(
             )
             precheck_status_preview = existence_check_detail or current_status_preview
             precheck_integrity_error = ""
-            if current_state == "ready" and loaded_summary:
+            if current_state == "ready" and loaded_summary and raw_doc_pipeline_mode == "multi_format_bookrag":
                 target_database_for_index = str(loaded_summary.get("target_database") or "").strip()
                 loaded_table_targets = loaded_summary.get("table_targets") or {}
                 source_table_for_index = str(

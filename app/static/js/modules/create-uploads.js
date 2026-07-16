@@ -139,6 +139,8 @@
     const vectorStoreName = createForm.querySelector("[name='vector_store_name']");
     const getBookragLoadedRunSelect = () =>
       createForm.querySelector("select[name='bookrag_loaded_csv_run_id']:not([disabled])");
+    const getMultiFormatLoadedRunSelect = () =>
+      createForm.querySelector("select[name='multi_format_loaded_csv_run_id']:not([disabled])");
     const docPipelineMode = createForm.querySelector("[name='doc_pipeline_mode']");
     const embeddingsModel = createForm.querySelector("[name='embeddings_model']");
     const objectNames = createForm.querySelector("[name='object_names']");
@@ -151,6 +153,12 @@
     const csvTargetDatabase = createForm.querySelector("[data-bookrag-csv-target-database]");
     const parseRunSelect = createForm.querySelector("[data-bookrag-parse-run-select]");
     const csvGenerationResult = createForm.querySelector("#bookrag-csv-generation-result");
+    const multiFormatParseButton = createForm.querySelector("[data-multi-format-parse-button]");
+    const multiFormatCsvButton = createForm.querySelector("[data-multi-format-csv-button]");
+    const multiFormatCsvVectorStoreName = createForm.querySelector("[data-multi-format-csv-vector-store-name]");
+    const multiFormatCsvTargetDatabase = createForm.querySelector("[data-multi-format-csv-target-database]");
+    const multiFormatParseRunSelect = createForm.querySelector("[data-multi-format-parse-run-select]");
+    const multiFormatCsvGenerationResult = createForm.querySelector("#multi-format-csv-generation-result");
     const createResult = document.querySelector("#create-result");
 
     const getUploadedCount = () => {
@@ -221,6 +229,7 @@
     const syncConditionalRules = () => {
       clearValidity(vectorStoreName);
       clearValidity(getBookragLoadedRunSelect());
+      clearValidity(getMultiFormatLoadedRunSelect());
       clearValidity(docPipelineMode);
       clearValidity(embeddingsModel);
       clearValidity(objectNames);
@@ -231,9 +240,13 @@
       const selectedFileCount = getSelectedFileCount();
       const documentFileCount = getDocumentFileCount();
       const isBookrag = docPipelineMode instanceof HTMLSelectElement && docPipelineMode.value === "multi_format_bookrag";
+      const isMultiFormat = docPipelineMode instanceof HTMLSelectElement && docPipelineMode.value === "multi_format";
       const loadedRunSelect = getBookragLoadedRunSelect();
+      const multiFormatLoadedRunSelect = getMultiFormatLoadedRunSelect();
       const hasLoadedBookragRun =
         isBookrag && loadedRunSelect instanceof HTMLSelectElement && Boolean(loadedRunSelect.value.trim());
+      const hasLoadedMultiFormatRun =
+        isMultiFormat && multiFormatLoadedRunSelect instanceof HTMLSelectElement && Boolean(multiFormatLoadedRunSelect.value.trim());
       createForm.dataset.uploadedCount = String(uploadedCount);
       if (embeddingsModel instanceof HTMLSelectElement) {
         embeddingsModel.required = true;
@@ -245,7 +258,7 @@
         uploadInput.required = false;
       }
       createForm.dataset.uploadMissing =
-        !hasLoadedBookragRun && uploadedCount === 0 && selectedFileCount === 0 && documentFileCount === 0 ? "1" : "0";
+        !hasLoadedBookragRun && !hasLoadedMultiFormatRun && uploadedCount === 0 && selectedFileCount === 0 && documentFileCount === 0 ? "1" : "0";
       if (parseButton instanceof HTMLButtonElement && !parseButton.classList.contains("is-loading")) {
         const formLocked = createForm.classList.contains("disabled-block");
         parseButton.disabled = formLocked || !isBookrag || isUploadInProgress() || uploadedCount === 0;
@@ -253,6 +266,14 @@
       if (csvButton instanceof HTMLButtonElement && !csvButton.classList.contains("is-loading")) {
         const hasParseRun = parseRunSelect instanceof HTMLSelectElement && Boolean(parseRunSelect.value.trim());
         csvButton.disabled = !hasParseRun;
+      }
+      if (multiFormatParseButton instanceof HTMLButtonElement && !multiFormatParseButton.classList.contains("is-loading")) {
+        const formLocked = createForm.classList.contains("disabled-block");
+        multiFormatParseButton.disabled = formLocked || !isMultiFormat || isUploadInProgress() || uploadedCount === 0;
+      }
+      if (multiFormatCsvButton instanceof HTMLButtonElement && !multiFormatCsvButton.classList.contains("is-loading")) {
+        const hasParseRun = multiFormatParseRunSelect instanceof HTMLSelectElement && Boolean(multiFormatParseRunSelect.value.trim());
+        multiFormatCsvButton.disabled = !hasParseRun;
       }
       if (objectNames instanceof HTMLInputElement) {
         objectNames.required = false;
@@ -262,7 +283,7 @@
       }
     };
 
-    [vectorStoreName, docPipelineMode, embeddingsModel, objectNames, documentFiles, uploadInput, csvVectorStoreName, csvTargetDatabase, parseRunSelect].forEach((field) => {
+    [vectorStoreName, docPipelineMode, embeddingsModel, objectNames, documentFiles, uploadInput, csvVectorStoreName, csvTargetDatabase, parseRunSelect, multiFormatCsvVectorStoreName, multiFormatCsvTargetDatabase, multiFormatParseRunSelect].forEach((field) => {
       if (
         field instanceof HTMLInputElement ||
         field instanceof HTMLSelectElement ||
@@ -332,6 +353,51 @@
         "click",
         (event) => {
           if (validateCsvGeneration()) {
+            return;
+          }
+          event.preventDefault();
+          event.stopImmediatePropagation();
+        },
+        true
+      );
+    }
+
+    const validateMultiFormatCsvGeneration = () => {
+      const resultNode = multiFormatCsvGenerationResult;
+      const renderMessage = (message) => {
+        if (!(resultNode instanceof HTMLElement)) {
+          return;
+        }
+        resultNode.dataset.clientValidationMessage = "1";
+        resultNode.innerHTML = `<div class="bookrag-parse-result bookrag-parse-result-error"><p><strong>Cannot generate CSV.</strong> ${app.escapeHtml(message)}</p></div>`;
+      };
+      if (!(multiFormatParseRunSelect instanceof HTMLSelectElement) || !multiFormatParseRunSelect.value.trim()) {
+        renderMessage("Select a completed Multi-Format JSON parsing run.");
+        multiFormatParseRunSelect?.focus();
+        return false;
+      }
+      if (!(multiFormatCsvVectorStoreName instanceof HTMLInputElement) || !multiFormatCsvVectorStoreName.value.trim()) {
+        renderMessage("Enter the Target Vector Store Name.");
+        multiFormatCsvVectorStoreName?.focus();
+        return false;
+      }
+      if (!(multiFormatCsvTargetDatabase instanceof HTMLInputElement) || !multiFormatCsvTargetDatabase.value.trim()) {
+        renderMessage("Enter the Target Database.");
+        multiFormatCsvTargetDatabase?.focus();
+        return false;
+      }
+      if (resultNode instanceof HTMLElement && resultNode.dataset.clientValidationMessage === "1") {
+        resultNode.innerHTML = "";
+        delete resultNode.dataset.clientValidationMessage;
+      }
+      return true;
+    };
+
+    if (multiFormatCsvButton instanceof HTMLButtonElement) {
+      multiFormatCsvButton.addEventListener(
+        "click",
+        (event) => {
+          if (validateMultiFormatCsvGeneration()) {
             return;
           }
           event.preventDefault();

@@ -200,7 +200,6 @@ class BookRAGDocumentRelationResponse(BaseModel):
     to_filename: str | None = None
     relation_description: str | None = None
     source_type: str | None = None
-    confidence: float | None = None
     direction: str | None = None
     related_doc_id: str | None = None
     related_filename: str | None = None

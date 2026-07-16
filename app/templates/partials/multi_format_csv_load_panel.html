@@ -1,0 +1,42 @@
+<div
+  id="multi-format-csv-load-panel"
+  class="bookrag-parse-panel bookrag-csv-panel"
+  {% if multi_format_load_panel_oob|default(false) %}hx-swap-oob="outerHTML"{% endif %}
+>
+  <div>
+    <strong>Load CSV to Unstructured Table</strong>
+    <p>Load every CSV in a ready run into its single target unstructured table, then verify the persisted row count.</p>
+  </div>
+  <div class="bookrag-csv-actions bookrag-csv-load-actions">
+    <label>
+      <span>CSV run</span>
+      <select name="multi_format_csv_run_id" data-multi-format-csv-run-select>
+        {% if multi_format_load_csv_runs %}
+          {% for run in multi_format_load_csv_runs %}
+          <option value="{{ run.csv_run_id }}" {% if multi_format_selected_load_csv_run_id|default('') == run.csv_run_id %}selected{% endif %}>
+            {{ run.created_at }} · {{ run.vector_store_name }} · {{ run.csv_file_count or run.csv_files_created }} CSV
+          </option>
+          {% endfor %}
+        {% else %}
+          <option value="">No ready CSV run</option>
+        {% endif %}
+      </select>
+    </label>
+    <button
+      type="button"
+      class="ghost progress-btn bookrag-parse-btn"
+      data-progress-button
+      data-progress-show-seconds
+      data-multi-format-load-button
+      hx-post="/ui/create/multi-format/load-csv-table"
+      hx-include="closest form"
+      hx-target="#multi-format-csv-load-result"
+      hx-swap="innerHTML"
+      hx-disabled-elt="this"
+      {% if not evs.connected or not multi_format_load_csv_runs %}disabled{% endif %}
+    >
+      <span class="progress-btn-label">Load Table</span>
+      <span class="progress-btn-loading"><span class="progress-btn-spinner" aria-hidden="true"></span><span data-progress-loading-text>Loading...</span></span>
+    </button>
+  </div>
+</div>

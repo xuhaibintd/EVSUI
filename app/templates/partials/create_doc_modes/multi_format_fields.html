@@ -166,4 +166,78 @@
       {{ fields.render_field(mf.map['multi_format_chunk_similarity_threshold'], create_values, evs.connected, doc_mode_enabled, _doc_pipeline_mode) }}
     </div>
   </div>
+
+  <div class="bookrag-parse-panel">
+    <div>
+      <strong>Document Parsing</strong>
+      <p>Generate reusable raw JSON with the configured Multi-Format parsing and chunking settings. CSV generation and database loading run later.</p>
+    </div>
+    <button
+      type="button"
+      class="ghost progress-btn bookrag-parse-btn"
+      data-progress-button
+      data-progress-show-seconds
+      data-multi-format-parse-button
+      hx-post="/ui/create/multi-format/parse-documents"
+      hx-include="closest form"
+      hx-target="#multi-format-document-parsing-result"
+      hx-swap="innerHTML"
+      hx-disabled-elt="this"
+      {% if not evs.connected or not document_uploads %}disabled{% endif %}
+    >
+      <span class="progress-btn-label">Parse Documents</span>
+      <span class="progress-btn-loading"><span class="progress-btn-spinner" aria-hidden="true"></span><span data-progress-loading-text>Parsing...</span></span>
+    </button>
+  </div>
+  <div id="multi-format-document-parsing-result" class="bookrag-parse-result-shell" aria-live="polite"></div>
+
+  <div class="bookrag-parse-panel bookrag-csv-panel">
+    <div>
+      <strong>Generate CSV from JSON</strong>
+      <p>Reuse a completed parsing run. This stage only maps JSON chunks to the standard unstructured-table CSV.</p>
+    </div>
+    <div class="bookrag-csv-actions bookrag-csv-generate-actions">
+      <label>
+        <span>JSON parsing run</span>
+        <select name="multi_format_parse_run_id" data-multi-format-parse-run-select>
+          {% if multi_format_parse_runs %}
+            {% for run in multi_format_parse_runs %}
+            <option value="{{ run.parse_run_id }}">{{ run.created_at }} · {{ run.vector_store_name or 'multi-format' }} · {{ run.file_count }} files</option>
+            {% endfor %}
+          {% else %}
+            <option value="">No reusable JSON parsing run</option>
+          {% endif %}
+        </select>
+      </label>
+      <label>
+        <span>Target Vector Store Name</span>
+        <input type="text" name="multi_format_csv_vector_store_name" value="{{ create_values.get('vector_store_name', '') }}" placeholder="required" autocomplete="off" data-multi-format-csv-vector-store-name>
+      </label>
+      <label>
+        <span>Target Database</span>
+        <input type="text" name="multi_format_csv_target_database" value="{{ evs.params.username if evs and evs.params else '' }}" placeholder="required" autocomplete="off" data-multi-format-csv-target-database>
+      </label>
+      <button
+        type="button"
+        class="ghost progress-btn bookrag-parse-btn"
+        data-progress-button
+        data-progress-show-seconds
+        data-multi-format-csv-button
+        hx-post="/ui/create/multi-format/generate-csv"
+        hx-include="closest form"
+        hx-target="#multi-format-csv-generation-result"
+        hx-swap="innerHTML"
+        hx-disabled-elt="this"
+        {% if not multi_format_parse_runs %}disabled{% endif %}
+      >
+        <span class="progress-btn-label">Generate CSV</span>
+        <span class="progress-btn-loading"><span class="progress-btn-spinner" aria-hidden="true"></span><span data-progress-loading-text>Generating...</span></span>
+      </button>
+    </div>
+  </div>
+  <div id="multi-format-csv-generation-result" class="bookrag-parse-result-shell" aria-live="polite"></div>
+
+  {% set multi_format_load_csv_runs = multi_format_csv_runs %}
+  {% include "partials/multi_format_csv_load_panel.html" %}
+  <div id="multi-format-csv-load-result" class="bookrag-parse-result-shell" aria-live="polite"></div>
 </div>

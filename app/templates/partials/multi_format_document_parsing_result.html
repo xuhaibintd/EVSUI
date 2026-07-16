@@ -1,0 +1,22 @@
+{% if multi_format_document_parsing_error %}
+<div class="bookrag-parse-result bookrag-parse-result-error" role="status"><strong>Document parsing failed.</strong><p>{{ multi_format_document_parsing_error }}</p></div>
+{% elif multi_format_document_parsing %}
+<div class="bookrag-parse-result {% if multi_format_document_parsing.failure_count %}bookrag-parse-result-warn{% else %}bookrag-parse-result-ok{% endif %}" role="status">
+  <div class="bookrag-parse-result-head"><strong>Document parsing completed.</strong><span>{{ multi_format_document_parsing.success_count }}/{{ multi_format_document_parsing.file_count }} succeeded</span></div>
+  <p>Workers: {{ multi_format_document_parsing.workers }} · Elapsed: {{ '%.2f'|format(multi_format_document_parsing.elapsed_seconds / 60) }} min · Output: reusable raw JSON</p>
+  <p class="muted">Raw JSON directory: {{ multi_format_document_parsing.raw_stage_dir }}</p>
+  <p class="muted">Manifest: {{ multi_format_document_parsing.manifest_path }}</p>
+  {% if multi_format_document_parsing.warnings %}<ul class="bookrag-parse-warning-list">{% for warning in multi_format_document_parsing.warnings %}<li>{{ warning }}</li>{% endfor %}</ul>{% endif %}
+  <div class="bookrag-parse-file-list{% if multi_format_document_parsing.files|length > 10 %} is-scrollable{% endif %}">
+    {% for file in multi_format_document_parsing.files %}
+    <div class="bookrag-parse-file-row {% if file.status == 'failed' %}is-failed{% endif %}">
+      <span class="bookrag-parse-file-status">{% if file.status == 'success' %}OK{% else %}FAILED{% endif %}</span><strong title="{{ file.filename }}">{{ file.filename }}</strong>
+      {% if file.status == 'success' %}<span>{{ file.element_count }} chunks · {{ '%.2f'|format(file.elapsed_seconds) }}s</span>{% else %}<span title="{{ file.error }}">{{ file.error }}</span>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% if not multi_format_document_parsing.failure_count and multi_format_document_parsing.parse_run_id %}
+  <div class="bookrag-parse-next-action"><button type="button" class="ghost progress-btn bookrag-parse-btn" data-progress-button data-progress-show-seconds hx-post="/ui/create/multi-format/generate-csv" hx-include="closest form" hx-vals='{"multi_format_parse_run_id_current": "{{ multi_format_document_parsing.parse_run_id }}"}' hx-target="#multi-format-csv-generation-result" hx-swap="innerHTML" hx-disabled-elt="this"><span class="progress-btn-label">Generate CSV from this JSON run</span><span class="progress-btn-loading"><span class="progress-btn-spinner" aria-hidden="true"></span><span data-progress-loading-text>Generating...</span></span></button></div>
+  {% endif %}
+</div>
+{% endif %}
