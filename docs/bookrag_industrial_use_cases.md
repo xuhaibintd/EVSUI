@@ -1,565 +1,683 @@
-# BookRAG for Civilization-Critical Industries / 文明基盤産業向け BookRAG
+# BookRAG Industrial Use Cases: Concrete Decision Workflows / BookRAG 産業ユースケース：具体的な意思決定業務
 
-This document defines the strategic industrial role of EVSUI's `multi_format_bookrag` mode. Its scope is not limited to factories or “heavy industry.” It covers the systems that determine how civilization allocates capital, protects life, produces food and energy, transforms materials, computes and communicates, moves people and goods, governs risk, and responds to planetary change.
+This document describes specific workflows that can be evaluated against the current EVSUI `multi_format_bookrag` implementation. It does not assume that BookRAG can perform graph traversal, automatic cross-document comparison, domain calculations, or autonomous decisions.
 
-本書は、EVSUI の `multi_format_bookrag` モードが担う戦略的な産業上の役割を定義します。対象は工場や「重工業」だけではありません。資本配分、生命保護、食料・エネルギー生産、素材転換、計算・通信、人流・物流、リスク統治、地球規模変化への対応を支える文明基盤全体です。
+本書は、現行 EVSUI `multi_format_bookrag` 実装に対して評価可能な、具体的な業務フローを定義します。グラフ探索、文書横断の自動比較、専門計算、自律判断が実装済みであるとは仮定しません。
 
 ## English
 
-### Strategic Thesis
+### What the Current Product Actually Returns
 
-BookRAG should not be sold as another chatbot for documents. Its strongest role is an evidence layer for decisions inside civilization-critical systems.
+Current retrieval starts with semantic similarity search over `bnode.content`. For each matched node, EVSUI can return:
 
-These systems share four characteristics:
+- Document identity and filename
+- Matched node content
+- Ancestor section path
+- Page range and source element
+- Source text, table HTML, or image context when parsing produced it
+- Document-scoped entity and relation metadata when available
+- Governed document-relation labels such as `updates`, `summary_of`, or `supplement_to`
 
-- A decision can affect many people, large amounts of capital, critical assets, or the environment.
-- The governing evidence is distributed across long, structured, versioned documents.
-- Definitions, exceptions, tables, warnings, assumptions, and document applicability matter as much as semantic similarity.
-- A qualified person or governed institution remains accountable for the final decision.
+The result is a set of evidence candidates for a person or downstream application. A document-relation label adds context to a matched document; it does not automatically retrieve the related document. Entity normalization is document-scoped.
 
-The strategic question is therefore not:
+### How to Prioritize a Use Case
 
-```text
-Which industries have many PDFs?
-```
+Score each proposed workflow from 1 to 5 on:
 
-It is:
-
-```text
-Where does slow, fragmented, or context-free evidence retrieval
-create systemic risk, delay essential work, waste scarce expertise,
-or weaken society's ability to invest, build, heal, feed, and adapt?
-```
-
-BookRAG is useful when it shortens the path from a question to reviewable source evidence. It is not a substitute for professional judgment, scientific validation, engineering calculation, real-time control, or a system of record.
-
-### The Ten Civilization-Scale Systems
-
-| Civilization-scale system | Industries and institutions | Decisions shaped by documents | Why the system matters globally |
-|---|---|---|---|
-| Capital and trust | Banking, central banking, capital markets, insurance, payments, clearing, audit, financial regulation | Credit, investment, capital, liquidity, coverage, conduct, model risk, recovery, and regulatory evidence | Determines which companies, infrastructure, technologies, and countries can finance growth and absorb shocks |
-| Health and life | Healthcare, public health, pharmaceuticals, biotechnology, diagnostics, medical devices, research institutes | Clinical governance, research, safety, benefit-risk, quality, validation, regulatory, and emergency-health evidence | Determines survival, healthy life expectancy, epidemic resilience, and the pace at which biological science becomes trusted care |
-| Food, agriculture, and water | Farming, agricultural inputs, food processing, fisheries, water utilities, irrigation, veterinary and biosecurity agencies | Crop and animal health, food safety, water quality, resource allocation, traceability, incident, and regulatory evidence | Determines whether populations can eat, drink, and withstand climate, disease, and supply shocks |
-| Energy | Electric grids, nuclear, renewables, storage, oil, gas, LNG, hydrogen, fusion, and energy regulation | Operating limits, outage work, asset integrity, safety, market rules, project approval, and incident evidence | Every digital, industrial, medical, transport, and household system depends on reliable and affordable energy |
-| Materials and the physical economy | Mining, critical minerals, chemicals, steel, nonferrous metals, cement, glass, pulp, recycling, and waste | Resource assessment, process safety, quality, environmental permits, changes, shutdowns, and supplier evidence | Converts planetary resources into the materials required for cities, energy transition, defense, transport, and technology |
-| Compute and communication | Semiconductors, AI infrastructure, cloud, data centers, telecom, cybersecurity, quantum and photonics | Process and product changes, qualification, reliability, security, capacity, service continuity, and supplier evidence | Controls the world's ability to calculate, coordinate, communicate, automate, and create new knowledge |
-| Production and mobility | Advanced manufacturing, robotics, automotive, batteries, aerospace, space, shipbuilding, rail, ports, logistics | Requirements, design verification, configuration, maintenance, quality, certification, and operational evidence | Turns science and capital into physical capability and connects global production, trade, and movement |
-| Built environment and human capability | Construction, civil engineering, housing, cities, universities, vocational education, research and accreditation institutions | Building and infrastructure assurance, codes, project change, research governance, accreditation, technical qualification, and knowledge-transfer evidence | Shapes where people live and work, the safety and carbon footprint of cities, and whether societies can reproduce scarce expertise |
-| Security, governance, and standards | Government, regulators, standards bodies, emergency services, defense, civil protection, and courts | Policy, legal authority, standards, procurement, assurance, readiness, investigation, and public accountability | Establishes the rules, legitimacy, security, and coordinated response on which every other system relies |
-| Climate, environment, and resilience | Climate science, meteorology, environmental agencies, carbon markets, adaptation programs, disaster risk and insurers | Environmental assessment, emissions, adaptation, hazards, resilience investment, recovery, and loss evidence | Determines whether economic and social systems can remain viable under planetary constraints and extreme events |
-
-These systems are interdependent. A semiconductor fab depends on finance, water, power, chemicals, logistics, telecommunications, skilled labor, and public authority. A hospital depends on all of those plus pharmaceutical and medical-device supply chains. Strategic BookRAG applications should therefore preserve document boundaries while allowing a host application to coordinate evidence across systems.
-
-### Where BookRAG Has Strategic Leverage
-
-A candidate use case should be scored on six dimensions:
-
-| Dimension | Strategic question |
+| Factor | Question |
 |---|---|
-| Consequence | What happens if relevant evidence is missed, obsolete, or stripped of context? |
-| Evidence complexity | Are decisions governed by long documents, nested sections, tables, figures, definitions, exceptions, and revisions? |
-| Expert scarcity | Are highly trained people spending time searching and reconstructing evidence instead of deciding or designing? |
-| Recurrence | Does the evidence task repeat across assets, cases, products, reporting periods, projects, or regulatory cycles? |
-| Traceability | Must another person, auditor, regulator, scientist, engineer, or court return to the original source? |
-| Integration feasibility | Can authoritative identity, applicability, permissions, lifecycle state, and approval data be supplied by existing systems? |
+| Frequency | How often does the same evidence task occur? |
+| Consequence | What is the cost of missing or misreading evidence? |
+| Document dependence | Is the decision materially governed by long, structured documents? |
+| Traceability | Must a reviewer return to the exact section, page, table, or source element? |
+| Current-fit | Can the first useful version work with semantic retrieval plus evidence reconstruction? |
+| Integration burden | How many authoritative systems are required before the result is usable? Lower burden receives a higher score. |
 
-The strongest opportunities score high on all six. A large document collection alone is not a market.
+Start with cases that score high on the first five factors and do not require real-time or highly integrated data for the first pilot.
 
-### Current EVSUI Capability
+### Use-Case Portfolio
 
-Current processing:
+| ID | Specific workflow | Primary user | Initial delivery priority |
+|---|---|---|---|
+| FIN-01 | Annual project-finance credit review | Credit analyst and credit committee secretary | A |
+| FIN-02 | Regulatory change evidence review | Compliance and policy owner | A |
+| FIN-03 | Industrial property and business-interruption claim review | Claims adjuster and coverage counsel | A |
+| MED-01 | Medical-device safety notice and local-procedure review | Clinical engineering and patient-safety team | B |
+| LIFE-01 | Pharmaceutical batch deviation and CAPA evidence | Quality investigator and qualified reviewer | A |
+| LIFE-02 | Clinical-trial safety review preparation | Medical monitor and pharmacovigilance reviewer | B |
+| FOOD-01 | Food contamination and recall investigation | Food-safety and quality team | B |
+| WATER-01 | Drinking-water limit excursion review | Water-quality manager and laboratory reviewer | B |
+| ENERGY-01 | Power-transformer outage work-package preparation | Maintenance and outage engineer | A |
+| CHEM-01 | Chemical-plant management-of-change review | Process-safety and operations engineer | A |
+| SEMI-01 | Semiconductor yield-excursion evidence collection | Process and equipment engineer | A |
+| AERO-01 | Aerospace requirement-change verification evidence | Systems and verification engineer | B |
+| SUPPLY-01 | Critical supplier material or process change review | Supplier-quality and product engineer | B |
+| CLIMATE-01 | Flood-resilience investment evidence preparation | Infrastructure planner and risk reviewer | B |
 
-```text
-documents
-  -> Unstructured parsing and optional enrichments
-  -> document catalog (bdoc)
-  -> source blocks (bblk)
-  -> section/tree nodes (bnode)
-  -> optional raw audit rows and document-scoped entity metadata
-  -> governed document relationships (bdrel)
-  -> vector index over bnode.content
-```
+Priority A means a bounded pilot can use the current evidence-package model. Priority B means the document evidence is useful, but authoritative applicability or structured data integration is required before operational use.
 
-Current retrieval:
+## Concrete Use Cases
 
-```text
-question
-  -> semantic similarity search over bnode.content
-  -> matched nodes
-  -> ancestor section chain + page/source-block reconstruction
-  -> optional table/image/entity context and document-relation labels
-  -> structured evidence packages
-  -> qualified reviewer or governed downstream application
-```
+### FIN-01: Annual Project-Finance Credit Review
 
-Current BookRAG enriches a semantic-search result with document structure and provenance. It does not automatically traverse an enterprise graph, retrieve every affected document, resolve entities across documents, reconcile revisions, run domain calculations, detect contradictions, or verify that every generated claim is supported.
+**Trigger:** A bank performs the annual review of financing for a power plant, LNG terminal, semiconductor fab, mine, data center, or transport project.
 
-### Six Strategic Missions
+**Users:** Credit analyst, sector specialist, covenant-monitoring team, credit committee secretary.
 
-#### Mission 1: Govern Capital and Systemic Risk
+**Documents:**
 
-**Actors:** commercial and central banks, securities firms, exchanges, clearing and payment operators, asset managers, insurers, rating agencies, auditors, supervisors, and financial ministries.
+- Original credit memorandum and approval conditions
+- Loan agreement and covenant definitions
+- Latest audited financial statements and quarterly reports
+- Independent engineer and environmental reports
+- Rating or market reports
+- Prior annual-review papers and waiver decisions
 
-**Evidence:** prudential rules, supervisory notices, internal policies, credit papers, covenants, issuer disclosures, prospectuses, research, model methodology and validation, product terms, claims, recovery plans, and operational-incident reports.
+**Representative questions:**
 
-**BookRAG output:** a review packet containing the relevant disclosure, definition, exception, assumption, limit, control, or finding with entity, period, document, section, page, table, and issue/update context.
+- Where is the debt-service coverage covenant defined, including exclusions and cure provisions?
+- Which passages explain the latest construction delay or cost overrun?
+- What operating, regulatory, supply, or environmental risks changed since the prior review?
+- Which current report updates or supplements the original technical assumptions?
 
-**High-value workflows:**
+**BookRAG output:** Evidence candidates containing the relevant covenant, definition, risk statement, management explanation, technical finding, section path, page, table/source block, and document relationship.
 
-- Credit committee and project-finance evidence preparation
-- Investment and issuer research over recurring disclosures
-- Regulatory-change and policy/control review
-- Model-risk and model-change evidence
-- Insurance underwriting, wording, and claims review
-- Payment, clearing, cyber, fraud operations, and resilience investigations
-- Climate and nature-risk disclosure evidence
+**Required outside BookRAG:** Borrower and facility identity, current exposure, covenant calculations, financial spreading, market data, approval state, and access rights from credit and risk systems.
 
-**Business measures:** time to evidence, analyst throughput, evidence acceptance, missed-material-evidence rate, review findings, committee-cycle time, and repeated search effort.
+**Pilot measures:** Median time to assemble committee evidence; reviewer acceptance rate; unsupported or wrongly scoped evidence; missed material evidence found during second review.
 
-**Boundary:** BookRAG does not calculate exposure, capital, liquidity, valuation, expected loss, reserves, suitability, fraud, coverage, or market risk. It does not approve credit, execute a transaction, settle a claim, determine compliance, or provide investment advice.
+**Not a BookRAG decision:** Credit rating, covenant compliance calculation, expected loss, pricing, approval, or investment recommendation.
 
-#### Mission 2: Protect Human Life and Advance Biology
+### FIN-02: Regulatory Change Evidence Review
 
-**Actors:** hospitals, public-health agencies, pharmaceutical and biotechnology companies, diagnostics and medical-device makers, research institutes, laboratories, contract research organizations, and regulators.
+**Trigger:** A regulator publishes a new or revised rule on capital, liquidity, operational resilience, consumer protection, model risk, payments, insurance, or disclosure.
 
-**Evidence:** clinical guidelines, care pathways, formularies, device instructions, research protocols, preclinical and clinical reports, investigator brochures, safety narratives and aggregate reports, labels, risk-management plans, CMC, validation, specifications, deviations, CAPA, QMS records, submissions, and public-health guidance.
+**Users:** Regulatory change team, compliance officer, policy owner, control owner, internal audit.
 
-**BookRAG output:** attributable recommendations, populations, methods, endpoints, findings, limitations, contraindications, specifications, and commitments with study/product/document identity, section, page, table/source block, and update context.
+**Documents:**
 
-**High-value workflows:**
+- New rule, consultation, final guidance, and implementation date
+- Superseded rule and regulatory FAQs
+- Internal policy and standard
+- Control descriptions and operating procedures
+- Prior legal or compliance interpretations
+- Audit and examination findings
 
-- Clinical-guideline and care-policy governance
-- Research and translational-science evidence review
-- Clinical-development and study-review preparation
-- Pharmacovigilance and medical-safety evidence assembly
-- Regulatory submission and commitment review
-- Deviation, CAPA, validation, and inspection preparation
-- Patient-safety and public-health incident review
+**Representative questions:**
 
-**Business measures:** review preparation time, source-locator accuracy, evidence acceptance, missed-material-evidence rate, second-person review time, rework, and inspection or submission findings.
+- Which clauses introduce a new obligation, threshold, exception, or reporting date?
+- Which internal policies currently address the same subject?
+- What evidence should a control owner review before confirming implementation?
 
-**Boundary:** BookRAG does not diagnose, recommend treatment, determine patient applicability, assess causality, calculate dose, evaluate benefit-risk, detect a safety signal, release product, establish GxP compliance, or make a regulatory decision.
+**BookRAG output:** Clause-level evidence from the new rule and candidate internal policy/control passages, with document version, section, page, and source element.
 
-#### Mission 3: Secure Food, Water, and Biological Resilience
+**Required outside BookRAG:** Regulatory inventory, legal-entity and jurisdiction scope, policy ownership, control mapping, implementation status, legal interpretation, and approval workflow.
 
-**Actors:** agricultural producers, seed and crop-science companies, fertilizer and animal-health companies, food manufacturers, fisheries, water utilities, laboratories, public-health and biosecurity agencies, and development institutions.
+**Pilot measures:** Time to prepare an initial impact-review pack; clause locator accuracy; percentage of evidence accepted by policy owners; false matches requiring removal.
 
-**Evidence:** agronomic protocols, seed and input specifications, veterinary guidance, disease and pest reports, food-safety plans, HACCP records, water-treatment procedures, laboratory methods, quality results, permits, environmental studies, recall reports, drought plans, and emergency guidance.
+**Not a BookRAG decision:** Legal interpretation, applicability determination, control sufficiency, or compliance certification.
 
-**BookRAG output:** source-grounded evidence for a disease, contamination, treatment, process, water-quality, recall, drought, or biosecurity review, preserving geography, species or population, product, method, limit, date, and regulatory context.
+### FIN-03: Industrial Property and Business-Interruption Claim Review
 
-**High-value workflows:**
+**Trigger:** A fire, flood, machinery breakdown, cyber event, or supply interruption causes an industrial insurance claim.
 
-- Crop, livestock, and aquaculture disease evidence
-- Food-safety deviation and recall investigation
-- Water-quality and treatment-procedure review
-- Drought, irrigation, and watershed planning evidence
-- Agricultural-input and supplier qualification
-- Biosecurity and zoonotic-event preparedness
+**Users:** Claims adjuster, coverage counsel, forensic accountant, engineer, reinsurance reviewer.
 
-**Business measures:** incident triage time, recall or corrective-action cycle, evidence completeness findings, water-quality review time, expert workload, and recurrence.
+**Documents:**
 
-**Boundary:** BookRAG does not diagnose a field or population condition, optimize irrigation, forecast yield, control treatment, certify food or water safety, or replace laboratory, geospatial, sensor, and epidemiological analysis.
+- Policy wording, schedule, endorsements, exclusions, and sublimits
+- Engineering survey and risk-improvement recommendations
+- Incident and root-cause reports
+- Repair estimates and equipment manuals
+- Business-interruption submissions
+- Adjuster, expert, and prior-claim reports
 
-#### Mission 4: Keep Energy and Material Systems Safe
+**Representative questions:**
 
-**Actors:** grid, nuclear, renewable, storage, oil, gas, LNG, hydrogen, mining, chemical, steel, cement, materials, recycling, and environmental organizations.
+- Which endorsement defines coverage for this equipment and cause of loss?
+- What exclusions, waiting periods, deductibles, or sublimits require review?
+- Which incident findings support or conflict with the claimed event description?
 
-**Evidence:** operating and maintenance procedures, safety cases, process-safety information, operating envelopes, OEM bulletins, inspection and integrity reports, outage and turnaround packages, MOC, mine and geotechnical reports, quality specifications, permits, incident reports, and regulatory commitments.
+**BookRAG output:** Coverage and incident evidence candidates with clause hierarchy, definitions, pages, source blocks, and relationships between policy, endorsement, and report documents.
 
-**BookRAG output:** an evidence package for an asset condition, work order, change, deviation, outage, project, or event with section, page, source block, table/image context, and known update or supplement relationships.
+**Required outside BookRAG:** Insured object identity, policy period, loss dates, financial calculations, reserves, fraud controls, legal privilege, and claim authority.
 
-**High-value workflows:**
+**Pilot measures:** Time to prepare the coverage issue list; percentage of cited clauses accepted by counsel; missing endorsement findings; repeated search effort.
 
-- Operating-limit and controlled-procedure review
-- Outage, shutdown, and turnaround preparation
-- Asset-integrity and inspection evidence
-- Process-safety and management-of-change review
-- Failure, event, and root-cause investigation
-- Critical-mineral and energy-project technical review
-- Environmental-permit and transition-project evidence
+**Not a BookRAG decision:** Coverage determination, causation, loss valuation, reserve, liability, fraud finding, or payment.
 
-**Business measures:** search time, review-cycle time, wrong-procedure selections, missed-impact findings, repeat events, outage preparation effort, and regulator/auditor evidence acceptance.
+### MED-01: Medical-Device Safety Notice and Local-Procedure Review
 
-**Boundary:** BookRAG does not determine operability, control a plant, interpret P&IDs as a complete engineering graph, calculate process safety, prove change-impact completeness, approve a mine or energy project, or replace real-time operational systems.
+**Trigger:** A manufacturer or regulator issues a field-safety notice, correction, contraindication, or software update for a medical device.
 
-#### Mission 5: Preserve Compute, Production, and Supply-Chain Sovereignty
+**Users:** Clinical engineering, biomedical engineering, patient safety, infection control, procurement, clinical governance.
 
-**Actors:** semiconductor fabs, equipment makers, AI and cloud infrastructure, telecom, quantum and photonics programs, advanced manufacturers, robotics, batteries, automotive, aerospace, space, shipbuilding, construction and civil engineering, rail, ports, and strategic suppliers.
+**Documents:**
 
-**Evidence:** requirements, process and product specifications, tool manuals, control plans, FMEA, qualification and validation reports, engineering changes, supplier notices, interface documents, certification evidence, service bulletins, field reports, cybersecurity procedures, and capacity or continuity plans.
+- Manufacturer safety notice and updated instructions for use
+- Previous instructions and service bulletins
+- Local operating, cleaning, maintenance, and escalation procedures
+- Device committee decisions and training material
+- Incident or near-miss reports
 
-**BookRAG output:** candidate evidence for an excursion, design or process change, requirement, qualification, anomaly, supplier issue, maintenance event, or service disruption with configuration/document context and exact source locators.
+**Representative questions:**
 
-**High-value workflows:**
+- Which device models, software versions, accessories, and use conditions are named?
+- What new warning, contraindication, maintenance step, or deadline is stated?
+- Which passages in local procedures discuss the same operation?
 
-- Semiconductor yield-excursion and tool/process change review
-- AI infrastructure, data-center, and telecom continuity evidence
-- Product and supplier change-impact preparation
-- Requirement-to-test and certification evidence preparation
-- Warranty, field-failure, and anomaly investigation
-- Maintenance and service-bulletin review
-- Building, infrastructure, and major-project assurance evidence
-- Standards-based technical training and workforce-qualification evidence
-- Strategic supplier and technology due diligence
-- Expert knowledge continuity across long programs
+**BookRAG output:** Notice and procedure evidence candidates with model/version text, warning context, section, page, and known update relationships.
 
-**Business measures:** investigation time, qualification-cycle time, unresolved requirements, supplier-review time, downtime, rework, field-event recurrence, and expert interruption load.
+**Required outside BookRAG:** Installed-device inventory, software version, location, patient exposure, recall status, maintenance records, clinical approval, and task assignment.
 
-**Boundary:** BookRAG does not analyze wafer maps, telemetry, CAD, source code, network traffic, or causal process relationships; establish configuration effectivity; guarantee requirement coverage; approve a design; or operate digital or physical infrastructure.
+**Pilot measures:** Time to prepare the affected-procedure review; correct source/model/version extraction by reviewers; missed relevant procedure passages.
 
-#### Mission 6: Strengthen Planetary Governance and Resilience
+**Not a BookRAG decision:** Whether a device is safe for a patient, whether to stop use, clinical risk classification, recall closure, or maintenance authorization.
 
-**Actors:** governments, regulators, standards bodies, cities, emergency services, defense and civil-protection organizations, climate and meteorological agencies, multilateral institutions, infrastructure operators, and insurers.
+### LIFE-01: Pharmaceutical Batch Deviation and CAPA Evidence
 
-**Evidence:** laws, regulations, standards, public policy, procurement and assurance documents, hazard and climate assessments, emergency plans, mutual-aid procedures, resilience strategies, environmental impact studies, after-action reports, recovery plans, and public inquiries.
+**Trigger:** A batch result, environmental-monitoring result, process step, or equipment event deviates from an approved requirement.
 
-**BookRAG output:** traceable policy, authority, obligation, hazard, assumption, preparedness, and recovery evidence for a reviewer, planner, investigator, or governed public workflow.
+**Users:** Deviation investigator, manufacturing science, laboratory, quality assurance, qualified reviewer.
 
-**High-value workflows:**
+**Documents:**
 
-- Regulatory and standards evidence services
-- Critical-infrastructure assurance and dependency review
-- Disaster preparedness and after-action evidence
-- Climate adaptation and resilience-investment review
-- Environmental assessment and public-accountability evidence
-- Strategic procurement and industrial-policy review
-- Defense, civil-protection, and continuity planning support
+- Approved SOP and batch instruction
+- Product and process specifications
+- Analytical method and validation report
+- Equipment qualification and maintenance report
+- Deviation, nonconformance, CAPA, and change-control history
+- Regulatory commitments and relevant inspection findings
 
-**Business measures:** policy-review time, response-plan preparation, unresolved control or dependency findings, evidence reuse, auditability, public-inquiry preparation, and recovery learning.
+**Representative questions:**
 
-**Boundary:** BookRAG does not create legal authority, predict disasters, command emergency response, classify security threats, determine environmental approval, allocate public resources, or replace democratic and accountable decision processes.
+- What approved requirement and acceptance criterion applied at the event time?
+- Which prior deviations involved the same step, equipment, method, or failure mode?
+- Which validation limitation or change-control condition requires review?
 
-### Cross-System Workflows
+**BookRAG output:** Source-attributable requirement, method, validation, and prior-investigation evidence with document, section, page, table, and source element.
 
-| Workflow | Reusable BookRAG role | Systems commonly required around BookRAG |
-|---|---|---|
-| Change-impact review | Retrieve requirements, policies, procedures, warnings, tests, commitments, and prior changes for human review | PLM, configuration, policy, QMS, regulatory, asset, and workflow systems |
-| Incident and investigation evidence | Assemble prior findings, applicable limits, procedures, reports, and corrective actions | Case management, EAM/CMMS, QMS, safety, claims, clinical, cyber, or event systems |
-| Controlled procedure access | Return the relevant procedure with prerequisites, cautions, scope, and source | DMS plus identity, asset/product/patient applicability, revision, and authorization |
-| Verification and assurance | Provide requirement, test, analysis, control, and certification evidence candidates | Requirements, test, model, validation, audit, and certification systems |
-| Regulatory evidence | Retrieve rules, definitions, obligations, exceptions, submissions, commitments, and internal controls | Regulatory inventory, GRC, RIM, policy, legal, and approval systems |
-| Technical and institutional due diligence | Triage reports, disclosures, specifications, permits, contracts, and supplier evidence | Data room, project, finance, legal, supply-chain, and specialist-review workflows |
-| Knowledge continuity | Recover documented rationale, exception, lesson, and prior resolution with provenance | Knowledge governance, training, document ownership, and expert review |
+**Required outside BookRAG:** Batch, lot, equipment, method, product version, effective-document date, laboratory data, electronic signatures, workflow status, and quality authority.
 
-### Strategic Market Entry
+**Pilot measures:** Evidence-collection time; reviewer acceptance; obsolete-document retrieval rate; second-person review findings; repeated evidence collection.
 
-#### Wave 1: Evidence products that fit the current implementation
+**Not a BookRAG decision:** Root cause, product impact, patient risk, CAPA adequacy, batch disposition, release, or GxP compliance.
 
-Enter through bounded, human-reviewed workflows where document structure and provenance create immediate value:
+### LIFE-02: Clinical-Trial Safety Review Preparation
 
-1. Financial, credit, risk, and regulatory evidence preparation
-2. Life-science quality, regulatory, safety, and validation review
-3. Energy and industrial procedure, maintenance, and incident evidence
-4. Semiconductor and advanced-manufacturing investigation and change-review preparation
-5. Requirements, certification, and supplier-document evidence
-6. Food, water, environmental, and public-safety investigation packets
+**Trigger:** A medical monitor or safety committee reviews a serious adverse event, an aggregate trend, or a scheduled safety report.
 
-The sellable unit is not “chat with all enterprise knowledge.” It is a reviewable evidence package for one defined decision workflow.
+**Users:** Medical monitor, pharmacovigilance physician, clinical scientist, data-safety committee support, regulatory writer.
 
-#### Wave 2: Integrated decision-support workflows
+**Documents:**
 
-Add value by connecting authoritative identifiers and lifecycle states:
+- Protocol and amendments
+- Investigator brochure and reference safety information
+- Statistical analysis plan
+- Clinical study report sections
+- Safety narratives and aggregate safety reports
+- Risk-management plan and product label
 
-- Customer, legal entity, exposure, position, product, jurisdiction, and reporting period
-- Patient or population, study, site, indication, product version, and approved label
-- Field, species, batch, watershed, geography, method, and regulatory limit
-- Asset, tag, configuration, material, process step, supplier, and revision
-- Requirement, hazard, control, test, finding, corrective action, and approval state
+**Representative questions:**
 
-At this stage, BookRAG remains the document evidence layer. The host application supplies identity, permissions, applicability, workflow, deterministic rules, and decisions.
+- How is the event defined, collected, graded, and analyzed in the current protocol?
+- Which known risks and expected events are described in the current reference safety information?
+- Which study population, dose, cohort, endpoint, and reporting period apply to the cited result?
 
-#### Wave 3: Claims the current product must not make
+**BookRAG output:** Protocol, safety, population, method, and result evidence candidates with study/document identity, section, page, table, and amendment relationship.
 
-- Autonomous financial, legal, clinical, scientific, engineering, safety, military, or public-policy decisions
-- Real-time process, grid, traffic, treatment, trading, payment, or emergency control
-- Prediction from market, patient, sensor, telemetry, weather, geospatial, or time-series data
-- Guaranteed completeness of compliance, change impact, requirements, or dependency analysis
-- Automatic engineering, financial, clinical, climate, or risk calculations
-- A self-maintaining cross-enterprise knowledge graph
+**Required outside BookRAG:** Subject-level data, coding, exposure, randomization, current clinical state, statistical analysis, approved reference version, unblinding controls, and decision authority.
 
-### Relationship to Systems of Record
+**Pilot measures:** Time to prepare source evidence; amendment/version errors; accepted citations; missing relevant safety sections found by medical review.
 
-```text
-controlled document and records management
-banking / risk / finance / trading / payment / insurance / regulatory reporting
-EHR / clinical knowledge / CTMS / eTMF / safety / RIM / QMS / LIMS
-agriculture / laboratory / food safety / water / geospatial systems
-PLM / requirements / configuration / supplier management
-EAM / CMMS / work management / MES / historian
-legal / GRC / policy / emergency and case management
-        |
-        | approved documents + authoritative identity and applicability
-        v
-BookRAG document evidence layer
-        |
-        | structured evidence packages
-        v
-qualified analyst, clinician, scientist, engineer, operator,
-investigator, regulator, or governed workflow
-```
+**Not a BookRAG decision:** Causality, expectedness, signal detection, benefit-risk, dose modification, patient care, or regulatory reporting decision.
 
-BookRAG should complement these systems, not replace them. The host application must provide access control, identity, jurisdiction, asset/product/population applicability, version effectivity, workflow state, and approval authority.
+### FOOD-01: Food Contamination and Recall Investigation
 
-### Production Doctrine
+**Trigger:** A pathogen, allergen, chemical, foreign-material, or labeling issue is detected in a product or facility.
 
-Before production use:
+**Users:** Food-safety manager, quality team, laboratory reviewer, recall coordinator, regulatory affairs.
 
-- Evaluate recall for material evidence, not only precision on easy questions.
-- Verify section hierarchy, page ranges, tables, image context, and source locators.
-- Test obsolete, conflicting, missing, restricted, and low-quality evidence.
-- Obtain applicability and lifecycle state from authoritative systems.
-- Measure reviewer acceptance and rejection reasons.
-- Enforce role-based access, confidentiality, privacy, consent, de-identification, bank secrecy, export control, retention, legal hold, and audit requirements.
-- Measure total parsing, embedding, storage, integration, and review cost per completed business task.
-- Track time to evidence, review throughput, rework, missed findings, repeat incidents, and decision-cycle time.
+**Documents:**
 
-Section construction uses Unstructured structure metadata where available and a Japanese-oriented local fallback profile. Non-Japanese, scanned, handwritten, highly graphical, formula-heavy, and drawing-centric documents require representative evaluation.
+- HACCP or food-safety plan
+- Product, allergen, sanitation, and release specifications
+- Sampling and laboratory methods
+- Supplier certificates and audits
+- Deviation, complaint, recall, and corrective-action reports
+- Regulatory guidance and customer requirements
 
-### When Not To Use BookRAG
+**Representative questions:**
 
-Use plain `Multi Format` or a different system when:
+- Which control point, limit, sampling rule, or release criterion applied?
+- Which prior incidents involved the same ingredient, line, supplier, or organism?
+- What notification, hold, investigation, or documentation steps are stated?
 
-- The content is short, flat, and low risk.
-- FAQ or ordinary semantic search meets the business metric.
-- The primary evidence is structured transactions, time series, telemetry, imagery, CAD, GIS, omics, source code, or live state rather than documents.
-- The task requires deterministic calculation, real-time action, or guaranteed graph completeness.
-- Approved identity, version, access, and applicability cannot be maintained.
-- No qualified person or governed application will review the retrieved evidence.
+**BookRAG output:** Procedure, limit, method, supplier, and prior-incident evidence with section, page, table, and source provenance.
 
-### Product Positioning
+**Required outside BookRAG:** Lot genealogy, inventory, shipment, supplier-lot linkage, laboratory results, jurisdiction, customer list, case workflow, and recall authority.
 
-- `Multi Format`: ordinary document search and low-risk grounded Q&A.
-- `Multi-Format BookRAG`: semantic retrieval plus document identity, section hierarchy, pages, source elements, and optional table/image/entity context.
-- Integrated BookRAG application: a bounded evidence workflow connected to authoritative domain systems.
+**Pilot measures:** Time to assemble the investigation pack; accepted evidence; obsolete specification rate; missing procedure or supplier-document findings.
 
-In one sentence:
+**Not a BookRAG decision:** Contamination source, affected-lot scope, health risk, product release, recall classification, or public notification.
 
-> BookRAG is for decisions where evidence is expensive to find, context is dangerous to lose, and responsibility cannot be delegated to a language model.
+### WATER-01: Drinking-Water Limit Excursion Review
+
+**Trigger:** A laboratory or online measurement exceeds an operating, internal, or regulatory threshold.
+
+**Users:** Water-quality manager, treatment engineer, laboratory, regulatory liaison, incident manager.
+
+**Documents:**
+
+- Permit and drinking-water standard
+- Sampling plan and analytical method
+- Treatment and abnormal-operation procedures
+- Instrument manuals and calibration instructions
+- Prior excursion, corrective-action, and regulator reports
+- Emergency and public-notification procedures
+
+**Representative questions:**
+
+- Which limit, averaging period, confirmation sample, and reporting rule apply?
+- What procedure governs this treatment unit and measurement method?
+- Which prior excursions describe similar conditions and corrective actions?
+
+**BookRAG output:** Limit, method, procedure, and prior-event evidence with jurisdiction/document identity, section, page, table, and source block.
+
+**Required outside BookRAG:** Current laboratory and sensor data, sampling location, asset state, distribution model, affected population, permit scope, incident workflow, and regulatory authority.
+
+**Pilot measures:** Evidence-pack preparation time; correct rule/method locator rate; obsolete procedure findings; reviewer rejection reasons.
+
+**Not a BookRAG decision:** Water safety, affected population, treatment adjustment, cause, compliance status, or public notification.
+
+### ENERGY-01: Power-Transformer Outage Work-Package Preparation
+
+**Trigger:** A utility plans an outage after inspection findings, dissolved-gas results, relay events, overheating, leakage, or an OEM notice.
+
+**Users:** Maintenance engineer, asset manager, outage planner, protection engineer, safety reviewer.
+
+**Documents:**
+
+- Transformer and accessory manuals
+- OEM service bulletins
+- Inspection, oil-analysis, and condition-assessment reports
+- Prior maintenance and outage reports
+- Approved maintenance, isolation, test, and return-to-service procedures
+- Safety and environmental requirements
+
+**Representative questions:**
+
+- Which inspection finding or OEM bulletin recommends this work?
+- What prerequisites, cautions, test limits, and return-to-service steps require review?
+- Which current document supersedes or supplements the previous instruction?
+
+**BookRAG output:** Candidate work-scope, warning, limit, inspection, and prior-maintenance evidence with document relationships, sections, pages, tables, and image context.
+
+**Required outside BookRAG:** Asset tag, model and serial number, configuration, live condition data, work history, spares, outage schedule, switching order, permit, and authorization.
+
+**Pilot measures:** Engineer search time; accepted evidence; wrong-model or obsolete-manual retrieval; work-package review comments caused by missing documents.
+
+**Not a BookRAG decision:** Operability, outage necessity, switching, isolation, work scope approval, test acceptance, or return to service.
+
+### CHEM-01: Chemical-Plant Management-of-Change Review
+
+**Trigger:** A plant proposes changing equipment material, catalyst, raw material, control setting, operating temperature, relief configuration, or procedure.
+
+**Users:** Process engineer, operations, process safety, mechanical integrity, environmental, MOC coordinator.
+
+**Documents:**
+
+- Process-safety information and operating envelope
+- Equipment datasheet and vendor manual
+- Hazard analysis and prior MOC
+- Operating, startup, shutdown, and emergency procedures
+- Inspection and integrity reports
+- SDS, environmental permit, incident, and corrective-action reports
+
+**Representative questions:**
+
+- Which operating limits, hazards, material-compatibility statements, and inspection assumptions relate to the proposed change?
+- Which procedures and prior MOCs discuss the same equipment or condition?
+- What permit, training, testing, or documentation commitments require review?
+
+**BookRAG output:** Candidate limit, hazard, procedure, inspection, permit, and prior-change evidence with exact source context.
+
+**Required outside BookRAG:** Equipment hierarchy, line and tag data, P&ID topology, process conditions, material properties, calculations, action owners, completeness checklist, and approvals.
+
+**Pilot measures:** Initial evidence-gathering time; evidence accepted by discipline reviewers; missed-document findings; obsolete procedure or datasheet retrieval.
+
+**Not a BookRAG decision:** Change-impact completeness, hazard adequacy, material compatibility, relief design, environmental compliance, or MOC approval.
+
+### SEMI-01: Semiconductor Yield-Excursion Evidence Collection
+
+**Trigger:** Yield or defect performance changes for a product, process step, chamber, tool family, material, or supplier lot.
+
+**Users:** Process integration, module engineer, equipment engineer, yield team, product quality, supplier quality.
+
+**Documents:**
+
+- Process and equipment specifications
+- Tool manual and troubleshooting guide
+- Control plan and FMEA
+- Qualification and validation report
+- Engineering and supplier change notice
+- Prior excursion, 8D, and corrective-action report
+
+**Representative questions:**
+
+- Which documented limits and failure modes relate to this defect signature or process step?
+- What tool, material, or recipe-related changes were documented before the excursion?
+- Which prior investigations used the same containment or verification method?
+
+**BookRAG output:** Specification, failure-mode, troubleshooting, qualification, change, and prior-investigation evidence with process/tool/product document context.
+
+**Required outside BookRAG:** Wafer maps, lot history, recipe values, sensor data, SPC, tool/chamber identity, material genealogy, experiment results, access control, and root-cause workflow.
+
+**Pilot measures:** Time to collect document evidence; accepted references; wrong-product/tool evidence; repeated searches across engineering repositories.
+
+**Not a BookRAG decision:** Root cause, containment, recipe change, disposition, causal relationship, or process release.
+
+### AERO-01: Aerospace Requirement-Change Verification Evidence
+
+**Trigger:** A system requirement, interface, design assumption, software/hardware baseline, or certification condition changes.
+
+**Users:** Systems engineer, design authority, verification engineer, safety, quality, certification.
+
+**Documents:**
+
+- System and subsystem requirements
+- Interface-control and design documents
+- Safety assessment
+- Verification plan, analysis, and test report
+- Nonconformance and anomaly report
+- Certification basis, means of compliance, and authority correspondence
+
+**Representative questions:**
+
+- Where is the changed requirement defined and what assumptions or exceptions surround it?
+- Which analyses, tests, anomalies, and certification documents contain related evidence?
+- Which document version was used for the cited verification result?
+
+**BookRAG output:** Requirement and candidate verification/certification evidence with document identity, section, page, table, and known update relationships.
+
+**Required outside BookRAG:** Authoritative requirement IDs, baseline and configuration effectivity, trace matrix, test status, safety classification, change workflow, export controls, and approval authority.
+
+**Pilot measures:** Evidence-preparation time; accepted citations; wrong-baseline evidence; unresolved source-locator findings.
+
+**Not a BookRAG decision:** Traceability completeness, interface consistency, verification closure, safety acceptance, design approval, or certification compliance.
+
+### SUPPLY-01: Critical Supplier Material or Process Change Review
+
+**Trigger:** A supplier changes a material, formulation, process, site, sub-tier supplier, equipment, specification, or inspection method.
+
+**Users:** Supplier quality, product engineering, procurement, reliability, regulatory, manufacturing.
+
+**Documents:**
+
+- Supplier change notification
+- Purchase and product specification
+- Material certificate and test report
+- PPAP, qualification, validation, or first-article package
+- Supplier audit and corrective-action report
+- Internal risk assessment and prior deviation
+
+**Representative questions:**
+
+- Which supplied characteristics, approved sources, tests, or process assumptions may be affected?
+- What prior qualification or deviation evidence exists for the same material, site, or process?
+- Which customer, regulatory, or certification commitments require specialist review?
+
+**BookRAG output:** Candidate specification, qualification, audit, change, and commitment evidence with supplier/product/document provenance.
+
+**Required outside BookRAG:** Supplier, part, BOM, approved-source, product, customer, site, lot, and configuration identity; purchase data; risk classification; workflow and approvals.
+
+**Pilot measures:** Review-pack preparation time; evidence acceptance; missed specification findings; supplier-change cycle time attributable to document search.
+
+**Not a BookRAG decision:** Affected-product completeness, equivalence, qualification sufficiency, supplier approval, deviation approval, or production use.
+
+### CLIMATE-01: Flood-Resilience Investment Evidence Preparation
+
+**Trigger:** A city, utility, port, insurer, or infrastructure fund evaluates a flood-defense, drainage, relocation, hardening, or recovery investment.
+
+**Users:** Infrastructure planner, climate-risk analyst, engineer, insurer, finance team, public authority, reviewer.
+
+**Documents:**
+
+- Flood and climate-hazard assessment
+- Asset vulnerability and consequence report
+- Engineering option study
+- Environmental and social impact assessment
+- Land-use, building, water, and emergency policy
+- Prior event, loss, recovery, and after-action report
+- Funding, insurance, and regulatory criteria
+
+**Representative questions:**
+
+- Which assets, populations, return periods, scenarios, and assumptions are used?
+- What limitations and uncertainty statements qualify the projected benefit?
+- Which policy, permit, funding, insurance, or environmental criteria require evidence?
+
+**BookRAG output:** Hazard, vulnerability, assumption, option, policy, and prior-event evidence with geography text, scenario, section, page, table, and source provenance.
+
+**Required outside BookRAG:** Current geospatial layers, climate models, asset inventory, population data, engineering and economic calculations, project alternatives, legal authority, budget, and approval process.
+
+**Pilot measures:** Time to prepare the decision evidence book; source/assumption locator accuracy; accepted evidence; gaps identified by technical reviewers.
+
+**Not a BookRAG decision:** Flood prediction, design return period, benefit-cost calculation, environmental approval, insurance pricing, funding allocation, or project selection.
+
+### Delivery Sequence
+
+For a first commercial pilot:
+
+1. Select one workflow, one reviewer group, and a bounded document set.
+2. Define 30–100 real questions from completed cases.
+3. Mark the source passages a qualified reviewer expects.
+4. Measure retrieval recall, source-locator accuracy, evidence acceptance, and time saved.
+5. Record failures caused by parsing, retrieval, missing metadata, obsolete documents, or absent integration.
+6. Add external identity and workflow integration only after the evidence layer meets the agreed threshold.
+
+Do not start with “chat across the enterprise.” Start with one recurring review packet whose inputs, reviewers, outputs, and acceptance criteria are known.
+
+### Production Boundaries
+
+- `Multi Format` is enough when ordinary chunks satisfy the retrieval target.
+- BookRAG is appropriate when section, page, table/image context, document identity, or source reconstruction materially improves review.
+- Current document relationships are context labels, not automatic retrieval paths.
+- Current entities are document-scoped, not an enterprise master-data layer.
+- Structured transactions, time series, telemetry, CAD, GIS, omics, images, and live state require other systems.
+- Access control, privacy, consent, bank secrecy, export control, retention, legal hold, validation, and audit requirements belong to the production architecture.
 
 ## 日本語
 
-### 戦略的な位置づけ
+### 現行製品が実際に返すもの
 
-BookRAG は「文書と会話するチャットボット」として売るべきではありません。最も強い役割は、文明基盤システムにおける意思決定のためのエビデンス層です。
+現行検索は `bnode.content` の意味類似検索から始まります。ヒットごとに、文書 ID、本文、上位章パス、ページ、元要素、取得できた表 HTML・画像文脈、文書内エンティティ、`updates`・`summary_of`・`supplement_to` などの文書関係ラベルを返せます。
 
-文明基盤システムには共通点があります。
+これは人または外部アプリケーションが審査する根拠候補です。文書関係は追加情報であり、関連文書を自動検索する経路ではありません。エンティティの正規化も文書内に限定されます。
 
-- 判断が多数の人命、巨額資本、重要設備、環境に影響する。
-- 根拠が長大で構造化され、版管理された文書に分散している。
-- 意味の類似だけでなく、定義、例外、表、警告、前提、適用性が重要である。
-- 最終判断の責任を、有資格者または統治された機関が負う。
+### 優先順位の付け方
 
-問うべきなのは「PDF が多い産業はどこか」ではありません。
+各案件を、頻度、見落とし時の影響、長文書への依存、原典追跡の必要性、現行機能との適合、外部統合負荷の六項目で 1～5 点評価します。最初の五項目が高く、初期段階でリアルタイムデータや多数システムを必要としない案件から開始します。
 
-```text
-根拠の探索が遅い、分断されている、文脈を失っていることが、
-どこでシステミックリスク、重要業務の遅延、希少専門家の浪費を生み、
-社会の投資・建設・治療・食料供給・適応能力を弱めているか。
-```
+### 用例一覧
 
-BookRAG は、質問から確認可能な原典までの時間を短縮するときに価値を持ちます。専門判断、科学的検証、技術計算、リアルタイム制御、正式な記録システムを置き換えません。
-
-### 十の文明基盤システム
-
-| 文明基盤システム | 産業・機関 | 文書が支える判断 | 地球規模で重要な理由 |
+| ID | 具体的業務 | 主な利用者 | 初期優先度 |
 |---|---|---|---|
-| 資本と信頼 | 銀行、中央銀行、資本市場、保険、決済、清算、監査、金融規制 | 与信、投資、資本、流動性、補償、コンダクト、モデルリスク、再建・規制根拠 | 企業、インフラ、技術、国家が成長を資金調達し、ショックを吸収できるかを決める |
-| 健康と生命 | 医療、公衆衛生、製薬、バイオ、診断、医療機器、研究機関 | 臨床ガバナンス、研究、安全性、ベネフィット・リスク、品質、申請、緊急医療根拠 | 生存、健康寿命、感染症への強靭性、生物科学を信頼できる医療へ転換する速度を決める |
-| 食料・農業・水 | 農業、農業資材、食品、水産、水道、灌漑、獣医・防疫機関 | 作物・家畜衛生、食品安全、水質、資源配分、追跡、事故、規制根拠 | 気候、疾病、供給ショック下でも人々が食べ、飲めるかを決める |
-| エネルギー | 電力網、原子力、再エネ、蓄電、石油、ガス、LNG、水素、核融合、規制 | 運転限界、停止工事、健全性、安全、市場規則、事業承認、事故根拠 | デジタル、産業、医療、交通、家庭の全システムが安定し手頃なエネルギーに依存する |
-| 素材と物理経済 | 鉱業、重要鉱物、化学、鉄鋼、非鉄、セメント、ガラス、紙、リサイクル、廃棄物 | 資源評価、安全、品質、環境許可、変更、定修、サプライヤー根拠 | 地球資源を都市、脱炭素、防衛、交通、技術に必要な素材へ転換する |
-| 算力と通信 | 半導体、AI 基盤、クラウド、データセンター、通信、サイバー、量子、フォトニクス | 工程・製品変更、認定、信頼性、セキュリティ、容量、継続性、供給根拠 | 世界の計算、連携、通信、自動化、知識創造能力を決める |
-| 生産と移動 | 先端製造、ロボット、自動車、電池、航空宇宙、宇宙、造船、鉄道、港湾、物流 | 要求、設計検証、構成、保全、品質、認証、運用根拠 | 科学と資本を物理能力へ変換し、世界の生産、貿易、人流・物流を接続する |
-| 建築環境と人材能力 | 建設、土木、住宅、都市、大学、職業教育、研究・認定機関 | 建築・インフラ保証、法規、事業変更、研究統治、認定、技術資格、知識継承根拠 | 人々が暮らし働く環境、都市の安全性と炭素負荷、希少専門性を社会が再生産できるかを決める |
-| 安全保障・統治・標準 | 政府、規制機関、標準化、緊急サービス、防衛、民間防護、司法 | 政策、法的権限、標準、調達、保証、即応、調査、説明責任 | 他の全システムを支えるルール、正統性、安全、協調対応を形成する |
-| 気候・環境・レジリエンス | 気候科学、気象、環境行政、炭素市場、適応、防災、保険 | 環境評価、排出、適応、ハザード、投資、復旧、損失根拠 | 地球の制約と極端現象の中で経済・社会システムが存続できるかを決める |
+| FIN-01 | プロジェクトファイナンス年次与信レビュー | 与信アナリスト、与信委員会事務局 | A |
+| FIN-02 | 金融規制変更の根拠レビュー | コンプライアンス、方針・統制責任者 | A |
+| FIN-03 | 企業財産・利益保険の保険金審査 | 損害調査、カバレッジ法務 | A |
+| MED-01 | 医療機器安全通知と院内手順のレビュー | 臨床工学、患者安全 | B |
+| LIFE-01 | 医薬品バッチ逸脱・CAPA の根拠収集 | 品質調査、有資格審査者 | A |
+| LIFE-02 | 臨床試験安全性レビュー準備 | メディカルモニター、薬物警戒 | B |
+| FOOD-01 | 食品汚染・回収調査 | 食品安全、品質 | B |
+| WATER-01 | 飲料水基準値逸脱レビュー | 水質責任者、研究所 | B |
+| ENERGY-01 | 変圧器停止工事パッケージ準備 | 保全・停止工事技術者 | A |
+| CHEM-01 | 化学プラント変更管理レビュー | プロセス安全、運転、技術 | A |
+| SEMI-01 | 半導体歩留まり異常の文書根拠収集 | 工程・装置技術者 | A |
+| AERO-01 | 航空宇宙要求変更の検証根拠 | システム・検証技術者 | B |
+| SUPPLY-01 | 重要サプライヤー材料・工程変更 | サプライヤー品質、製品技術 | B |
+| CLIMATE-01 | 洪水レジリエンス投資の根拠準備 | インフラ計画、リスク審査 | B |
 
-これらは相互依存します。半導体工場は金融、水、電力、化学、物流、通信、人材、行政に依存し、病院はさらに医薬品・医療機器供給網に依存します。BookRAG は文書境界を保持し、外部アプリケーションが複数システムの根拠を統合できるようにする必要があります。
+A は現行のエビデンスパッケージで限定的な実証が可能です。B は文書検索に価値がありますが、正式な適用性データとの統合が業務利用の前提です。
 
-### 戦略的レバレッジの評価
+## 具体的用例
 
-| 評価軸 | 戦略的な問い |
-|---|---|
-| 影響 | 根拠の見落とし、旧版、文脈欠落が何を引き起こすか |
-| 根拠の複雑性 | 長文、章、表、図、定義、例外、改訂に支配されるか |
-| 専門家の希少性 | 高度人材が判断・設計ではなく検索に時間を使っているか |
-| 反復性 | 設備、案件、製品、報告期、プロジェクト、規制周期で繰り返すか |
-| 追跡性 | 監査人、規制者、科学者、技術者、裁判所が原典へ戻る必要があるか |
-| 統合可能性 | 正式 ID、適用性、権限、状態、承認を既存システムから提供できるか |
+### FIN-01: プロジェクトファイナンス年次与信レビュー
 
-文書量が多いだけでは市場になりません。六軸すべてが高い用途が戦略的な市場です。
+- **契機:** 発電所、LNG 基地、半導体工場、鉱山、データセンター、交通事業融資の年次レビュー。
+- **文書:** 与信稟議、融資契約・コベナンツ、決算、独立技術者・環境報告、格付・市場資料、過去年次レビュー。
+- **質問例:** DSCR 条項の定義・除外・治癒条項はどこか。最新の遅延・コスト超過を説明する根拠は何か。前回から変化した運転・規制・供給リスクは何か。
+- **出力:** コベナンツ、定義、リスク説明、技術所見を章・ページ・表・文書関係付きで返す。
+- **外部依存:** 与信先・融資 ID、エクスポージャー、財務分析、計算、市場データ、承認状態、権限。
+- **評価:** 委員会資料の根拠収集時間、根拠採用率、誤スコープ、二次審査で発見された重要根拠。
+- **非対象:** 格付、コベナンツ計算、期待損失、価格、与信承認、投資推奨。
 
-### 現行 EVSUI の能力
+### FIN-02: 金融規制変更レビュー
 
-```text
-文書
-  -> Unstructured 解析と任意 enrichment
-  -> 文書台帳 (bdoc)
-  -> 元ブロック (bblk)
-  -> 章・ツリーノード (bnode)
-  -> 任意の raw 監査行と文書内エンティティ
-  -> 管理された文書関係 (bdrel)
-  -> bnode.content のベクトル索引
-```
+- **契機:** 資本、流動性、オペレーショナルレジリエンス、消費者保護、モデルリスク、決済、保険、開示規則の新設・改訂。
+- **文書:** 新旧規則、FAQ、社内方針、統制記述、業務手順、過去の法務・コンプライアンス解釈、監査所見。
+- **質問例:** 新しい義務、閾値、例外、期限はどこか。どの社内方針が同じ対象を扱うか。
+- **出力:** 新規則の条項と関連する社内方針・統制の候補箇所を、版・章・ページ付きで返す。
+- **外部依存:** 規制台帳、法人・法域、方針責任者、統制マッピング、導入状況、法的解釈、承認。
+- **評価:** 初期影響パック作成時間、条項位置精度、方針責任者の採用率、誤一致。
+- **非対象:** 法的解釈、適用性、統制十分性、適合性証明。
 
-```text
-質問
-  -> bnode.content の意味類似検索
-  -> ヒットしたノード
-  -> 上位章、ページ、元ブロックの再構成
-  -> 任意の表・画像・エンティティ文脈と文書関係ラベル
-  -> 構造化エビデンスパッケージ
-  -> 有資格者または統治された外部アプリケーション
-```
+### FIN-03: 企業財産・利益保険の保険金審査
 
-現行 BookRAG は検索結果に文書構造と出典を付加します。企業グラフの自動探索、影響文書の網羅取得、文書横断の名寄せ、改訂照合、専門計算、矛盾検出、生成主張の自動根拠検証は行いません。
+- **契機:** 火災、洪水、機械故障、サイバー、供給停止による産業保険事故。
+- **文書:** 約款、明細、特約、免責、サブリミット、技術調査、事故・原因報告、修理見積、設備資料、利益損失請求、専門家報告。
+- **質問例:** 対象設備・原因の補償を定義する特約はどこか。どの免責、待機期間、自己負担、限度額を確認すべきか。
+- **出力:** 補償・事故根拠を条項階層、定義、ページ、元ブロック、文書関係付きで返す。
+- **外部依存:** 保険対象 ID、保険期間、事故日、損害計算、準備金、不正管理、秘匿特権、決裁権限。
+- **評価:** 争点一覧準備時間、法務による条項採用率、特約見落とし、重複検索工数。
+- **非対象:** 補償判断、因果関係、損害評価、準備金、責任、不正、支払。
 
-### 六つの戦略ミッション
+### MED-01: 医療機器安全通知と院内手順レビュー
 
-#### 1. 資本とシステミックリスクを統治する
+- **契機:** メーカー・規制機関が安全通知、是正、禁忌、ソフトウェア更新を発行。
+- **文書:** 安全通知、新旧使用説明、サービス通知、院内運用・洗浄・保全・エスカレーション手順、委員会決定、教育資料、インシデント。
+- **質問例:** 対象モデル、版、アクセサリ、使用条件は何か。新しい警告、禁忌、保全、期限はどこか。
+- **出力:** モデル・版の記述、警告文脈、院内手順候補を章・ページ・更新関係付きで返す。
+- **外部依存:** 院内機器台帳、設置場所、ソフトウェア版、患者曝露、回収状態、保全記録、臨床承認、タスク管理。
+- **評価:** 手順レビュー準備時間、モデル・版の正確性、関連手順の見落とし。
+- **非対象:** 患者への安全性、使用停止、臨床リスク、回収完了、保全許可。
 
-銀行、中央銀行、証券、取引所、清算・決済、資産運用、保険、格付、監査、監督機関を対象に、健全性規制、方針、与信稟議、コベナンツ、発行体開示、目論見書、調査、モデル文書、商品約款、保険金、再建計画、業務事故から、法人・期間・章・ページ・表・更新関係付きの根拠を返します。
+### LIFE-01: 医薬品バッチ逸脱・CAPA
 
-主要業務は、与信委員会、プロジェクトファイナンス、投資調査、規制変更、方針・統制、モデルリスク、保険引受・保険金、決済・サイバー・オペレーショナルレジリエンス、気候・自然リスク開示です。
+- **契機:** バッチ、環境モニタリング、工程、設備が承認要件から逸脱。
+- **文書:** SOP、製造指図、仕様、試験法、バリデーション、設備適格性・保全、逸脱、CAPA、変更管理、規制コミットメント。
+- **質問例:** 事象時に適用された要件・合否基準は何か。同じ工程・設備・方法・故障モードの過去逸脱は何か。
+- **出力:** 要件、方法、バリデーション、過去調査の根拠を文書・章・ページ・表付きで返す。
+- **外部依存:** バッチ、設備、方法、製品版、発効日、試験データ、署名、業務状態、品質権限。
+- **評価:** 根拠収集時間、採用率、旧版取得率、二者確認所見。
+- **非対象:** 根本原因、製品影響、患者リスク、CAPA 十分性、バッチ処分・出荷、GxP 適合。
 
-BookRAG はエクスポージャー、資本、流動性、評価、期待損失、準備金、適合性、不正、補償、マーケットリスクを計算せず、与信、取引、決済、保険金、適合性、投資判断を行いません。
+### LIFE-02: 臨床試験安全性レビュー
 
-#### 2. 人命を守り、生物科学を前進させる
+- **契機:** 重篤有害事象、集積傾向、定期安全性報告のレビュー。
+- **文書:** プロトコル・改訂、治験薬概要書、参照安全性情報、統計解析計画、試験報告、安全性症例・集積報告、リスク管理、添付文書。
+- **質問例:** 事象の定義、収集、重症度、解析方法は何か。既知・予期されるリスクはどこか。どの集団・用量・コホート・期間に属するか。
+- **出力:** プロトコル、安全性、対象集団、方法、結果の根拠を試験 ID・章・ページ・表・改訂関係付きで返す。
+- **外部依存:** 被験者データ、コーディング、曝露、割付、臨床状態、統計、参照版、盲検管理、決裁権限。
+- **評価:** 根拠準備時間、改訂版誤り、採用引用、医学審査で判明した見落とし。
+- **非対象:** 因果関係、予測性、シグナル、ベネフィット・リスク、用量変更、患者治療、報告判断。
 
-病院、公衆衛生、製薬、バイオ、診断、医療機器、研究機関、研究所、CRO、規制機関を対象に、診療ガイドライン、ケアパス、研究計画、非臨床・臨床報告、安全性報告、添付文書、リスク管理、CMC、バリデーション、仕様、逸脱、CAPA、QMS、申請資料から、対象集団・試験・製品・章・ページ・表付きの根拠を返します。
+### FOOD-01: 食品汚染・回収調査
 
-主要業務は、ガイドライン統治、研究審査、臨床開発、薬物警戒、メディカルセーフティ、申請・コミットメント、逸脱・CAPA、バリデーション、査察、患者安全、公衆衛生事象です。
+- **契機:** 病原体、アレルゲン、化学物質、異物、表示問題を検出。
+- **文書:** HACCP、製品・アレルゲン・衛生・出荷仕様、サンプリング・試験法、サプライヤー証明・監査、逸脱、苦情、回収、是正、規制・顧客要求。
+- **質問例:** 適用された管理点、限度、サンプリング、出荷基準は何か。同じ原料・ライン・供給元・微生物の過去事例は何か。
+- **出力:** 手順、限度、方法、サプライヤー、過去事例を章・ページ・表・出典付きで返す。
+- **外部依存:** ロット系譜、在庫、出荷、供給ロット、試験結果、法域、顧客、案件管理、回収権限。
+- **評価:** 調査パック作成時間、根拠採用率、旧版仕様、手順・供給文書の見落とし。
+- **非対象:** 汚染源、対象ロット範囲、健康リスク、出荷、回収区分、公表。
 
-BookRAG は診断、治療推奨、患者適用性、因果関係、用量、ベネフィット・リスク、安全性シグナル、製品出荷、GxP 適合、規制判断を行いません。
+### WATER-01: 飲料水基準値逸脱
 
-#### 3. 食料・水・生物学的レジリエンスを確保する
+- **契機:** 試験所またはオンライン測定が運用・社内・規制閾値を超過。
+- **文書:** 許可・水質基準、採水計画、試験法、処理・異常運転手順、計器資料、過去逸脱・是正・規制報告、緊急・公表手順。
+- **質問例:** 適用限度、平均期間、確認採水、報告規則は何か。この設備・測定法の手順はどこか。
+- **出力:** 限度、方法、手順、過去事例を法域・文書・章・ページ・表付きで返す。
+- **外部依存:** 現在の試験・センサーデータ、採水地点、設備状態、配水モデル、対象人口、許可範囲、事故業務。
+- **評価:** 根拠パック時間、規則・方法位置精度、旧版手順、却下理由。
+- **非対象:** 水の安全性、対象人口、処理調整、原因、適合性、公表。
 
-農業、種苗、農業資材、動物薬、食品、水産、水道、研究所、防疫、公衆衛生、開発機関を対象に、栽培・獣医手順、疾病・害虫報告、HACCP、水処理、試験法、品質結果、許可、環境調査、回収、干ばつ計画、防疫指針から、地域・種・製品・方法・限度・日付・規制文脈付きの根拠を返します。
+### ENERGY-01: 変圧器停止工事パッケージ
 
-主要業務は、作物・家畜・水産疾病、食品安全・回収、水質・処理手順、干ばつ・灌漑、農業資材・サプライヤー審査、防疫・人獣共通感染症準備です。
+- **契機:** 検査、油中ガス、リレー、過熱、漏油、OEM 通知を受けて停止工事を計画。
+- **文書:** 本体・付属品資料、OEM 通知、検査・油分析・状態評価、過去保全・停止工事、保全・隔離・試験・復旧手順、安全・環境要件。
+- **質問例:** どの所見・OEM 通知が作業を推奨するか。前提、注意、試験限度、復旧手順は何か。どの文書が旧指示を更新するか。
+- **出力:** 作業範囲、警告、限度、検査、過去保全の候補根拠を章・ページ・表・画像・文書関係付きで返す。
+- **外部依存:** 設備タグ、型式・製番、構成、状態データ、履歴、予備品、工程、開閉指令、許可、権限。
+- **評価:** 技術者検索時間、採用率、誤型式・旧版資料、文書不足によるレビューコメント。
+- **非対象:** 運転可否、停止要否、開閉・隔離、作業承認、試験合否、復旧。
 
-BookRAG は圃場・集団の診断、灌漑最適化、収量予測、処理制御、食品・水の安全認証を行わず、研究所、地理空間、センサー、疫学解析を置き換えません。
+### CHEM-01: 化学プラント変更管理
 
-#### 4. エネルギーと素材システムを安全に維持する
+- **契機:** 材質、触媒、原料、制御設定、温度、リリーフ、手順を変更。
+- **文書:** プロセス安全情報、運転限界、設備仕様、ベンダー資料、ハザード分析、過去 MOC、運転・起動・停止・緊急手順、検査、SDS、環境許可、事故・是正。
+- **質問例:** 関連する限度、危険、材質適合、検査前提は何か。同じ設備・状態の過去 MOC は何か。
+- **出力:** 限度、危険、手順、検査、許可、過去変更の候補根拠を正確な出典付きで返す。
+- **外部依存:** 設備階層、タグ、P&ID、条件、物性、計算、責任者、完全性チェック、承認。
+- **評価:** 初期収集時間、専門分野別採用率、文書見落とし、旧版手順・仕様。
+- **非対象:** 影響網羅性、ハザード十分性、材質適合、安全計算、環境適合、MOC 承認。
 
-電力、原子力、再エネ、蓄電、石油、ガス、LNG、水素、鉱業、化学、鉄鋼、セメント、素材、リサイクルを対象に、運転・保全手順、安全解析、運転限界、OEM 通知、検査、停止工事、MOC、地質・地盤、品質、許認可、事故報告から、設備・変更・事象に関する章・ページ・表・画像・更新関係付きの根拠を返します。
+### SEMI-01: 半導体歩留まり異常
 
-主要業務は、運転限界、受控手順、停止工事、健全性、プロセス安全、変更管理、事故・原因調査、重要鉱物・エネルギー事業審査、環境許可です。
+- **契機:** 製品、工程、チャンバー、装置群、材料、供給ロットで歩留まり・欠陥が変化。
+- **文書:** 工程・装置仕様、装置トラブル資料、管理計画、FMEA、認定・検証、技術・サプライヤー変更、過去異常・8D・是正。
+- **質問例:** 欠陥・工程に関連する限度・故障モードは何か。異常前に装置・材料・レシピ変更が記録されたか。
+- **出力:** 仕様、故障モード、トラブル、認定、変更、過去調査の根拠を工程・装置・製品文脈付きで返す。
+- **外部依存:** ウェハマップ、ロット、レシピ、センサー、SPC、装置・チャンバー、材料系譜、実験、権限。
+- **評価:** 文書根拠収集時間、採用率、誤製品・装置根拠、重複検索。
+- **非対象:** 原因、封じ込め、レシピ変更、処分、因果、工程開放。
 
-BookRAG は運転可否、プラント制御、P&ID の完全グラフ化、安全計算、影響網羅性、鉱山・エネルギー事業承認を行いません。
+### AERO-01: 航空宇宙要求変更の検証根拠
 
-#### 5. 算力・生産・サプライチェーン主権を守る
+- **契機:** システム要求、インターフェース、設計前提、HW/SW ベースライン、認証条件を変更。
+- **文書:** システム・サブシステム要求、インターフェース・設計、安全評価、検証計画・解析・試験、不適合・異常、認証基準・適合手段・当局文書。
+- **質問例:** 変更要求と前提・例外はどこか。関連する解析、試験、異常、認証根拠は何か。結果はどの版を使用したか。
+- **出力:** 要求と検証・認証候補を文書 ID、章、ページ、表、更新関係付きで返す。
+- **外部依存:** 正式要求 ID、ベースライン、構成発効、トレース、試験状態、安全分類、変更、輸出管理、承認。
+- **評価:** 根拠準備時間、採用引用、誤ベースライン、出典位置の未解決。
+- **非対象:** トレース完全性、インターフェース整合、検証完了、安全受容、設計承認、認証適合。
 
-半導体、製造装置、AI・クラウド、データセンター、通信、量子、フォトニクス、先端製造、ロボット、電池、自動車、航空宇宙、宇宙、造船、建設・土木、鉄道、港湾、戦略サプライヤーを対象に、要求、仕様、装置資料、FMEA、認定、検証、変更、サプライヤー通知、インターフェース、認証、サービス通知、現場報告、サイバー手順から、異常・変更・要求・供給問題の根拠を返します。
+### SUPPLY-01: 重要サプライヤー材料・工程変更
 
-主要業務は、半導体異常・工程変更、AI 基盤・通信継続性、製品・サプライヤー変更、要求・試験・認証、保証・市場不具合、保全、建築・インフラ・大型事業保証、標準に基づく技術教育・資格根拠、技術 DD、長期プログラムの知識継承です。
+- **契機:** 材料、配合、工程、工場、二次供給元、設備、仕様、検査法を変更。
+- **文書:** 変更通知、購買・製品仕様、材料証明・試験、PPAP・認定・検証・初品、監査・是正、社内リスク・過去逸脱。
+- **質問例:** どの特性、承認供給元、試験、工程前提が影響候補か。同じ材料・工場・工程の過去根拠は何か。
+- **出力:** 仕様、認定、監査、変更、コミットメントの候補根拠を供給元・製品・文書出典付きで返す。
+- **外部依存:** 供給元、部品、BOM、承認元、製品、顧客、工場、ロット、構成、購買、リスク、承認。
+- **評価:** レビューパック準備時間、採用率、仕様見落とし、文書検索に起因する変更期間。
+- **非対象:** 影響製品の網羅性、同等性、認定十分性、供給元・逸脱承認、製造使用。
 
-BookRAG はウェハマップ、テレメトリ、CAD、コード、通信トラフィック、因果工程を解析せず、構成発効、要求カバレッジ、設計承認、インフラ運用を行いません。
+### CLIMATE-01: 洪水レジリエンス投資
 
-#### 6. 地球規模の統治とレジリエンスを強化する
+- **契機:** 都市、公益、港湾、保険、インフラ投資家が防潮・排水・移転・強靭化・復旧事業を検討。
+- **文書:** 洪水・気候ハザード、設備脆弱性、技術案、環境・社会影響、土地利用・建築・水・緊急政策、過去災害・損害・復旧・事後検証、資金・保険・規制基準。
+- **質問例:** 対象設備・人口、再現期間、シナリオ、前提は何か。便益を限定する不確実性は何か。どの政策・許可・資金・保険基準が必要か。
+- **出力:** ハザード、脆弱性、前提、案、政策、過去事例を地域記述・シナリオ・章・ページ・表付きで返す。
+- **外部依存:** GIS、気候モデル、設備台帳、人口、技術・経済計算、代替案、法的権限、予算、承認。
+- **評価:** 意思決定資料準備時間、出典・前提位置精度、採用率、専門審査で判明した不足。
+- **非対象:** 洪水予測、設計再現期間、費用便益、環境承認、保険料、資金配分、事業選定。
 
-政府、規制機関、標準化、都市、緊急サービス、防衛・民間防護、気候・気象、国際機関、インフラ、保険を対象に、法令、標準、政策、調達、保証、気候・ハザード評価、緊急計画、相互支援、適応、環境影響、事後検証、復旧、公的調査から追跡可能な根拠を返します。
+### 導入順序
 
-主要業務は、規制・標準、重要インフラ保証、防災・事後検証、気候適応投資、環境評価、産業政策・戦略調達、防衛・民間防護・事業継続です。
+1. 一つの業務、一つの審査者群、限定文書集合を選ぶ。
+2. 完了案件から実質問 30～100 件を作る。
+3. 有資格者が期待する原文箇所を正解として付ける。
+4. Recall、出典位置精度、根拠採用率、時間短縮を測る。
+5. 解析、検索、メタデータ、旧版、外部統合不足による失敗を分類する。
+6. エビデンス層が合意基準を満たした後に ID・業務統合を追加する。
 
-BookRAG は法的権限を創設せず、災害を予測せず、緊急対応を指揮せず、脅威分類、環境承認、公共資源配分、民主的意思決定を代替しません。
+「全社知識と会話」から始めず、入力、審査者、出力、合否基準が明確な一つの反復レビューパックから始めます。
 
-### 産業横断ワークフロー
+### 本番境界
 
-| 業務 | BookRAG の共通役割 | 周辺に必要なシステム |
-|---|---|---|
-| 変更影響審査 | 要求、方針、手順、警告、試験、コミットメント、過去変更を審査候補として返す | PLM、構成、方針、QMS、規制、設備、ワークフロー |
-| 事故・調査 | 過去所見、限度、手順、報告、是正措置を集約する | 案件管理、EAM、QMS、安全、保険金、臨床、サイバー、事故システム |
-| 受控手順検索 | 前提、注意、適用範囲、原典付きの手順を返す | DMS、本人・設備・製品・患者適用性、版、権限 |
-| 検証・保証 | 要求、試験、解析、統制、認証の根拠候補を提供する | 要求、試験、モデル、バリデーション、監査、認証 |
-| 規制エビデンス | 規則、定義、義務、例外、申請、コミットメント、統制を返す | 規制台帳、GRC、RIM、方針、法務、承認 |
-| 技術・制度 DD | 報告、開示、仕様、許可、契約、サプライヤー根拠を一次選別する | データルーム、事業、金融、法務、供給網、専門家審査 |
-| 知識継承 | 判断理由、例外、教訓、過去解決を出典付きで再利用する | 知識統治、教育、文書責任者、専門家審査 |
-
-### 戦略的な市場参入
-
-#### Wave 1: 現行実装に適合するエビデンス製品
-
-1. 金融・与信・リスク・規制エビデンス
-2. 生命科学の品質・薬事・安全性・バリデーション審査
-3. エネルギー・産業設備の手順・保全・事故根拠
-4. 半導体・先端製造の異常・変更審査
-5. 要求・認証・サプライヤー文書根拠
-6. 食品・水・環境・公共安全の調査パッケージ
-
-販売単位は「全社知識とのチャット」ではなく、一つの定義された意思決定業務に対する審査可能なエビデンスパッケージです。
-
-#### Wave 2: 正式システムと統合した意思決定支援
-
-- 顧客、法人、エクスポージャー、ポジション、商品、法域、報告期
-- 患者・対象集団、試験、施設、適応、製品版、承認済み表示
-- 圃場、種、ロット、流域、地域、方法、規制限度
-- 設備、タグ、構成、材料、工程、サプライヤー、改訂
-- 要求、危険、統制、試験、所見、是正、承認状態
-
-BookRAG は文書エビデンス層に留まり、外部アプリケーションが ID、権限、適用性、業務フロー、決定論的ルール、最終判断を提供します。
-
-#### Wave 3: 現行製品が主張しない能力
-
-- 自律的な金融、法務、臨床、科学、技術、安全保障、政策判断
-- 工程、電力網、交通、治療、取引、決済、緊急対応のリアルタイム制御
-- 市場、患者、センサー、テレメトリ、気象、地理空間、時系列からの予測
-- 適合性、変更影響、要求、依存関係の完全性保証
-- 技術、金融、臨床、気候、リスクの自動計算
-- 自律更新される企業横断知識グラフ
-
-### 正式システムとの関係
-
-```text
-受控文書・記録管理
-銀行 / リスク / 財務 / 取引 / 決済 / 保険 / 規制報告
-電子カルテ / 臨床知識 / CTMS / eTMF / 安全性 / RIM / QMS / LIMS
-農業 / 研究所 / 食品安全 / 水道 / 地理空間
-PLM / 要求 / 構成 / サプライヤー管理
-EAM / CMMS / 作業管理 / MES / ヒストリアン
-法務 / GRC / 方針 / 緊急・案件管理
-        |
-        | 承認済み文書 + 正式 ID・適用性
-        v
-BookRAG 文書エビデンス層
-        |
-        | 構造化エビデンスパッケージ
-        v
-有資格アナリスト、臨床家、科学者、技術者、運転員、
-調査者、規制者、統治された業務フロー
-```
-
-BookRAG は正式システムを補完し、置き換えません。外部アプリケーションが権限、ID、法域、設備・製品・対象集団の適用性、版の発効、業務状態、承認権限を提供します。
-
-### 本番原則
-
-- 簡単な質問の precision だけでなく、重要根拠の recall を評価する。
-- 章、ページ、表、画像文脈、元要素の正確性を検証する。
-- 旧版、矛盾、不足、権限制限、低品質文書での失敗動作を確認する。
-- 適用性とライフサイクル状態は正式システムから取得する。
-- 専門家による根拠採用率と却下理由を測定する。
-- 権限、機密、プライバシー、同意、匿名化、銀行秘密、輸出管理、保存、リーガルホールド、監査要件を実装する。
-- 1 業務当たりの解析、埋め込み、保存、統合、審査コストを測る。
-- 根拠発見時間、審査処理量、手戻り、見落とし、事故再発、判断期間を追跡する。
-
-章構築は Unstructured の構造情報を優先し、ローカルのフォールバックは日本語向けです。日本語以外、スキャン、手書き、図表・数式・図面中心の文書は代表資料で評価する必要があります。
-
-### BookRAG を使わない場面
-
-- 短く平坦で低リスクなコンテンツ。
-- FAQ や通常の意味検索で業務指標を満たせる場合。
-- 主な根拠が文書ではなく、取引、時系列、テレメトリ、画像、CAD、GIS、オミクス、コード、ライブ状態である場合。
-- 決定論的計算、リアルタイム動作、完全なグラフが必要な場合。
-- 承認済み ID、版、権限、適用性を維持できない場合。
-- 有資格者または統治されたアプリケーションが根拠を審査しない場合。
-
-### 製品ポジショニング
-
-- `Multi Format`: 一般文書検索と低リスクな grounded Q&A。
-- `Multi-Format BookRAG`: 意味検索に文書 ID、章階層、ページ、元要素、任意の表・画像・エンティティ文脈を加える。
-- 統合 BookRAG アプリケーション: 正式な業務システムと接続された、範囲の明確なエビデンス業務。
-
-一文で表すと:
-
-> BookRAG は、根拠を探すコストが高く、文脈を失うことが危険で、責任を言語モデルへ委譲できない意思決定のためにある。
+- 通常チャンクで目標を満たす場合は `Multi Format` で十分。
+- 章、ページ、表・画像、文書 ID、元要素が審査を改善する場合に BookRAG を使う。
+- 文書関係は文脈ラベルであり、自動検索経路ではない。
+- エンティティは文書内であり、企業マスターデータではない。
+- 取引、時系列、テレメトリ、CAD、GIS、オミクス、画像、ライブ状態は別システムが必要。
+- 権限、プライバシー、同意、銀行秘密、輸出管理、保存、リーガルホールド、バリデーション、監査は本番アーキテクチャで実装する。
