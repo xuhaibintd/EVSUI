@@ -5,6 +5,7 @@ from app.services.multi_format import (
     apply_multi_format_pipeline,
     get_ready_multi_format_csv_load_summary,
     strip_file_based_create_params,
+    update_multi_format_csv_vector_store_status,
 )
 
 MODE = "multi_format"
@@ -34,6 +35,7 @@ def preprocess_create_payload(**kwargs) -> tuple[dict, dict | None]:
             "source": "loaded_multi_format_csv_table",
             "skip_vectorstore_create": False,
             "chunk_count": load_summary.get("persisted_row_count"),
+            "document_count": load_summary.get("csv_file_count") or load_summary.get("task_count"),
         }
     return apply_multi_format_pipeline(
         exec_payload=kwargs["exec_payload"],
@@ -43,6 +45,23 @@ def preprocess_create_payload(**kwargs) -> tuple[dict, dict | None]:
         execute_sql_fn=kwargs.get("execute_sql_fn"),
         resolve_path_hint=kwargs["resolve_path_hint"],
         pipeline_mode=MODE,
+    )
+
+
+def mark_vectorstore_status(
+    summary: dict | None,
+    *,
+    status: str,
+    error: str = "",
+    create_payload: dict | None = None,
+) -> None:
+    if not summary or summary.get("source") != "loaded_multi_format_csv_table":
+        return
+    update_multi_format_csv_vector_store_status(
+        csv_run_id=str(summary["csv_run_id"]),
+        status=status,
+        error=error,
+        create_payload=create_payload,
     )
 
 

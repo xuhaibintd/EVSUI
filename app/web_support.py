@@ -600,7 +600,9 @@ def _build_home_context(request: Request, app) -> dict:
     ]
     multi_format_csv_runs = list_multi_format_csv_runs()
     multi_format_loaded_csv_runs = [
-        run for run in multi_format_csv_runs if run.get("load_status") == "ready"
+        run
+        for run in multi_format_csv_runs
+        if run.get("load_status") == "ready" and run.get("vector_store_status") != "ready"
     ]
     return {
         "messages": app.state.chat_history,

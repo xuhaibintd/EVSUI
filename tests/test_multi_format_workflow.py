@@ -1573,6 +1573,93 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
 
 
 class MultiFormatStagedPipelineTests(unittest.TestCase):
+    def test_multi_format_vector_store_status_is_persisted_in_csv_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            csv_root = Path(tmpdir)
+            run_id = "multi-format-csv-run"
+            run_dir = csv_root / run_id
+            run_dir.mkdir(parents=True)
+            manifest_path = run_dir / "manifest.json"
+            manifest_path.write_text(
+                multi_format.json.dumps(
+                    {
+                        "schema_version": multi_format.MULTI_FORMAT_CSV_MANIFEST_SCHEMA_VERSION,
+                        "artifact_type": "multi_format_csv_run",
+                        "csv_run_id": run_id,
+                        "status": "ready",
+                        "load_status": "ready",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(multi_format, "MULTI_FORMAT_CSV_STAGE_DIR_DEFAULT", csv_root):
+                multi_format.update_multi_format_csv_vector_store_status(
+                    csv_run_id=run_id,
+                    status="creating",
+                    create_payload={"object_names": "demo_unstructured"},
+                )
+                multi_format.update_multi_format_csv_vector_store_status(
+                    csv_run_id=run_id,
+                    status="failed",
+                    error="index row count mismatch",
+                )
+
+            saved = multi_format.json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["vector_store_status"], "failed")
+            self.assertEqual(saved["vector_store_error"], "index row count mismatch")
+            self.assertEqual(
+                saved["vector_store_create_payload"]["object_names"],
+                "demo_unstructured",
+            )
+            self.assertTrue(saved["vector_store_updated_at"])
+
+    def test_raw_json_runs_are_shared_across_bookrag_and_multi_format(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            shared_root = tmp_path / "shared"
+            legacy_multi_root = tmp_path / "legacy-multi"
+
+            def _write_run(root: Path, run_id: str, artifact_type: str) -> None:
+                run_dir = root / run_id
+                run_dir.mkdir(parents=True)
+                (run_dir / "manifest.json").write_text(
+                    multi_format.json.dumps(
+                        {
+                            "schema_version": 1,
+                            "artifact_type": artifact_type,
+                            "parse_run_id": run_id,
+                            "status": "ready",
+                            "created_at": "2026-07-16 00:00:00",
+                            "vector_store_name": "demo",
+                            "file_count": 1,
+                            "documents": [],
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+            _write_run(shared_root, "bookrag-run", "bookrag_parse_run")
+            _write_run(legacy_multi_root, "multi-run", "multi_format_parse_run")
+            with mock.patch.object(
+                multi_format, "UNSTRUCTURED_RAW_STAGE_DIR_DEFAULT", shared_root
+            ), mock.patch.object(
+                multi_format, "BOOKRAG_RAW_STAGE_DIR_DEFAULT", shared_root
+            ), mock.patch.object(
+                multi_format, "MULTI_FORMAT_RAW_STAGE_DIR_DEFAULT", legacy_multi_root
+            ):
+                bookrag_runs = multi_format.list_bookrag_parse_runs()
+                multi_runs = multi_format.list_multi_format_parse_runs()
+                multi_from_bookrag = multi_format._resolve_multi_format_parse_manifest("bookrag-run")
+                bookrag_from_multi = multi_format._resolve_bookrag_parse_manifest("multi-run")
+
+            self.assertEqual(bookrag_runs, multi_runs)
+            self.assertEqual(
+                {run["parse_run_id"] for run in multi_runs}, {"bookrag-run", "multi-run"}
+            )
+            self.assertEqual(multi_from_bookrag[1]["artifact_type"], "bookrag_parse_run")
+            self.assertEqual(bookrag_from_multi[1]["artifact_type"], "multi_format_parse_run")
+
     def test_document_parsing_uses_standard_multi_format_workflow_and_writes_json_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
@@ -1646,7 +1733,7 @@ class MultiFormatStagedPipelineTests(unittest.TestCase):
             csv_mock.assert_not_called()
             load_mock.assert_not_called()
 
-    def test_json_to_csv_keeps_standard_unstructured_mapping_and_loads_one_table(self) -> None:
+    def test_bookrag_json_to_csv_keeps_standard_unstructured_mapping_and_loads_one_table(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             raw_root = tmp_path / "raw"
@@ -1663,6 +1750,10 @@ class MultiFormatStagedPipelineTests(unittest.TestCase):
                     {"type": "TableChunk", "element_id": "two", "text": "Two", "metadata": {"filename": "two.pdf", "text_as_html": "<table></table>"}},
                 ],
             ]
+            filenames = [
+                "doc-0.pdf",
+                "⑥GMAP不定期レポート_" + ("非常に長い日本語タイトル" * 20) + ".pdf",
+            ]
             documents = []
             for index, payload in enumerate(payloads):
                 json_path = parse_dir / f"doc-{index}.json"
@@ -1671,7 +1762,7 @@ class MultiFormatStagedPipelineTests(unittest.TestCase):
                     {
                         "source_index": index,
                         "doc_id": f"doc-{index}",
-                        "filename": f"doc-{index}.pdf",
+                        "filename": filenames[index],
                         "filetype": "application/pdf",
                         "raw_json_file": json_path.name,
                         "raw_json_sha256": multi_format._file_sha256(json_path),
@@ -1680,8 +1771,8 @@ class MultiFormatStagedPipelineTests(unittest.TestCase):
                     }
                 )
             manifest = {
-                "schema_version": multi_format.MULTI_FORMAT_PARSE_MANIFEST_SCHEMA_VERSION,
-                "artifact_type": "multi_format_parse_run",
+                "schema_version": multi_format.BOOKRAG_PARSE_MANIFEST_SCHEMA_VERSION,
+                "artifact_type": "bookrag_parse_run",
                 "parse_run_id": parse_run_id,
                 "status": "ready",
                 "created_at": "2026-07-16 00:00:00",
@@ -1692,7 +1783,9 @@ class MultiFormatStagedPipelineTests(unittest.TestCase):
                 multi_format.json.dumps(manifest), encoding="utf-8"
             )
 
-            with mock.patch.object(multi_format, "MULTI_FORMAT_RAW_STAGE_DIR_DEFAULT", raw_root), mock.patch.object(
+            with mock.patch.object(multi_format, "UNSTRUCTURED_RAW_STAGE_DIR_DEFAULT", raw_root), mock.patch.object(
+                multi_format, "BOOKRAG_RAW_STAGE_DIR_DEFAULT", raw_root
+            ), mock.patch.object(
                 multi_format, "MULTI_FORMAT_CSV_STAGE_DIR_DEFAULT", csv_root
             ):
                 generated = multi_format.run_multi_format_json_to_csv(
@@ -1707,7 +1800,9 @@ class MultiFormatStagedPipelineTests(unittest.TestCase):
                 self.assertEqual(generated["row_count"], 2)
                 ids = []
                 for result in generated["files"]:
-                    with (Path(generated["csv_stage_dir"]) / result["csv_file"]).open(
+                    generated_csv_path = Path(generated["csv_stage_dir"]) / result["csv_file"]
+                    self.assertLessEqual(len(generated_csv_path.parent.name), 26)
+                    with generated_csv_path.open(
                         "r", encoding="utf-8-sig", newline=""
                     ) as handle:
                         rows = list(csv.DictReader(handle))

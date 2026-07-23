@@ -258,16 +258,46 @@ def _bookrag_source_embedding_row_count(
     target_database: str,
     execute_sql_fn,
 ) -> tuple[int | None, str]:
+    return _source_embedding_row_count(
+        source_table_name=source_table_name,
+        target_database=target_database,
+        data_column="content",
+        execute_sql_fn=execute_sql_fn,
+    )
+
+
+def _multi_format_source_embedding_row_count(
+    *,
+    source_table_name: str,
+    target_database: str,
+    execute_sql_fn,
+) -> tuple[int | None, str]:
+    return _source_embedding_row_count(
+        source_table_name=source_table_name,
+        target_database=target_database,
+        data_column="text",
+        execute_sql_fn=execute_sql_fn,
+    )
+
+
+def _source_embedding_row_count(
+    *,
+    source_table_name: str,
+    target_database: str,
+    data_column: str,
+    execute_sql_fn,
+) -> tuple[int | None, str]:
     if execute_sql_fn is None:
         return None, "execute_sql is unavailable"
     try:
         schema_sql = _quote_teradata_identifier(target_database)
         table_sql = _quote_teradata_identifier(source_table_name)
+        data_column_sql = _quote_teradata_identifier(data_column)
     except ValueError as ex:
         return None, str(ex)
     sql = (
         f'SELECT COUNT(*) FROM {schema_sql}.{table_sql} '
-        'WHERE "content" IS NOT NULL AND TRIM("content") <> \'\''
+        f"WHERE {data_column_sql} IS NOT NULL AND TRIM({data_column_sql}) <> ''"
     )
     try:
         count_result = execute_sql_fn(sql)
@@ -501,8 +531,13 @@ async def handle_upload_and_prepare_create(
             return
         mark_status_fn = getattr(doc_pipeline_handler, "mark_vectorstore_status", None)
         if callable(mark_status_fn):
+            loaded_source = (
+                "loaded_multi_format_csv_table"
+                if raw_doc_pipeline_mode == "multi_format"
+                else "loaded_csv_tables"
+            )
             mark_status_fn(
-                {**loaded_summary, "source": "loaded_csv_tables", "csv_run_id": loaded_csv_run_id},
+                {**loaded_summary, "source": loaded_source, "csv_run_id": loaded_csv_run_id},
                 status=status,
                 error=error,
             )
@@ -626,18 +661,31 @@ async def handle_upload_and_prepare_create(
             )
             precheck_status_preview = existence_check_detail or current_status_preview
             precheck_integrity_error = ""
-            if current_state == "ready" and loaded_summary and raw_doc_pipeline_mode == "multi_format_bookrag":
+            index_verification_label = "Vector"
+            if (
+                current_state == "ready"
+                and loaded_summary
+                and raw_doc_pipeline_mode in {"multi_format", "multi_format_bookrag"}
+            ):
                 target_database_for_index = str(loaded_summary.get("target_database") or "").strip()
-                loaded_table_targets = loaded_summary.get("table_targets") or {}
-                source_table_for_index = str(
-                    loaded_table_targets.get("nodes")
-                    or str(loaded_summary.get("node_table") or "").rsplit(".", 1)[-1]
-                ).strip()
-                expected_index_count, source_count_error = _bookrag_source_embedding_row_count(
+                if raw_doc_pipeline_mode == "multi_format_bookrag":
+                    index_verification_label = "BookRAG vector"
+                    loaded_table_targets = loaded_summary.get("table_targets") or {}
+                    source_table_for_index = str(
+                        loaded_table_targets.get("nodes")
+                        or str(loaded_summary.get("node_table") or "").rsplit(".", 1)[-1]
+                    ).strip()
+                    source_count_fn = _bookrag_source_embedding_row_count
+                else:
+                    index_verification_label = "Multi-Format vector"
+                    source_table_for_index = str(loaded_summary.get("table_name") or "").strip()
+                    source_count_fn = _multi_format_source_embedding_row_count
+                expected_index_count, source_count_error = source_count_fn(
                     source_table_name=source_table_for_index,
                     target_database=target_database_for_index,
                     execute_sql_fn=execute_sql_fn,
                 )
+                strict_index_verification = raw_doc_pipeline_mode == "multi_format"
                 index_row_count, index_count_error = await _wait_for_bookrag_index_rows(
                     vector_store_name=vector_store_name,
                     target_database=target_database_for_index,
@@ -645,24 +693,36 @@ async def handle_upload_and_prepare_create(
                     execute_sql_fn=execute_sql_fn,
                 )
                 if source_count_error:
-                    warnings.append(
-                        "Existing VectorStore is Ready, but source row-count verification was unavailable: "
-                        f"{source_count_error}"
-                    )
+                    if strict_index_verification:
+                        precheck_integrity_error = (
+                            f"source row-count verification was unavailable: {source_count_error}"
+                        )
+                    else:
+                        warnings.append(
+                            "Existing VectorStore is Ready, but source row-count verification was unavailable: "
+                            f"{source_count_error}"
+                        )
                 if index_row_count is None:
-                    warnings.append(
-                        "Existing VectorStore is Ready, but index row-count verification was unavailable: "
-                        f"{index_count_error}"
-                    )
+                    if strict_index_verification:
+                        precheck_integrity_error = (
+                            f"index row-count verification was unavailable: {index_count_error}"
+                        )
+                    else:
+                        warnings.append(
+                            "Existing VectorStore is Ready, but index row-count verification was unavailable: "
+                            f"{index_count_error}"
+                        )
                 else:
                     index_message = (
-                        f"BookRAG vector index rows: "
+                        f"{index_verification_label} index rows: "
                         f"{target_database_for_index}.vectorstore_{vector_store_name}_index={index_row_count}."
                     )
                     precheck_status_preview = (
                         f"{precheck_status_preview}\n{index_message}" if precheck_status_preview else index_message
                     )
-                    if expected_index_count is not None and index_row_count != expected_index_count:
+                    if strict_index_verification and index_row_count <= 0:
+                        precheck_integrity_error = "index is empty"
+                    elif expected_index_count is not None and index_row_count != expected_index_count:
                         precheck_integrity_error = (
                             f"index has {index_row_count} rows; expected {expected_index_count} non-empty source rows"
                         )
@@ -682,7 +742,7 @@ async def handle_upload_and_prepare_create(
                 result_status = "error"
                 result_message = (
                     f"Step 2 blocked before preprocessing: VectorStore '{vector_store_name}' reports Ready, "
-                    f"but BookRAG index verification failed ({precheck_integrity_error})."
+                    f"but {index_verification_label} index verification failed ({precheck_integrity_error})."
                 )
                 _mark_prechecked_loaded_run("failed", error=result_message)
             elif current_state == "failed":
@@ -863,27 +923,52 @@ async def handle_upload_and_prepare_create(
                         readiness_error = fallback_error
                         readiness_state = "check_error"
 
-            if ready_confirmed and mode_summary and mode_summary.get("source") == "loaded_csv_tables":
+            loaded_table_source = str(mode_summary.get("source") or "") if mode_summary else ""
+            if ready_confirmed and mode_summary and loaded_table_source in {
+                "loaded_csv_tables",
+                "loaded_multi_format_csv_table",
+            }:
                 target_database_for_index = str(mode_summary.get("target_database") or "").strip()
-                table_targets = mode_summary.get("table_targets") or {}
-                source_table_for_index = str(
-                    table_targets.get("nodes") or exec_payload.get("object_names") or ""
-                ).strip()
-                expected_index_count, source_count_error = _bookrag_source_embedding_row_count(
+                if loaded_table_source == "loaded_csv_tables":
+                    index_verification_label = "BookRAG"
+                    source_data_label = "content"
+                    table_targets = mode_summary.get("table_targets") or {}
+                    source_table_for_index = str(
+                        table_targets.get("nodes") or exec_payload.get("object_names") or ""
+                    ).strip()
+                    source_count_fn = _bookrag_source_embedding_row_count
+                else:
+                    index_verification_label = "Multi-Format"
+                    source_data_label = "text"
+                    source_table_for_index = str(
+                        mode_summary.get("table_name") or exec_payload.get("object_names") or ""
+                    ).strip()
+                    source_count_fn = _multi_format_source_embedding_row_count
+                expected_index_count, source_count_error = source_count_fn(
                     source_table_name=source_table_for_index,
                     target_database=target_database_for_index,
                     execute_sql_fn=execute_sql_fn,
                 )
+                strict_index_verification = loaded_table_source == "loaded_multi_format_csv_table"
                 if source_count_error:
-                    warnings.append(
-                        "VectorStore is Ready, but the BookRAG source row-count verification was unavailable: "
-                        f"{source_count_error}"
-                    )
+                    if strict_index_verification:
+                        ready_confirmed = False
+                        readiness_state = "failed"
+                        readiness_error = (
+                            f"{index_verification_label} source row-count verification was unavailable: "
+                            f"{source_count_error}"
+                        )
+                    else:
+                        warnings.append(
+                            f"VectorStore is Ready, but the {index_verification_label} source row-count "
+                            "verification was unavailable: "
+                            f"{source_count_error}"
+                        )
                 elif expected_index_count is not None and expected_index_count <= 0:
                     ready_confirmed = False
                     readiness_state = "failed"
                     readiness_error = (
-                        f"BookRAG source table has no non-empty content rows: "
+                        f"{index_verification_label} source table has no non-empty {source_data_label} rows: "
                         f"{target_database_for_index}.{source_table_for_index}."
                     )
 
@@ -895,18 +980,25 @@ async def handle_upload_and_prepare_create(
                 )
                 if index_row_count is not None:
                     index_message = (
-                        f"BookRAG vector index rows: "
+                        f"{index_verification_label} vector index rows: "
                         f"{target_database_for_index}.vectorstore_{vector_store_name}_index={index_row_count}."
                     )
                     if status_output_preview:
                         status_output_preview = f"{status_output_preview}\n{index_message}"
                     else:
                         status_output_preview = index_message
-                    if expected_index_count is not None and index_row_count != expected_index_count:
+                    if strict_index_verification and index_row_count <= 0:
                         ready_confirmed = False
                         readiness_state = "failed"
                         readiness_error = (
-                            f"BookRAG vector index row count is incomplete: "
+                            f"{index_verification_label} vector index table is empty after VectorStore reached Ready: "
+                            f"{target_database_for_index}.vectorstore_{vector_store_name}_index has 0 rows."
+                        )
+                    elif expected_index_count is not None and index_row_count != expected_index_count:
+                        ready_confirmed = False
+                        readiness_state = "failed"
+                        readiness_error = (
+                            f"{index_verification_label} vector index row count is incomplete: "
                             f"{target_database_for_index}.vectorstore_{vector_store_name}_index has "
                             f"{index_row_count} rows; expected {expected_index_count} non-empty source rows."
                         )
@@ -914,14 +1006,23 @@ async def handle_upload_and_prepare_create(
                         ready_confirmed = False
                         readiness_state = "failed"
                         readiness_error = (
-                            f"BookRAG vector index table is empty after VectorStore reached Ready: "
+                            f"{index_verification_label} vector index table is empty after VectorStore reached Ready: "
                             f"{target_database_for_index}.vectorstore_{vector_store_name}_index has 0 rows."
                         )
                 elif index_count_error:
-                    warnings.append(
-                        "VectorStore is Ready, but the BookRAG vector index row-count verification was unavailable: "
-                        f"{index_count_error}"
-                    )
+                    if strict_index_verification:
+                        ready_confirmed = False
+                        readiness_state = "failed"
+                        readiness_error = (
+                            f"{index_verification_label} vector index row-count verification was unavailable: "
+                            f"{index_count_error}"
+                        )
+                    else:
+                        warnings.append(
+                            f"VectorStore is Ready, but the {index_verification_label} vector index row-count "
+                            "verification was unavailable: "
+                            f"{index_count_error}"
+                        )
 
             if ready_confirmed:
                 _mark_mode_status("ready")

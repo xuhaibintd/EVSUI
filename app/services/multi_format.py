@@ -27,6 +27,7 @@ from app.services.unstructured_runtime import (
     EXCEL_EXTENSIONS,
     MULTI_FORMAT_CSV_STAGE_DIR_DEFAULT,
     MULTI_FORMAT_RAW_STAGE_DIR_DEFAULT,
+    UNSTRUCTURED_RAW_STAGE_DIR_DEFAULT,
     UNSTRUCTURED_DEBUG_DIR_DEFAULT,
     UNSTRUCTURED_FAST_UNSAFE_IMAGE_EXTENSIONS,
     UNSTRUCTURED_TERADATA_FLUSH_WAIT_INTERVAL_DEFAULT,
@@ -748,6 +749,19 @@ def _safe_stem(src: Path) -> str:
     return stem or "document"
 
 
+def _document_csv_stage_dir(
+    csv_stage_dir: Path,
+    *,
+    source_index: int,
+    doc_id: str,
+    filename: str,
+) -> Path:
+    """Build a fixed-length per-document directory safe for Windows CSV paths."""
+    identity = f"{source_index}\0{doc_id}\0{filename}"
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12]
+    return csv_stage_dir / f"doc_{max(0, source_index):04d}_{digest}"
+
+
 def _prepare_unstructured_debug_dir(vector_store_name: str) -> Path | None:
     if not _env_flag("UNSTRUCTURED_WRITE_DEBUG_JSON", True):
         return None
@@ -777,7 +791,7 @@ def _prepare_bookrag_csv_stage_dir(vector_store_name: str) -> Path:
 def _prepare_multi_format_raw_stage_dir(run_label: str) -> Path:
     safe_label = _sanitize_teradata_identifier(run_label, fallback="multi_format")
     run_id = f"{safe_label}_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
-    raw_stage_dir = MULTI_FORMAT_RAW_STAGE_DIR_DEFAULT / run_id
+    raw_stage_dir = UNSTRUCTURED_RAW_STAGE_DIR_DEFAULT / run_id
     raw_stage_dir.mkdir(parents=True, exist_ok=False)
     return raw_stage_dir
 
@@ -823,6 +837,120 @@ def _multi_format_config_snapshot(create_values: dict[str, str]) -> dict[str, st
     }
 
 
+SHARED_PARSE_ARTIFACT_TYPES = {"bookrag_parse_run", "multi_format_parse_run"}
+
+
+def _shared_parse_roots() -> list[Path]:
+    """Return the common raw root plus the legacy Multi-Format root, without duplicates."""
+    roots: list[Path] = []
+    seen: set[str] = set()
+    for root in (
+        UNSTRUCTURED_RAW_STAGE_DIR_DEFAULT,
+        BOOKRAG_RAW_STAGE_DIR_DEFAULT,
+        MULTI_FORMAT_RAW_STAGE_DIR_DEFAULT,
+    ):
+        resolved = root.resolve()
+        normalized = str(resolved).lower()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        roots.append(resolved)
+    return roots
+
+
+def _validate_shared_parse_manifest(
+    manifest_path: Path,
+    manifest: Any,
+    *,
+    expected_run_id: str | None = None,
+) -> dict[str, Any]:
+    if not isinstance(manifest, dict):
+        raise RuntimeError(f"Invalid shared JSON parsing manifest object: {manifest_path}")
+    artifact_type = str(manifest.get("artifact_type") or "")
+    if artifact_type not in SHARED_PARSE_ARTIFACT_TYPES:
+        raise RuntimeError(f"Unsupported shared JSON parsing manifest type: {manifest_path}")
+    expected_schema_version = (
+        BOOKRAG_PARSE_MANIFEST_SCHEMA_VERSION
+        if artifact_type == "bookrag_parse_run"
+        else MULTI_FORMAT_PARSE_MANIFEST_SCHEMA_VERSION
+    )
+    if _to_int(manifest.get("schema_version"), default=0) != expected_schema_version:
+        raise RuntimeError(f"Unsupported shared JSON parsing manifest schema version: {manifest_path}")
+    parse_run_id = str(manifest.get("parse_run_id") or "").strip()
+    if not parse_run_id or parse_run_id != manifest_path.parent.name:
+        raise RuntimeError(f"Shared JSON parsing manifest run ID does not match its directory: {manifest_path}")
+    if expected_run_id is not None and parse_run_id != expected_run_id:
+        raise RuntimeError(f"Shared JSON parsing manifest does not match the selected run: {manifest_path}")
+    return manifest
+
+
+def _resolve_shared_parse_manifest(parse_run_id: str) -> tuple[Path, dict[str, Any]]:
+    normalized_run_id = str(parse_run_id or "").strip()
+    if not normalized_run_id or Path(normalized_run_id).name != normalized_run_id:
+        raise RuntimeError("Select a valid shared JSON parsing run.")
+    matches: list[tuple[Path, dict[str, Any]]] = []
+    for root in _shared_parse_roots():
+        run_dir = (root / normalized_run_id).resolve()
+        if run_dir.parent != root:
+            continue
+        manifest_path = run_dir / "manifest.json"
+        if not manifest_path.is_file():
+            continue
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception as ex:
+            raise RuntimeError(f"Invalid shared JSON parsing manifest: {manifest_path}: {ex}") from ex
+        matches.append(
+            (
+                manifest_path,
+                _validate_shared_parse_manifest(
+                    manifest_path, manifest, expected_run_id=normalized_run_id
+                ),
+            )
+        )
+    if not matches:
+        raise RuntimeError(f"Shared JSON parsing manifest was not found: {normalized_run_id}")
+    if len(matches) > 1:
+        paths = ", ".join(str(path) for path, _ in matches)
+        raise RuntimeError(f"Shared JSON parsing run ID is ambiguous across stage roots: {paths}")
+    return matches[0]
+
+
+def list_shared_parse_runs(*, include_incomplete: bool = False) -> list[dict[str, Any]]:
+    """List raw JSON runs reusable by either CSV transformation."""
+    runs: list[dict[str, Any]] = []
+    seen_run_ids: set[str] = set()
+    for root in _shared_parse_roots():
+        if not root.exists():
+            continue
+        for manifest_path in root.glob("*/manifest.json"):
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                manifest = _validate_shared_parse_manifest(manifest_path, manifest)
+            except Exception:
+                continue
+            status = str(manifest.get("status") or "")
+            if not include_incomplete and status != "ready":
+                continue
+            parse_run_id = str(manifest["parse_run_id"])
+            if parse_run_id in seen_run_ids:
+                continue
+            seen_run_ids.add(parse_run_id)
+            runs.append(
+                {
+                    "parse_run_id": parse_run_id,
+                    "created_at": str(manifest.get("created_at") or ""),
+                    "vector_store_name": str(manifest.get("vector_store_name") or ""),
+                    "file_count": _to_int(manifest.get("file_count"), default=0),
+                    "status": status,
+                    "artifact_type": str(manifest.get("artifact_type") or ""),
+                    "manifest_path": str(manifest_path),
+                }
+            )
+    runs.sort(key=lambda item: (item["created_at"], item["parse_run_id"]), reverse=True)
+    return runs
+
+
 def _resolve_multi_format_manifest(
     run_id: str,
     *,
@@ -858,14 +986,7 @@ def _resolve_multi_format_manifest(
 
 
 def _resolve_multi_format_parse_manifest(parse_run_id: str) -> tuple[Path, dict[str, Any]]:
-    return _resolve_multi_format_manifest(
-        parse_run_id,
-        root=MULTI_FORMAT_RAW_STAGE_DIR_DEFAULT,
-        artifact_type="multi_format_parse_run",
-        schema_version=MULTI_FORMAT_PARSE_MANIFEST_SCHEMA_VERSION,
-        run_id_key="parse_run_id",
-        invalid_message="Select a valid Multi-Format document parsing run.",
-    )
+    return _resolve_shared_parse_manifest(parse_run_id)
 
 
 def _resolve_multi_format_csv_manifest(csv_run_id: str) -> tuple[Path, dict[str, Any]]:
@@ -909,6 +1030,7 @@ def _list_multi_format_manifests(
                 "csv_file_count": _to_int(manifest.get("csv_file_count"), default=0),
                 "status": status,
                 "load_status": str(manifest.get("load_status") or "not_started"),
+                "vector_store_status": str(manifest.get("vector_store_status") or "not_started"),
                 "manifest_path": str(manifest_path),
             }
         )
@@ -917,12 +1039,7 @@ def _list_multi_format_manifests(
 
 
 def list_multi_format_parse_runs(*, include_incomplete: bool = False) -> list[dict[str, Any]]:
-    return _list_multi_format_manifests(
-        root=MULTI_FORMAT_RAW_STAGE_DIR_DEFAULT,
-        artifact_type="multi_format_parse_run",
-        run_id_key="parse_run_id",
-        include_incomplete=include_incomplete,
-    )
+    return list_shared_parse_runs(include_incomplete=include_incomplete)
 
 
 def list_multi_format_csv_runs(*, include_incomplete: bool = False) -> list[dict[str, Any]]:
@@ -935,60 +1052,12 @@ def list_multi_format_csv_runs(*, include_incomplete: bool = False) -> list[dict
 
 
 def _resolve_bookrag_parse_manifest(parse_run_id: str) -> tuple[Path, dict[str, Any]]:
-    normalized_run_id = str(parse_run_id or "").strip()
-    if not normalized_run_id or Path(normalized_run_id).name != normalized_run_id:
-        raise RuntimeError("Select a valid document parsing run.")
-    raw_root = BOOKRAG_RAW_STAGE_DIR_DEFAULT.resolve()
-    run_dir = (raw_root / normalized_run_id).resolve()
-    if run_dir.parent != raw_root:
-        raise RuntimeError("Document parsing run is outside the raw JSON stage directory.")
-    manifest_path = run_dir / BOOKRAG_PARSE_MANIFEST_FILENAME
-    if not manifest_path.is_file():
-        raise RuntimeError(f"Document parsing manifest was not found: {normalized_run_id}")
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except Exception as ex:
-        raise RuntimeError(f"Invalid document parsing manifest: {manifest_path}: {ex}") from ex
-    if not isinstance(manifest, dict):
-        raise RuntimeError(f"Invalid document parsing manifest object: {manifest_path}")
-    if manifest.get("artifact_type") != "bookrag_parse_run":
-        raise RuntimeError(f"Unsupported document parsing manifest type: {manifest_path}")
-    if _to_int(manifest.get("schema_version"), default=0) != BOOKRAG_PARSE_MANIFEST_SCHEMA_VERSION:
-        raise RuntimeError(f"Unsupported document parsing manifest schema version: {manifest_path}")
-    if str(manifest.get("parse_run_id") or "") != normalized_run_id:
-        raise RuntimeError(f"Document parsing manifest run ID does not match its directory: {manifest_path}")
-    return manifest_path, manifest
+    return _resolve_shared_parse_manifest(parse_run_id)
 
 
 def list_bookrag_parse_runs(*, include_incomplete: bool = False) -> list[dict[str, Any]]:
-    """List reusable document parsing manifests stored on the local server."""
-    root = BOOKRAG_RAW_STAGE_DIR_DEFAULT
-    if not root.exists():
-        return []
-    runs: list[dict[str, Any]] = []
-    for manifest_path in root.glob(f"*/{BOOKRAG_PARSE_MANIFEST_FILENAME}"):
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        if not isinstance(manifest, dict):
-            continue
-        status = str(manifest.get("status") or "")
-        if not include_incomplete and status != "ready":
-            continue
-        parse_run_id = str(manifest.get("parse_run_id") or manifest_path.parent.name)
-        runs.append(
-            {
-                "parse_run_id": parse_run_id,
-                "created_at": str(manifest.get("created_at") or ""),
-                "vector_store_name": str(manifest.get("vector_store_name") or ""),
-                "file_count": _to_int(manifest.get("file_count"), default=0),
-                "status": status,
-                "manifest_path": str(manifest_path),
-            }
-        )
-    runs.sort(key=lambda item: (item["created_at"], item["parse_run_id"]), reverse=True)
-    return runs
+    """List raw JSON runs reusable by BookRAG or standard Multi-Format."""
+    return list_shared_parse_runs(include_incomplete=include_incomplete)
 
 
 def _resolve_bookrag_csv_manifest(csv_run_id: str) -> tuple[Path, dict[str, Any]]:
@@ -2129,6 +2198,7 @@ def run_multi_format_json_to_csv(
         "qualified_table": qualified_table,
         "transform_version": MULTI_FORMAT_TRANSFORM_VERSION,
         "load_status": "not_started",
+        "vector_store_status": "not_started",
         "documents": [],
     }
     _write_json_atomic(manifest_path, running_manifest)
@@ -2169,7 +2239,12 @@ def run_multi_format_json_to_csv(
             )
             if row:
                 rows.append(row)
-        file_stage_dir = csv_stage_dir / f"{_safe_stem(Path(filename))}_{doc_id}"
+        file_stage_dir = _document_csv_stage_dir(
+            csv_stage_dir,
+            source_index=source_index,
+            doc_id=doc_id,
+            filename=filename,
+        )
         csv_path = prepare_unstructured_table_csv(
             table_name=table_name,
             rows=rows,
@@ -2414,6 +2489,24 @@ def get_ready_multi_format_csv_load_summary(*, csv_run_id: str) -> dict[str, Any
     if not isinstance(summary, dict):
         raise RuntimeError("Multi-Format CSV manifest contains no completed load summary.")
     return {**summary, "already_loaded": True}
+
+
+def update_multi_format_csv_vector_store_status(
+    *,
+    csv_run_id: str,
+    status: str,
+    error: str = "",
+    create_payload: dict[str, Any] | None = None,
+) -> None:
+    if status not in {"creating", "ready", "failed"}:
+        raise RuntimeError(f"Unsupported Vector Store manifest status: {status}")
+    manifest_path, manifest = _resolve_multi_format_csv_manifest(csv_run_id)
+    manifest["vector_store_status"] = status
+    manifest["vector_store_updated_at"] = _now_ts()
+    manifest["vector_store_error"] = _sanitize_teradata_text(error)[:4000]
+    if create_payload is not None:
+        manifest["vector_store_create_payload"] = _json_safe_value(create_payload)
+    _write_json_atomic(manifest_path, manifest)
 
 
 def run_bookrag_document_parsing(
@@ -2715,9 +2808,12 @@ def run_bookrag_json_to_csv(
             "entity_links": table_rows_by_name["entity_links"],
             "entity_relations": table_rows_by_name["entity_relations"],
         }
-        safe_stem = re.sub(r"[^0-9A-Za-z._-]", "_", Path(filename).stem).strip("._") or "document"
-        safe_stem = re.sub(r"-{2,}", "_", safe_stem)
-        file_csv_stage_dir = csv_stage_dir / f"{safe_stem}_{doc_id}"
+        file_csv_stage_dir = _document_csv_stage_dir(
+            csv_stage_dir,
+            source_index=source_index,
+            doc_id=doc_id,
+            filename=filename,
+        )
         csv_files: list[dict[str, Any]] = []
         for table_key, rows in table_rows.items():
             if not table_generation[table_key]:
@@ -3516,9 +3612,12 @@ def _apply_bookrag_tree_pipeline(
             result["warning"] = f"No BookRAG raw elements extracted from file: {src.name}"
             return result
 
-        safe_stem = re.sub(r"[^0-9A-Za-z._-]", "_", src.stem).strip("._") or "document"
-        safe_stem = re.sub(r"-{2,}", "_", safe_stem)
-        file_csv_stage_dir = csv_stage_dir / f"{safe_stem}_{doc_id}"
+        file_csv_stage_dir = _document_csv_stage_dir(
+            csv_stage_dir,
+            source_index=int(extracted["source_index"]),
+            doc_id=doc_id,
+            filename=src.name,
+        )
         result["file_csv_stage_dir"] = file_csv_stage_dir
         table_rows = {
             "documents": [document_row],

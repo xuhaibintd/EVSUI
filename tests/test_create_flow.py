@@ -649,6 +649,8 @@ class CreateFlowDocumentSourceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_loaded_multi_format_run_creates_from_unstructured_table_without_documents(self):
         captured_kwargs = {}
+        status_calls = []
+        sql_calls = []
         csv_run_id = "multi-format-csv-run"
         load_summary = {
             "status": "ready",
@@ -658,6 +660,7 @@ class CreateFlowDocumentSourceTests(unittest.IsolatedAsyncioTestCase):
             "table_name": "demo_vs_unstructured",
             "qualified_table": "demo_schema.demo_vs_unstructured",
             "persisted_row_count": 7,
+            "csv_file_count": 2,
             "warnings": [],
         }
 
@@ -680,19 +683,31 @@ class CreateFlowDocumentSourceTests(unittest.IsolatedAsyncioTestCase):
             "create_mode": "core",
             "create_preset": "auto",
         }
+
+        def execute_sql(sql):
+            sql_calls.append(sql)
+            if '"demo_vs_unstructured"' in sql:
+                return _DummyCursor((7,))
+            if '"vectorstore_demo_vs_index"' in sql:
+                return _DummyCursor((7,))
+            raise AssertionError(f"Unexpected SQL: {sql}")
+
         with patch(
             "app.workflows.create_flow.get_ready_multi_format_csv_load_summary",
             return_value=load_summary,
         ), patch(
             "app.services.doc_modes.multi_format_mode.get_ready_multi_format_csv_load_summary",
             return_value=load_summary,
+        ), patch(
+            "app.services.doc_modes.multi_format_mode.update_multi_format_csv_vector_store_status",
+            side_effect=lambda **kwargs: status_calls.append(kwargs),
         ):
             response = await handle_upload_and_prepare_create(
                 _DummyRequest(form_data),
                 self._build_app(),
                 _DummyTemplates(),
                 vector_store_cls=VectorStore,
-                execute_sql_fn=lambda *args, **kwargs: None,
+                execute_sql_fn=execute_sql,
                 save_document_uploads_fn=self._save_document_uploads,
                 collect_upload_files_fn=lambda form, field_name="files": [],
                 resolve_path_hint_fn=lambda value: value,
@@ -711,6 +726,150 @@ class CreateFlowDocumentSourceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured_kwargs["data_columns"], ["text"])
         self.assertEqual(captured_kwargs["key_columns"], ["id"])
         self.assertNotIn("document_files", captured_kwargs)
+        self.assertIn("7 rows from 2 file(s)", result["message"])
+        self.assertEqual([call["status"] for call in status_calls], ["creating", "ready"])
+        self.assertTrue(any('"demo_vs_unstructured"' in sql for sql in sql_calls))
+        self.assertTrue(any('"vectorstore_demo_vs_index"' in sql for sql in sql_calls))
+
+    async def test_loaded_multi_format_run_fails_when_vector_index_is_empty(self):
+        status_calls = []
+        csv_run_id = "multi-format-empty-index"
+        load_summary = {
+            "status": "ready",
+            "csv_run_id": csv_run_id,
+            "vector_store_name": "demo_vs",
+            "target_database": "demo_schema",
+            "table_name": "demo_vs_unstructured",
+            "qualified_table": "demo_schema.demo_vs_unstructured",
+            "persisted_row_count": 7,
+            "csv_file_count": 2,
+            "warnings": [],
+        }
+
+        class VectorStore:
+            def __init__(self, name):
+                self.name = name
+
+            def create(self, **kwargs):
+                return "created"
+
+            def status(self):
+                return "Ready"
+
+        def execute_sql(sql):
+            if '"demo_vs_unstructured"' in sql:
+                return _DummyCursor((7,))
+            if '"vectorstore_demo_vs_index"' in sql:
+                return _DummyCursor((0,))
+            raise AssertionError(f"Unexpected SQL: {sql}")
+
+        form_data = {
+            "multi_format_loaded_csv_run_id": csv_run_id,
+            "doc_pipeline_mode": "multi_format",
+            "embeddings_model": "text-embedding-3-small",
+            "search_algorithm": "VECTORDISTANCE",
+            "create_mode": "core",
+            "create_preset": "auto",
+        }
+        with patch(
+            "app.workflows.create_flow.get_ready_multi_format_csv_load_summary",
+            return_value=load_summary,
+        ), patch(
+            "app.services.doc_modes.multi_format_mode.get_ready_multi_format_csv_load_summary",
+            return_value=load_summary,
+        ), patch(
+            "app.services.doc_modes.multi_format_mode.update_multi_format_csv_vector_store_status",
+            side_effect=lambda **kwargs: status_calls.append(kwargs),
+        ), patch(
+            "app.workflows.create_flow.BOOKRAG_INDEX_READY_TIMEOUT_SECONDS",
+            0,
+        ):
+            response = await handle_upload_and_prepare_create(
+                _DummyRequest(form_data),
+                self._build_app(),
+                _DummyTemplates(),
+                vector_store_cls=VectorStore,
+                execute_sql_fn=execute_sql,
+                save_document_uploads_fn=self._save_document_uploads,
+                collect_upload_files_fn=lambda form, field_name="files": [],
+                resolve_path_hint_fn=lambda value: value,
+                now_ts=lambda: "2026-07-16 00:00:00",
+                is_htmx=True,
+                is_vectorstore_already_exists_error_fn=lambda value: False,
+                verify_vectorstore_exists_fn=lambda *args, **kwargs: (False, "", ""),
+                append_connect_step=lambda *args, **kwargs: None,
+            )
+
+        result = response["context"]["create_result"]
+        self.assertEqual(result["status"], "error")
+        self.assertIn("Multi-Format vector index table is empty", result["message"])
+        self.assertEqual([call["status"] for call in status_calls], ["creating", "failed"])
+
+    async def test_existing_ready_multi_format_store_requires_complete_index(self):
+        status_calls = []
+        csv_run_id = "multi-format-existing-ready"
+        load_summary = {
+            "status": "ready",
+            "csv_run_id": csv_run_id,
+            "vector_store_name": "demo_vs",
+            "target_database": "demo_schema",
+            "table_name": "demo_vs_unstructured",
+            "qualified_table": "demo_schema.demo_vs_unstructured",
+            "persisted_row_count": 7,
+            "csv_file_count": 2,
+            "warnings": [],
+        }
+
+        class VectorStore:
+            def __init__(self, name):
+                self.name = name
+
+            def create(self, **kwargs):
+                raise AssertionError("existing Ready store must not be created again")
+
+            def status(self):
+                return "Ready"
+
+        def execute_sql(sql):
+            if '"demo_vs_unstructured"' in sql or '"vectorstore_demo_vs_index"' in sql:
+                return _DummyCursor((7,))
+            raise AssertionError(f"Unexpected SQL: {sql}")
+
+        form_data = {
+            "multi_format_loaded_csv_run_id": csv_run_id,
+            "doc_pipeline_mode": "multi_format",
+            "embeddings_model": "text-embedding-3-small",
+            "search_algorithm": "VECTORDISTANCE",
+            "create_mode": "core",
+            "create_preset": "auto",
+        }
+        with patch(
+            "app.workflows.create_flow.get_ready_multi_format_csv_load_summary",
+            return_value=load_summary,
+        ), patch(
+            "app.services.doc_modes.multi_format_mode.update_multi_format_csv_vector_store_status",
+            side_effect=lambda **kwargs: status_calls.append(kwargs),
+        ):
+            response = await handle_upload_and_prepare_create(
+                _DummyRequest(form_data),
+                self._build_app(),
+                _DummyTemplates(),
+                vector_store_cls=VectorStore,
+                execute_sql_fn=execute_sql,
+                save_document_uploads_fn=self._save_document_uploads,
+                collect_upload_files_fn=lambda form, field_name="files": [],
+                resolve_path_hint_fn=lambda value: value,
+                now_ts=lambda: "2026-07-16 00:00:00",
+                is_htmx=True,
+                is_vectorstore_already_exists_error_fn=lambda value: False,
+                verify_vectorstore_exists_fn=lambda *args, **kwargs: (True, "found", ""),
+                append_connect_step=lambda *args, **kwargs: None,
+            )
+
+        result = response["context"]["create_result"]
+        self.assertEqual(result["status"], "ok_with_warnings")
+        self.assertIn("Multi-Format vector index rows", result["status_output_preview"])
+        self.assertEqual([call["status"] for call in status_calls], ["ready"])
 
 
 if __name__ == "__main__":

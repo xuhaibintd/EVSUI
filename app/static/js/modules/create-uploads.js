@@ -138,9 +138,9 @@
 
     const vectorStoreName = createForm.querySelector("[name='vector_store_name']");
     const getBookragLoadedRunSelect = () =>
-      createForm.querySelector("select[name='bookrag_loaded_csv_run_id']:not([disabled])");
+      createForm.querySelector("select[name='bookrag_loaded_csv_run_id']");
     const getMultiFormatLoadedRunSelect = () =>
-      createForm.querySelector("select[name='multi_format_loaded_csv_run_id']:not([disabled])");
+      createForm.querySelector("select[name='multi_format_loaded_csv_run_id']");
     const docPipelineMode = createForm.querySelector("[name='doc_pipeline_mode']");
     const embeddingsModel = createForm.querySelector("[name='embeddings_model']");
     const objectNames = createForm.querySelector("[name='object_names']");
@@ -243,10 +243,17 @@
       const isMultiFormat = docPipelineMode instanceof HTMLSelectElement && docPipelineMode.value === "multi_format";
       const loadedRunSelect = getBookragLoadedRunSelect();
       const multiFormatLoadedRunSelect = getMultiFormatLoadedRunSelect();
+      const formLocked = createForm.classList.contains("disabled-block");
+      if (loadedRunSelect instanceof HTMLSelectElement) {
+        loadedRunSelect.disabled = formLocked || !isBookrag;
+      }
+      if (multiFormatLoadedRunSelect instanceof HTMLSelectElement) {
+        multiFormatLoadedRunSelect.disabled = formLocked || !isMultiFormat;
+      }
       const hasLoadedBookragRun =
-        isBookrag && loadedRunSelect instanceof HTMLSelectElement && Boolean(loadedRunSelect.value.trim());
+        isBookrag && loadedRunSelect instanceof HTMLSelectElement && !loadedRunSelect.disabled && Boolean(loadedRunSelect.value.trim());
       const hasLoadedMultiFormatRun =
-        isMultiFormat && multiFormatLoadedRunSelect instanceof HTMLSelectElement && Boolean(multiFormatLoadedRunSelect.value.trim());
+        isMultiFormat && multiFormatLoadedRunSelect instanceof HTMLSelectElement && !multiFormatLoadedRunSelect.disabled && Boolean(multiFormatLoadedRunSelect.value.trim());
       createForm.dataset.uploadedCount = String(uploadedCount);
       if (embeddingsModel instanceof HTMLSelectElement) {
         embeddingsModel.required = true;
@@ -260,7 +267,6 @@
       createForm.dataset.uploadMissing =
         !hasLoadedBookragRun && !hasLoadedMultiFormatRun && uploadedCount === 0 && selectedFileCount === 0 && documentFileCount === 0 ? "1" : "0";
       if (parseButton instanceof HTMLButtonElement && !parseButton.classList.contains("is-loading")) {
-        const formLocked = createForm.classList.contains("disabled-block");
         parseButton.disabled = formLocked || !isBookrag || isUploadInProgress() || uploadedCount === 0;
       }
       if (csvButton instanceof HTMLButtonElement && !csvButton.classList.contains("is-loading")) {
@@ -268,7 +274,6 @@
         csvButton.disabled = !hasParseRun;
       }
       if (multiFormatParseButton instanceof HTMLButtonElement && !multiFormatParseButton.classList.contains("is-loading")) {
-        const formLocked = createForm.classList.contains("disabled-block");
         multiFormatParseButton.disabled = formLocked || !isMultiFormat || isUploadInProgress() || uploadedCount === 0;
       }
       if (multiFormatCsvButton instanceof HTMLButtonElement && !multiFormatCsvButton.classList.contains("is-loading")) {

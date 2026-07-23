@@ -21,14 +21,69 @@ EVSUI is a `FastAPI + Jinja2 + HTMX` interface for working with Teradata Vector 
 - Supports multi-file upload
 - Full `VectorStore.create(...)` parameter form
 - Built-in parameter sets for `VECTORDISTANCE / KMEANS / HNSW`
-- `Multi Format` mode uses Unstructured Workflow Endpoint on-demand jobs and a reusable three-stage flow: raw JSON, standard unstructured CSV, then `<Vector Store Name>_unstructured` table loading. Its JSON-to-row mapping and table contract remain unchanged.
+- `Multi Format` mode uses Unstructured Workflow Endpoint on-demand jobs and a reusable three-stage flow: shared raw JSON, standard unstructured CSV, then `<Vector Store Name>_unstructured` table loading. BookRAG and Multi Format discover the same raw JSON runs; they diverge only at JSON-to-CSV transformation and table loading. The standard Multi-Format JSON-to-row mapping and table contract remain unchanged.
 - `Multi-Format BookRAG` mode uses Unstructured Workflow Endpoint on-demand jobs with inline `job_nodes`, builds document-scoped Teradata tables, and can optionally run `VectorStore.create()` from `bnode.content` with `(doc_id, node_id)` as the vector key. See [BookRAG Pipeline: Data Structures and Processing Flow](docs/bookrag_pipeline_diagram.md) for the visual pipeline and table model.
-- BookRAG is intended for industrial-grade, audit-ready document QA where section paths, tables, images, entities, relations, and multi-evidence reasoning matter. See [BookRAG for Industrial-Grade Applications / 産業用途における BookRAG のユースケース](docs/bookrag_industrial_use_cases.md) for English and Japanese scenario guidance.
+- BookRAG is intended for long, structured documents when retrieved passages need section paths, pages, source blocks, and optional table/image/entity context. It provides traceable evidence candidates for review, but it does not by itself perform graph traversal, cross-document entity resolution, contradiction detection, or citation verification. See [BookRAG for Industrial-Grade Applications / 産業用途における BookRAG のユースケース](docs/bookrag_industrial_use_cases.md).
 
 ### Vector Store Retrieval
 
 - Supports `VectorStore.ask` and `VectorStore.similarity_search`
 - Independent Run List dropdown for chat target vector store
+- Current BookRAG retrieval starts with semantic similarity search over `bnode.content`. For each matched node it reconstructs the ancestor section chain and attaches the source block, document metadata, governed document-relation labels, and node-local entity/relation metadata when available.
+- Related-document rows and entity relations enrich a matched evidence package; they are not additional retrieval edges. The current service does not automatically retrieve a related document, walk an entity graph, compare all relevant sections, or validate that a generated answer's claims are supported by its returned citation candidates.
+
+### BookRAG Commercial Application Scenarios
+
+BookRAG should be positioned as an evidence-retrieval and review layer for high-value document work, not as a general-purpose document chatbot. The commercial buyer is a team whose specialists spend significant time locating, checking, and explaining evidence in long documents, and whose output still requires human approval.
+
+#### Primary Market Entry: Periodic Disclosure and Financial-Report Review
+
+The strongest initial commercial scenario is research over recurring corporate disclosures. Likely buyers and users include bank and securities research teams, asset managers, corporate IR teams, credit-risk teams, and internal audit.
+
+A practical workflow is:
+
+1. Load annual reports, quarterly results, presentation decks, corrections, and related issues as separate, stable documents.
+2. Record governed relationships such as `next_issue_of`, `updates`, `summary_of`, and `supplement_to`.
+3. Retrieve a relevant disclosure together with its section path, page range, source block, table HTML, and available entity context.
+4. Let an analyst or an external application review multiple evidence packages and produce a briefing, variance note, or research memo.
+5. Keep the document and source locators with the output so another reviewer can return to the original evidence.
+
+This is commercially useful for questions such as:
+
+- Where does management explain a material KPI change, and which table or note supports that explanation?
+- What risk, guidance, or accounting-policy disclosures should an analyst review for the latest reporting period?
+- Which current document is an update, supplement, or summary of an earlier disclosure?
+- What evidence should be assembled before a period-over-period comparison or an investment committee review?
+
+The current implementation can supply the evidence packages for these workflows. Period-over-period calculation, automatic change detection, contradiction analysis, and investment conclusions must be performed by reviewed application logic outside the current retrieval service.
+
+Commercial success should be measured by reduced time-to-evidence, evidence acceptance rate by analysts, page/section locator accuracy, missed-material-evidence rate, and analyst throughput—not by answer fluency alone.
+
+#### Secondary Commercial Scenarios
+
+| Scenario | Buyer and operational job | BookRAG deliverable | Business value | Required human or application step |
+|---|---|---|---|---|
+| Policy and control review | Compliance, risk, and internal-audit teams locate requirements, exceptions, owners, and evidence in policies and control manuals | Review packet containing matched text, clause hierarchy, pages, source elements, and related-document labels | Shorter control reviews and more reproducible evidence collection | A reviewer determines applicability and compliance; BookRAG does not issue a compliance verdict |
+| Contract and procurement review | Legal, procurement, and vendor-management teams inspect definitions, obligations, renewal terms, penalties, and annexes | Clause-level evidence packages with section and document provenance | Less time spent locating terms and preparing an issue list | Counsel validates interpretation; cross-contract comparison requires orchestration over multiple retrievals |
+| Technical service and maintenance support | Field service, manufacturing, and support teams search manuals, service bulletins, troubleshooting guides, and revised procedures | Relevant procedure or warning with its manual hierarchy, page, table/image context, and update/supplement relationship | Faster diagnosis, fewer incorrect procedure selections, and more consistent escalation | Product/version filtering and safety approval remain part of the host application and operating process |
+| Regulated research and quality review | Pharmaceutical, medical-device, laboratory, and quality teams inspect SOPs, specifications, study reports, and deviation records | Traceable source evidence for a review note or investigation package | Faster evidence preparation and easier second-person review | Qualified personnel make scientific, clinical, quality, and release decisions |
+| Due-diligence data-room triage | M&A, credit, insurance, and third-party-risk teams screen reports, policies, contracts, and supporting files | Document-scoped evidence packages and a queue of items for specialist review | Faster first-pass triage and clearer handoff to subject-matter experts | Completeness checks, cross-document reconciliation, and risk conclusions require additional workflow logic |
+
+#### Commercial Qualification Rules
+
+Choose BookRAG when all of the following are true:
+
+- The source set contains long or structurally complex documents.
+- Reviewers need to return from an answer to a section, page, table, image context, or source element.
+- A wrong or context-free answer creates meaningful review cost.
+- The workflow has a human reviewer or an application layer that can use structured evidence packages.
+- The expected reduction in search and review time justifies the additional parsing, storage, and evaluation cost.
+
+Use `Multi Format` instead for short or flat content, FAQ and basic support search, low-risk semantic lookup, or any workload where ordinary chunks satisfy the measured retrieval target.
+
+Do not sell the current implementation as an autonomous knowledge graph, automated auditor, legal or clinical decision maker, or end-to-end due-diligence engine. Entity canonicalization is document-scoped; document relationships add context to an already matched document but are not traversal edges; answer citations are evidence candidates rather than verified claim-to-source links. Cross-document expansion, comparison, contradiction detection, calculations, workflow approvals, and final-answer verification require additional application logic.
+
+Section construction uses Unstructured structure metadata where available, with a Japanese-oriented local fallback profile. Evaluate heading reconstruction, table preservation, retrieval recall, and source-locator accuracy on each customer's representative corpus before production use.
 
 ### Precision Evaluation
 
@@ -124,7 +179,7 @@ Official references:
   - `chunk_by_title`
   - `chunk_by_page`
   - `chunk_by_similarity`
-- The UI separates processing into **Document Parsing**, **Generate CSV from JSON**, and **Load CSV to Unstructured Table**. The CSV stage only applies the existing `UNSTRUCTURED_CHUNK_COLUMNS` mapping; it does not build BookRAG nodes, graphs, or auxiliary tables.
+- The UI separates processing into **Document Parsing**, **Generate CSV from JSON**, and **Load CSV to Unstructured Table**. Its JSON-run selector shares the same ready parsing manifests as BookRAG, including legacy runs from either raw-stage directory. The CSV stage only applies the existing `UNSTRUCTURED_CHUNK_COLUMNS` mapping; it does not build BookRAG nodes, graphs, or auxiliary tables.
 - After loading and row-count verification, the table-ready run can be selected in Basic and used by `VectorStore.create()` with `text` as the data column and `id` as the key column.
 
 2. **Unstructured BookRAG** (`doc_pipeline_mode=multi_format_bookrag`)

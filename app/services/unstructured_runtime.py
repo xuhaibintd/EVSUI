@@ -17,6 +17,9 @@ UNSTRUCTURED_TERADATA_FLUSH_WAIT_INTERVAL_DEFAULT = 2
 UNSTRUCTURED_DEBUG_DIR_DEFAULT = Path(__file__).resolve().parents[2] / "uploads" / "multi_format_stage"
 BOOKRAG_RAW_STAGE_DIR_DEFAULT = Path(__file__).resolve().parents[2] / "uploads" / "bookrag_raw_stage"
 BOOKRAG_CSV_STAGE_DIR_DEFAULT = Path(__file__).resolve().parents[2] / "uploads" / "bookrag_csv_stage"
+# Keep the established directory so existing BookRAG JSON remains reusable.
+# It is now the shared raw-JSON root for both BookRAG and standard Multi-Format.
+UNSTRUCTURED_RAW_STAGE_DIR_DEFAULT = BOOKRAG_RAW_STAGE_DIR_DEFAULT
 MULTI_FORMAT_RAW_STAGE_DIR_DEFAULT = Path(__file__).resolve().parents[2] / "uploads" / "multi_format_raw_stage"
 MULTI_FORMAT_CSV_STAGE_DIR_DEFAULT = Path(__file__).resolve().parents[2] / "uploads" / "multi_format_csv_stage"
 BOOKRAG_PDF_IMAGE_EXTENSIONS = {

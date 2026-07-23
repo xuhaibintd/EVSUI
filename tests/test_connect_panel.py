@@ -42,6 +42,11 @@ def _base_evs(connected):
 
 
 class CreatePanelBookRAGToggleTests(unittest.TestCase):
+    def test_create_upload_validation_script_cachebuster_is_current(self):
+        source = (TEMPLATES_DIR / "base.html").read_text(encoding="utf-8")
+
+        self.assertIn("js/modules/create-uploads.js') }}?v=20260716-1", source)
+
     def test_bookrag_mandatory_stages_do_not_render_optional_controls(self):
         source = (TEMPLATES_DIR / "partials" / "create_panel.html").read_text(encoding="utf-8")
 
