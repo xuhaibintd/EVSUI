@@ -4,6 +4,8 @@ import re
 from datetime import date, datetime, timezone
 from typing import Any, Iterable
 
+from app.services.bookrag_query_planner import TemporalScope, parse_temporal_scope
+from app.services.bookrag_retrieval_policy import load_bookrag_retrieval_policy
 from app.services.bookrag_schema import (
     BOOKRAG_DOCUMENT_METADATA_COLUMNS,
     build_bookrag_table_targets,
@@ -36,10 +38,6 @@ BOOKRAG_DOCUMENT_ROLES: tuple[str, ...] = (
     "other",
 )
 BOOKRAG_METADATA_STATUSES: tuple[str, ...] = ("confirmed", "review", "missing")
-# This is intentionally metadata-driven rather than inferred from a filename at
-# retrieval time. MUBK can extend the tuple when another report series becomes
-# a regular, detailed publication.
-BOOKRAG_PERIODIC_DOCUMENT_SERIES: tuple[str, ...] = ("monthly", "main")
 
 _METADATA_COLUMN_TYPES = dict(BOOKRAG_DOCUMENT_METADATA_COLUMNS)
 _CONTENT_DATE_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -54,13 +52,6 @@ _CONTENT_DATE_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 _FILENAME_DAY_PATTERN = re.compile(r"(?<!\d)(\d{2})(\d{2})(\d{2})(?!\d)")
 _MONTH_PATTERN = re.compile(r"(20\d{2})\s*年\s*(\d{1,2})\s*月")
-_QUESTION_TIMELINE_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"20\d{2}\s*(?:年|[-/.])"),
-    re.compile(r"(?<!\d)(?:20\d{6}|\d{6})(?!\d)"),
-    re.compile(r"(?:\d{1,2}\s*月|\d{1,2}\s*日)(?:時点|現在|まで|以降|以前)?"),
-)
-
-
 def _as_text(value: Any, *, max_len: int | None = None) -> str:
     text = str(value or "").strip()
     return text[:max_len] if max_len is not None else text
@@ -98,19 +89,11 @@ def _filename_publication_date(filename: str) -> date | None:
 
 def classify_document(filename: str) -> tuple[str, str]:
     compact = _as_text(filename)
-    if compact.startswith("①"):
-        return "main", "comprehensive"
-    if compact.startswith("②"):
-        return "summary", "comprehensive"
-    if (compact.startswith(("③", "④")) and "月次" in compact) or "月次アップデート" in compact:
-        return "monthly", "comprehensive"
-    if compact.startswith("⑤") or "GMAP_Spot" in compact:
-        return "spot", "update"
-    if compact.startswith("⑥") or "Topics" in compact:
-        if "パフォーマンス" in compact:
-            return "topics", "performance"
-        return "topics", "theme"
-    return "other", "other"
+    policy = load_bookrag_retrieval_policy().document_classification
+    for rule in policy.rules:
+        if re.search(rule.pattern, compact, flags=re.IGNORECASE):
+            return rule.series, rule.role
+    return policy.fallback_series, policy.fallback_role
 
 
 def build_logical_document_key(filename: str) -> str:
@@ -154,8 +137,8 @@ def derive_document_metadata(
 
 
 def question_has_explicit_timeline(question: str) -> bool:
-    text = _as_text(question)
-    return any(pattern.search(text) for pattern in _QUESTION_TIMELINE_PATTERNS)
+    """Compatibility wrapper around the structured temporal parser."""
+    return parse_temporal_scope(_as_text(question)).is_explicit
 
 
 def _cursor_rows(cursor: Any) -> list[dict[str, Any]]:
@@ -420,27 +403,45 @@ def fetch_governed_document_scope(
     vector_store_name: str,
     schema_name: str | None,
     execute_sql_fn: ExecuteSqlFn | None,
+    temporal_scope: TemporalScope | None = None,
+    background_document_series: Iterable[str] = (),
+    background_document_roles: Iterable[str] = (),
+    metadata_statuses: Iterable[str] = ("confirmed",),
 ) -> dict[str, Any]:
-    """Return every effective document plus periodic-report candidates.
-
-    Recency is a ranking signal, not a fixed document-count rule. The API
-    performs separate semantic retrieval for the current-information and
-    periodic-background tracks using this governed scope.
-    """
+    """Return effective documents and configuration-selected background candidates."""
     scope = fetch_effective_document_scope(
         vector_store_name=vector_store_name,
         schema_name=schema_name,
         execute_sql_fn=execute_sql_fn,
+        temporal_scope=temporal_scope,
+        metadata_statuses=metadata_statuses,
     )
     documents = list(scope.get("primary_documents") or [])
+    eligible_series = {
+        _as_text(value).lower()
+        for value in background_document_series
+        if _as_text(value)
+    }
+    eligible_roles = {
+        _as_text(value).lower()
+        for value in background_document_roles
+        if _as_text(value)
+    }
     periodic_documents = [
         row
         for row in documents
-        if _as_text(row.get("document_series")) in BOOKRAG_PERIODIC_DOCUMENT_SERIES
+        if (
+            _as_text(row.get("document_series")).lower() in eligible_series
+            or _as_text(row.get("document_role")).lower() in eligible_roles
+        )
     ]
     scope.update(
         {
-            "mode": "latest_related_with_periodic_background",
+            "mode": (
+                "explicit_timeline"
+                if (temporal_scope and temporal_scope.is_explicit)
+                else "latest_related_with_conditional_background"
+            ),
             "periodic_documents": periodic_documents,
             "periodic_doc_ids": [
                 _as_text(row.get("doc_id"))
@@ -459,8 +460,10 @@ def fetch_effective_document_scope(
     vector_store_name: str,
     schema_name: str | None,
     execute_sql_fn: ExecuteSqlFn | None,
+    temporal_scope: TemporalScope | None = None,
+    metadata_statuses: Iterable[str] = (),
 ) -> dict[str, Any]:
-    """Return every dated, effective document for an explicit timeline query."""
+    """Return dated, effective documents after applying the structured time scope."""
     if execute_sql_fn is None:
         raise RuntimeError("teradataml.execute_sql is unavailable.")
     ensure_document_metadata_schema(
@@ -474,28 +477,94 @@ def fetch_effective_document_scope(
         execute_sql_fn=execute_sql_fn,
     )
     qualified_view = _qualified_table_sql(schema_name, view_name)
+    effective_temporal_scope = temporal_scope or TemporalScope()
+    allowed_statuses = sorted(
+        {
+            _as_text(value).lower()
+            for value in metadata_statuses
+            if _as_text(value)
+        }
+    )
+
+    def status_conditions() -> list[str]:
+        if not allowed_statuses:
+            return []
+        literals = ", ".join(_sql_literal(value) for value in allowed_statuses)
+        return [f'LOWER("metadata_status") IN ({literals})']
+
+    if effective_temporal_scope.kind == "latest_quarter":
+        max_cursor = execute_sql_fn(
+            f'SELECT MAX("publication_date") AS "max_publication_date" '
+            f"FROM {qualified_view}"
+            + (
+                " WHERE " + " AND ".join(status_conditions())
+                if status_conditions()
+                else ""
+            )
+        )
+        max_rows = _cursor_rows(max_cursor)
+        max_text = _as_text(
+            max_rows[0].get("max_publication_date") if max_rows else ""
+        )
+        if max_text:
+            max_date = date.fromisoformat(max_text[:10])
+            quarter_start_month = ((max_date.month - 1) // 3) * 3 + 1
+            quarter_start = date(max_date.year, quarter_start_month, 1)
+            quarter_end = date(
+                max_date.year + (1 if quarter_start_month == 10 else 0),
+                1 if quarter_start_month == 10 else quarter_start_month + 3,
+                1,
+            )
+            effective_temporal_scope = TemporalScope(
+                kind="latest_quarter",
+                start_date=quarter_start,
+                end_date_exclusive=quarter_end,
+                source_text=temporal_scope.source_text if temporal_scope else "",
+            )
+
+    conditions = status_conditions()
+    if effective_temporal_scope.exact_dates:
+        literals = ", ".join(
+            _sql_typed_literal(value.isoformat(), "DATE")
+            for value in effective_temporal_scope.exact_dates
+        )
+        conditions.append(f'"publication_date" IN ({literals})')
+    else:
+        if effective_temporal_scope.start_date:
+            conditions.append(
+                '"publication_date">='
+                + _sql_typed_literal(
+                    effective_temporal_scope.start_date.isoformat(), "DATE"
+                )
+            )
+        if effective_temporal_scope.end_date_exclusive:
+            conditions.append(
+                '"publication_date"<'
+                + _sql_typed_literal(
+                    effective_temporal_scope.end_date_exclusive.isoformat(), "DATE"
+                )
+            )
+
+    where_sql = " WHERE " + " AND ".join(conditions) if conditions else ""
     cursor = execute_sql_fn(
         'SELECT DISTINCT "doc_id", "filename", "publication_date", '
         '"document_series", "document_role", "metadata_status", "latest_rank" '
-        f"FROM {qualified_view} ORDER BY \"publication_date\" DESC, \"latest_rank\" ASC"
+        f"FROM {qualified_view}{where_sql} "
+        'ORDER BY "publication_date" DESC, "latest_rank" ASC'
     )
     documents = _cursor_rows(cursor)
     return {
-        "mode": "explicit_timeline",
+        "mode": (
+            "explicit_timeline"
+            if effective_temporal_scope.is_explicit
+            else "latest_available"
+        ),
         "view_name": view_name,
+        "temporal_scope": effective_temporal_scope.as_dict(),
         "primary_documents": documents,
         "supplemental_documents": [],
-        "periodic_documents": [
-            row
-            for row in documents
-            if _as_text(row.get("document_series")) in BOOKRAG_PERIODIC_DOCUMENT_SERIES
-        ],
-        "periodic_doc_ids": [
-            _as_text(row.get("doc_id"))
-            for row in documents
-            if _as_text(row.get("document_series")) in BOOKRAG_PERIODIC_DOCUMENT_SERIES
-            and _as_text(row.get("doc_id"))
-        ],
+        "periodic_documents": [],
+        "periodic_doc_ids": [],
         "allowed_doc_ids": [
             _as_text(row.get("doc_id"))
             for row in documents

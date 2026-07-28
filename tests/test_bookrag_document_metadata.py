@@ -6,9 +6,20 @@ from unittest import mock
 from app.services.bookrag_document_metadata import (
     build_logical_document_key,
     derive_document_metadata,
+    fetch_effective_document_scope,
     question_has_explicit_timeline,
     save_document_metadata,
 )
+from app.services.bookrag_query_planner import parse_temporal_scope
+
+
+class _Cursor:
+    def __init__(self, columns, rows):
+        self.description = [(column,) for column in columns]
+        self._rows = rows
+
+    def fetchall(self):
+        return self._rows
 
 
 class BookRAGDocumentMetadataDerivationTests(unittest.TestCase):
@@ -101,6 +112,108 @@ class BookRAGDocumentMetadataPersistenceTests(unittest.TestCase):
         self.assertIn('"publication_date"=CAST(\'2026-06-09\' AS DATE)', execute_mock.call_args.args[0])
         self.assertIn('"metadata_updated_by"=CAST(\'admin\'', execute_mock.call_args.args[0])
         ensure_mock.assert_called_once()
+
+
+class BookRAGDocumentScopeTests(unittest.TestCase):
+    @mock.patch(
+        "app.services.bookrag_document_metadata.ensure_document_metadata_schema",
+        return_value=(),
+    )
+    @mock.patch(
+        "app.services.bookrag_document_metadata.ensure_bookrag_retrieval_view",
+        return_value="MUBKWM_bk_retrieval_v",
+    )
+    def test_explicit_month_is_applied_before_vector_retrieval(
+        self,
+        _ensure_view_mock: mock.Mock,
+        _ensure_schema_mock: mock.Mock,
+    ) -> None:
+        calls: list[str] = []
+
+        def execute(sql):
+            calls.append(sql)
+            return _Cursor(
+                [
+                    "doc_id",
+                    "filename",
+                    "publication_date",
+                    "document_series",
+                    "document_role",
+                    "metadata_status",
+                    "latest_rank",
+                ],
+                [
+                    (
+                        "doc-june",
+                        "june.pdf",
+                        "2026-06-09",
+                        "spot",
+                        "update",
+                        "confirmed",
+                        1,
+                    )
+                ],
+            )
+
+        scope = fetch_effective_document_scope(
+            vector_store_name="MUBKWM",
+            schema_name="demo",
+            execute_sql_fn=execute,
+            temporal_scope=parse_temporal_scope("2026年6月の見通し"),
+            metadata_statuses=("confirmed",),
+        )
+
+        self.assertEqual(scope["allowed_doc_ids"], ["doc-june"])
+        self.assertIn('"publication_date">=CAST(\'2026-06-01\' AS DATE)', calls[-1])
+        self.assertIn('"publication_date"<CAST(\'2026-07-01\' AS DATE)', calls[-1])
+        self.assertIn('LOWER("metadata_status") IN (\'confirmed\')', calls[-1])
+
+    @mock.patch(
+        "app.services.bookrag_document_metadata.ensure_document_metadata_schema",
+        return_value=(),
+    )
+    @mock.patch(
+        "app.services.bookrag_document_metadata.ensure_bookrag_retrieval_view",
+        return_value="MUBKWM_bk_retrieval_v",
+    )
+    def test_latest_quarter_uses_latest_confirmed_publication_date(
+        self,
+        _ensure_view_mock: mock.Mock,
+        _ensure_schema_mock: mock.Mock,
+    ) -> None:
+        calls: list[str] = []
+
+        def execute(sql):
+            calls.append(sql)
+            if 'MAX("publication_date")' in sql:
+                return _Cursor(["max_publication_date"], [("2026-06-09",)])
+            return _Cursor(
+                [
+                    "doc_id",
+                    "filename",
+                    "publication_date",
+                    "document_series",
+                    "document_role",
+                    "metadata_status",
+                    "latest_rank",
+                ],
+                [],
+            )
+
+        scope = fetch_effective_document_scope(
+            vector_store_name="MUBKWM",
+            schema_name="demo",
+            execute_sql_fn=execute,
+            temporal_scope=parse_temporal_scope("最新四半期の見通し"),
+            metadata_statuses=("confirmed",),
+        )
+
+        self.assertEqual(scope["temporal_scope"]["start_date"], "2026-04-01")
+        self.assertEqual(
+            scope["temporal_scope"]["end_date_exclusive"],
+            "2026-07-01",
+        )
+        self.assertIn('"publication_date">=CAST(\'2026-04-01\' AS DATE)', calls[-1])
 
 
 if __name__ == "__main__":

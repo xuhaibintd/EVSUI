@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from app.routers.api import (
+    BookRAGEvidenceResponse,
     _build_bookrag_dummy_answer,
     _build_bookrag_dummy_data,
     _build_bookrag_llm_input,
@@ -137,6 +138,41 @@ class BookRAGApiAnswerShapeTests(unittest.TestCase):
         self.assertTrue(answer["grounded"])
         self.assertEqual(answer["citations"][0]["node_id"], "node-1")
         self.assertIn("安定成長フェーズ", answer["text"])
+
+    def test_governance_fields_survive_response_validation(self) -> None:
+        payload = BookRAGEvidenceResponse.model_validate(
+            {
+                "vector_store_name": "demo",
+                "package_count": 1,
+                "similarity_row_count": 1,
+                "similarity_preview": "",
+                "evidence_text": "evidence",
+                "retrieval_scope": {"mode": "adaptive_current_only"},
+                "query_plan": {"facets": [{"query": "金利"}]},
+                "coverage": {"sufficient": True},
+                "packages": [
+                    {
+                        "rank": 1,
+                        "retrieval_track": "latest_related",
+                        "matched_facets": ["clause_1"],
+                        "match": {"doc_id": "doc-1", "node_id": "node-1"},
+                        "document": {
+                            "doc_id": "doc-1",
+                            "filename": "latest.pdf",
+                            "publication_date": "2026-06-09",
+                            "metadata_status": "confirmed",
+                        },
+                    }
+                ],
+            }
+        ).model_dump()
+
+        self.assertEqual(payload["retrieval_scope"]["mode"], "adaptive_current_only")
+        self.assertEqual(payload["packages"][0]["retrieval_track"], "latest_related")
+        self.assertEqual(
+            payload["packages"][0]["document"]["publication_date"],
+            "2026-06-09",
+        )
 
 
 def _build_request(*, headers: dict[str, str] | None = None, cookies: dict[str, str] | None = None):
@@ -286,39 +322,26 @@ class BookRAGApiLiveAnswerTests(unittest.TestCase):
         self.assertEqual(answer["text"], "real grounded answer")
         self.assertEqual(answer["citations"][0]["node_id"], "node-1")
 
-    def test_no_timeline_filters_similarity_evidence_to_governed_scope(self) -> None:
+    def test_retrieve_delegates_to_adaptive_retrieval(self) -> None:
         class _VectorStore:
-            last_top_k = None
-            last_filters = []
-
             def __init__(self, _name):
                 pass
 
-            def similarity_search(self, question=None, top_k=None, filter=None):
-                _VectorStore.last_top_k = top_k
-                _VectorStore.last_filters.append(filter)
-                return object()
-
         evidence = {
+            "retrieval_scope": {
+                "view_name": "MUBKWM_bk_retrieval_v",
+                "allowed_doc_ids": ["latest-doc"],
+            },
             "packages": [
                 {"rank": 1, "match": {"doc_id": "latest-doc", "node_id": "node-latest"}},
-            ]
-        }
-        scope = {
-            "view_name": "MUBKWM_bk_retrieval_v",
-            "allowed_doc_ids": ["latest-doc"],
-            "primary_documents": [{"doc_id": "latest-doc", "filename": "latest.pdf"}],
-            "supplemental_documents": [],
+            ],
         }
         with patch("app.routers.api.VectorStore", _VectorStore), patch(
             "app.routers.api.execute_sql", object()
         ), patch(
-            "app.routers.api.fetch_governed_document_scope", return_value=scope
-        ), patch(
-            "app.routers.api.retrieve_bookrag_evidence", return_value=evidence
-        ), patch(
-            "app.routers.api.render_bookrag_evidence_packages", return_value="latest evidence"
-        ):
+            "app.routers.api.retrieve_adaptive_bookrag_evidence",
+            return_value=(evidence, "candidate-result"),
+        ) as adaptive_mock:
             _, _, result, similarity_result = _retrieve_bookrag_evidence_or_raise(
                 question="最新の債券見通しは？",
                 vector_store_name="MUBKWM",
@@ -326,109 +349,84 @@ class BookRAGApiLiveAnswerTests(unittest.TestCase):
                 top_k=5,
             )
 
-        self.assertEqual(_VectorStore.last_top_k, 20)
-        self.assertEqual(_VectorStore.last_filters, ["doc_id IN ('latest-doc')"])
-        self.assertIsNotNone(similarity_result)
+        self.assertEqual(similarity_result, "candidate-result")
+        self.assertEqual(result, evidence)
+        adaptive_mock.assert_called_once()
         self.assertEqual(
-            [package["match"]["doc_id"] for package in result["packages"]],
-            ["latest-doc"],
-        )
-        self.assertEqual(result["packages"][0]["rank"], 1)
-        self.assertEqual(
-            result["retrieval_source"],
-            "MUBKWM_bk_retrieval_v -> bnode.content",
+            adaptive_mock.call_args.kwargs["question"],
+            "最新の債券見通しは？",
         )
 
-    def test_no_timeline_retrieves_periodic_background_in_a_separate_filtered_track(self) -> None:
+    def test_answer_retrieval_locks_similarity_to_final_evidence(self) -> None:
         class _VectorStore:
-            filters = []
-
             def __init__(self, _name):
                 pass
 
-            def similarity_search(self, question=None, top_k=None, filter=None):
-                _VectorStore.filters.append(filter)
-                return object()
-
-        latest_evidence = {
-            "packages": [{"rank": 1, "match": {"doc_id": "spot-doc", "node_id": "spot-node"}}]
-        }
-        periodic_evidence = {
-            "packages": [{"rank": 1, "match": {"doc_id": "monthly-doc", "node_id": "monthly-node"}}]
-        }
-        scope = {
-            "view_name": "MUBKWM_bk_retrieval_v",
-            "allowed_doc_ids": ["spot-doc", "monthly-doc"],
-            "periodic_doc_ids": ["monthly-doc"],
-            "primary_documents": [],
-            "supplemental_documents": [],
+        packages = [
+            {
+                "rank": 1,
+                "retrieval_track": "latest_related",
+                "match": {"doc_id": "spot-doc", "node_id": "spot-node"},
+            },
+            {
+                "rank": 2,
+                "retrieval_track": "periodic_background",
+                "match": {"doc_id": "monthly-doc", "node_id": "monthly-node"},
+            },
+        ]
+        evidence = {
+            "retrieval_scope": {
+                "allowed_doc_ids": ["spot-doc", "monthly-doc"],
+            },
+            "packages": packages,
         }
         with patch("app.routers.api.VectorStore", _VectorStore), patch(
             "app.routers.api.execute_sql", object()
         ), patch(
-            "app.routers.api.fetch_governed_document_scope", return_value=scope
+            "app.routers.api.retrieve_adaptive_bookrag_evidence",
+            return_value=(evidence, "candidate-result"),
         ), patch(
-            "app.routers.api.retrieve_bookrag_evidence",
-            side_effect=[latest_evidence, periodic_evidence],
-        ), patch(
-            "app.routers.api.render_bookrag_evidence_packages", return_value="dual evidence"
-        ):
-            _, _, result, _ = _retrieve_bookrag_evidence_or_raise(
+            "app.routers.api.lock_similarity_result_to_evidence",
+            return_value="locked-result",
+        ) as lock_mock:
+            _, _, result, similarity_result = _retrieve_bookrag_evidence_or_raise(
                 question="債券の資産別見通しを要約してください",
                 vector_store_name="MUBKWM",
                 schema_name="usecases_japan",
+                lock_final=True,
             )
 
-        self.assertEqual(
-            _VectorStore.filters,
-            ["doc_id IN ('monthly-doc', 'spot-doc')", "doc_id IN ('monthly-doc')"],
-        )
+        self.assertEqual(similarity_result, "locked-result")
+        self.assertEqual(result["packages"], packages)
+        self.assertEqual(lock_mock.call_args.kwargs["packages"], packages)
         self.assertEqual(
             [package["retrieval_track"] for package in result["packages"]],
             ["latest_related", "periodic_background"],
         )
 
-    def test_explicit_timeline_does_not_apply_latest_document_scope(self) -> None:
+    def test_retrieve_rejects_an_empty_governed_scope(self) -> None:
         class _VectorStore:
-            last_top_k = None
-
             def __init__(self, _name):
                 pass
 
-            def similarity_search(self, question=None, top_k=None, filter=None):
-                _VectorStore.last_top_k = top_k
-                return object()
-
-        evidence = {"packages": [{"rank": 1, "match": {"doc_id": "dated-doc"}}]}
-        scope = {
-            "view_name": "MUBKWM_bk_retrieval_v",
-            "allowed_doc_ids": ["dated-doc"],
-            "primary_documents": [{"doc_id": "dated-doc"}],
-            "supplemental_documents": [],
-        }
         with patch("app.routers.api.VectorStore", _VectorStore), patch(
             "app.routers.api.execute_sql", object()
         ), patch(
-            "app.routers.api.fetch_governed_document_scope"
-        ) as latest_scope_mock, patch(
-            "app.routers.api.fetch_effective_document_scope", return_value=scope
-        ) as effective_scope_mock, patch(
-            "app.routers.api.retrieve_bookrag_evidence", return_value=evidence
-        ), patch(
-            "app.routers.api.render_bookrag_evidence_packages", return_value="dated evidence"
+            "app.routers.api.retrieve_adaptive_bookrag_evidence",
+            return_value=(
+                {"retrieval_scope": {"allowed_doc_ids": []}, "packages": []},
+                None,
+            ),
         ):
-            _, _, result, _ = _retrieve_bookrag_evidence_or_raise(
-                question="20260609の債券見通しは？",
-                vector_store_name="MUBKWM",
-                schema_name="usecases_japan",
-                top_k=5,
-            )
+            with self.assertRaises(HTTPException) as ctx:
+                _retrieve_bookrag_evidence_or_raise(
+                    question="20260609の債券見通しは？",
+                    vector_store_name="MUBKWM",
+                    schema_name="usecases_japan",
+                    top_k=5,
+                )
 
-        latest_scope_mock.assert_not_called()
-        effective_scope_mock.assert_called_once()
-        self.assertEqual(_VectorStore.last_top_k, 20)
-        self.assertEqual(result["packages"][0]["match"]["doc_id"], "dated-doc")
-        self.assertEqual(result["packages"][0]["retrieval_track"], "latest_related")
+        self.assertEqual(ctx.exception.status_code, 409)
 
 
 if __name__ == "__main__":

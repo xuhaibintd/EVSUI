@@ -1,0 +1,119 @@
+{
+  "policy_version": 1,
+  "candidate_budget": {
+    "per_track": 20,
+    "minimum_final": 4,
+    "maximum_final": 18
+  },
+  "ranking": {
+    "semantic_weight": 1.0,
+    "freshness_weight": 0.5,
+    "role_weight": 0.15,
+    "rrf_constant": 60,
+    "series_bonus": {
+      "spot": 0.08,
+      "topics": 0.05,
+      "monthly": 0.04,
+      "main": 0.03,
+      "summary": 0.0
+    },
+    "role_bonus": {
+      "update": 0.08,
+      "performance": 0.05,
+      "theme": 0.04,
+      "comprehensive": 0.03,
+      "other": 0.0
+    }
+  },
+  "background": {
+    "eligible_series": [
+      "main",
+      "monthly"
+    ],
+    "eligible_roles": [],
+    "latest_documents_per_series_kept_in_current": 1,
+    "maximum_fraction_of_final_evidence": 0.4,
+    "explanation_markers": [
+      "影響",
+      "要因",
+      "背景",
+      "理由",
+      "仕組み",
+      "シナリオ",
+      "リスク",
+      "整理",
+      "説明",
+      "なぜ",
+      "含めて",
+      "impact",
+      "factor",
+      "reason",
+      "risk",
+      "scenario",
+      "explain"
+    ]
+  },
+  "planning": {
+    "facet_discovery_markers": [
+      "それぞれ",
+      "資産別",
+      "各資産",
+      "項目別",
+      "種類別",
+      "each",
+      "by asset",
+      "by category"
+    ],
+    "maximum_dynamic_facets": 8
+  },
+  "document_classification": {
+    "fallback_series": "other",
+    "fallback_role": "other",
+    "rules": [
+      {
+        "pattern": "^(?:⑥|.*Topics).*パフォーマンス",
+        "series": "topics",
+        "role": "performance"
+      },
+      {
+        "pattern": "^①",
+        "series": "main",
+        "role": "comprehensive"
+      },
+      {
+        "pattern": "^②",
+        "series": "summary",
+        "role": "comprehensive"
+      },
+      {
+        "pattern": "(?:^[③④].*月次|月次アップデート)",
+        "series": "monthly",
+        "role": "comprehensive"
+      },
+      {
+        "pattern": "(?:^⑤|GMAP_Spot)",
+        "series": "spot",
+        "role": "update"
+      },
+      {
+        "pattern": "(?:^⑥|Topics)",
+        "series": "topics",
+        "role": "theme"
+      }
+    ]
+  },
+  "coverage": {
+    "minimum_current_packages": 2,
+    "minimum_unique_current_documents": 2,
+    "minimum_substantive_characters": 480,
+    "minimum_explanation_characters": 900
+  },
+  "diversity": {
+    "maximum_nodes_per_document": 2
+  },
+  "governance": {
+    "allowed_metadata_statuses": [
+      "confirmed"
+    ]
+  }
+}

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import json
 import os
 import uuid
 from typing import Any
@@ -9,14 +10,12 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from app.services.bookrag_document_metadata import (
-    fetch_effective_document_scope,
-    fetch_governed_document_scope,
-    question_has_explicit_timeline,
+from app.services.bookrag_adaptive_retrieval import (
+    lock_similarity_result_to_evidence,
+    retrieve_adaptive_bookrag_evidence,
 )
 from app.services.bookrag_retrieval import (
     render_bookrag_evidence_packages,
-    retrieve_bookrag_evidence,
 )
 from app.services.bookrag_schema import build_bookrag_relationship_contract
 from app.runtime import DEFAULT_EVSUI_API_TOKEN
@@ -198,6 +197,14 @@ class BookRAGDocumentResponse(BaseModel):
     page_count: int | None = None
     language_hint: str | None = None
     created_at: str | None = None
+    publication_date: str | None = None
+    publication_date_source: str | None = None
+    publication_date_precision: str | None = None
+    document_series: str | None = None
+    document_role: str | None = None
+    logical_document_key: str | None = None
+    revision_no: int | None = None
+    metadata_status: str | None = None
 
 
 class BookRAGDocumentRelationResponse(BaseModel):
@@ -216,6 +223,11 @@ class BookRAGDocumentRelationResponse(BaseModel):
 class BookRAGEvidencePackageResponse(BaseModel):
     rank: int
     score: float | None = None
+    adaptive_score: float | None = None
+    semantic_rank: int | None = None
+    freshness_rank: int | None = None
+    retrieval_track: str | None = None
+    matched_facets: list[str] = Field(default_factory=list)
     schema_name: str | None = None
     tables: dict[str, str] = Field(default_factory=dict)
     match: BookRAGEvidenceMatchResponse
@@ -246,6 +258,11 @@ class BookRAGEvidenceResponse(BaseModel):
     evidence_text: str
     top_k_applied: int | None = None
     retrieval_source: str | None = None
+    candidate_package_count: int | None = None
+    retrieval_scope: dict[str, Any] = Field(default_factory=dict)
+    query_plan: dict[str, Any] = Field(default_factory=dict)
+    coverage: dict[str, Any] = Field(default_factory=dict)
+    retrieval_policy: dict[str, Any] = Field(default_factory=dict)
 
 
 class BookRAGLLMDocumentResponse(BaseModel):
@@ -277,6 +294,7 @@ class BookRAGLLMOutputContractResponse(BaseModel):
 class BookRAGLLMEvidenceItemResponse(BaseModel):
     rank: int | None = None
     score: float | None = None
+    retrieval_track: str | None = None
     evidence_type: str | None = None
     path: str | None = None
     section_path: str | None = None
@@ -306,6 +324,8 @@ class BookRAGLLMInputResponse(BaseModel):
     task: BookRAGLLMTaskResponse
     output_contract: BookRAGLLMOutputContractResponse
     instructions: list[str] = Field(default_factory=list)
+    retrieval_scope: dict[str, Any] = Field(default_factory=dict)
+    query_plan: dict[str, Any] = Field(default_factory=dict)
     evidence: list[BookRAGLLMEvidenceItemResponse] = Field(default_factory=list)
 
 
@@ -316,6 +336,10 @@ class BookRAGAnswerCitationResponse(BaseModel):
     path: str | None = None
     page_start: int | None = None
     page_end: int | None = None
+    doc_id: str | None = None
+    filename: str | None = None
+    publication_date: str | None = None
+    retrieval_track: str | None = None
 
 
 class BookRAGAnswerPayloadResponse(BaseModel):
@@ -500,62 +524,14 @@ def _build_bookrag_dummy_data(*, question: str, vector_store_name: str, schema_n
         },
     }
 
-def _bookrag_doc_id_filter(doc_ids: list[object]) -> str:
-    values = sorted({str(value).strip() for value in doc_ids if str(value).strip()})
-    if not values:
-        raise ValueError("At least one document id is required for governed retrieval.")
-    quoted_values = ", ".join("'" + value.replace("'", "''") + "'" for value in values)
-    return f"doc_id IN ({quoted_values})"
-
-
-def _bookrag_package_doc_id(package: dict[str, object]) -> str:
-    match = package.get("match") or {}
-    document = package.get("document") or {}
-    if not isinstance(match, dict):
-        match = {}
-    if not isinstance(document, dict):
-        document = {}
-    return str(match.get("doc_id") or document.get("doc_id") or "").strip()
-
-
-def _mark_bookrag_track(packages: list[dict[str, object]], track: str) -> list[dict[str, object]]:
-    marked: list[dict[str, object]] = []
-    for package in packages:
-        item = dict(package)
-        item["retrieval_track"] = track
-        marked.append(item)
-    return marked
-
-
-def _merge_bookrag_tracks(
-    latest_packages: list[dict[str, object]],
-    periodic_packages: list[dict[str, object]],
-) -> list[dict[str, object]]:
-    """Keep current evidence first while guaranteeing periodic context is visible."""
-    ordered: list[dict[str, object]] = []
-    seen: set[tuple[str, str]] = set()
-    for index in range(max(len(latest_packages), len(periodic_packages))):
-        for packages in (latest_packages, periodic_packages):
-            if index >= len(packages):
-                continue
-            package = packages[index]
-            match = package.get("match") or {}
-            if not isinstance(match, dict):
-                match = {}
-            key = (
-                _bookrag_package_doc_id(package),
-                str(match.get("node_id") or match.get("content") or "").strip(),
-            )
-            if key in seen:
-                continue
-            seen.add(key)
-            ordered.append(package)
-    for rank, package in enumerate(ordered, start=1):
-        package["rank"] = rank
-    return ordered
-
-
-def _retrieve_bookrag_evidence_or_raise(*, question: str, vector_store_name: str, schema_name: str | None, top_k: int | None = None):
+def _retrieve_bookrag_evidence_or_raise(
+    *,
+    question: str,
+    vector_store_name: str,
+    schema_name: str | None,
+    top_k: int | None = None,
+    lock_final: bool = False,
+):
     if VectorStore is None:
         raise HTTPException(status_code=503, detail=f"VectorStore runtime is unavailable: {TERADATA_IMPORT_ERROR}")
     if execute_sql is None:
@@ -574,94 +550,46 @@ def _retrieve_bookrag_evidence_or_raise(*, question: str, vector_store_name: str
     except Exception as ex:
         raise HTTPException(status_code=400, detail=f"cannot open VectorStore('{vector_store_value}'): {ex}") from ex
 
-    has_explicit_timeline = question_has_explicit_timeline(question_value)
     try:
-        if has_explicit_timeline:
-            governed_scope = fetch_effective_document_scope(
-                vector_store_name=vector_store_value,
-                schema_name=schema_name,
-                execute_sql_fn=execute_sql,
-            )
-        else:
-            governed_scope = fetch_governed_document_scope(
-                vector_store_name=vector_store_value,
-                schema_name=schema_name,
-                execute_sql_fn=execute_sql,
-            )
+        evidence, candidate_similarity_result = retrieve_adaptive_bookrag_evidence(
+            vector_store=vector_store,
+            vector_store_name=vector_store_value,
+            question=question_value,
+            schema_name=schema_name,
+            execute_sql_fn=execute_sql,
+            top_k=top_k,
+        )
     except Exception as ex:
         raise HTTPException(
             status_code=500,
-            detail=f"Effective-document scope resolution failed for '{vector_store_value}': {ex}",
+            detail=f"Adaptive BookRAG retrieval failed for '{vector_store_value}': {ex}",
         ) from ex
+    governed_scope = evidence.get("retrieval_scope") or {}
     if not list(governed_scope.get("allowed_doc_ids") or []):
         raise HTTPException(
             status_code=409,
             detail=(
-                f"No effective publication dates are available for '{vector_store_value}'. "
-                "Run Document Metadata auto-fill and confirm review rows."
+                f"No governed documents match the requested time scope for '{vector_store_value}'. "
+                "Confirm publication dates and metadata status, or revise the time condition."
             ),
         )
 
-    discovery_top_k = max(20, _clamp_top_k(top_k))
-    allowed_doc_ids = list(governed_scope.get("allowed_doc_ids") or [])
-    periodic_doc_ids = list(governed_scope.get("periodic_doc_ids") or [])
-    try:
-        latest_similarity_result = vector_store.similarity_search(
-            question=question_value,
-            top_k=discovery_top_k,
-            filter=_bookrag_doc_id_filter(allowed_doc_ids),
-        )
-        periodic_similarity_result = None
-        if periodic_doc_ids:
-            periodic_similarity_result = vector_store.similarity_search(
+    response_similarity_result = candidate_similarity_result
+    if lock_final and list(evidence.get("packages") or []):
+        try:
+            response_similarity_result = lock_similarity_result_to_evidence(
+                vector_store=vector_store,
                 question=question_value,
-                top_k=discovery_top_k,
-                filter=_bookrag_doc_id_filter(periodic_doc_ids),
+                packages=list(evidence.get("packages") or []),
             )
-    except Exception as ex:
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                f"Governed similarity_search failed on '{vector_store_value}': {ex}. "
-                "This retrieval path requires VectorStore SQL filter support."
-            ),
-        ) from ex
-
-    try:
-        latest_evidence = retrieve_bookrag_evidence(
-            vector_store_name=vector_store_value,
-            similarity_result=latest_similarity_result,
-            execute_sql_fn=execute_sql,
-            schema_name=schema_name,
-        )
-        periodic_evidence = {"packages": []}
-        if periodic_similarity_result is not None:
-            periodic_evidence = retrieve_bookrag_evidence(
-                vector_store_name=vector_store_value,
-                similarity_result=periodic_similarity_result,
-                execute_sql_fn=execute_sql,
-                schema_name=schema_name,
-            )
-        latest_packages = _mark_bookrag_track(
-            list(latest_evidence.get("packages") or []), "latest_related"
-        )
-        periodic_packages = _mark_bookrag_track(
-            list(periodic_evidence.get("packages") or []), "periodic_background"
-        )
-        packages = _merge_bookrag_tracks(latest_packages, periodic_packages)
-        evidence = dict(latest_evidence)
-        evidence["packages"] = packages
-        evidence["package_count"] = len(packages)
-        evidence["packages_total"] = len(packages)
-        evidence["evidence_text"] = render_bookrag_evidence_packages(packages)
-        evidence["retrieval_scope"] = governed_scope
-        evidence["retrieval_source"] = f"{governed_scope.get('view_name')} -> bnode.content"
-    except Exception as ex:
-        raise HTTPException(status_code=500, detail=f"BookRAG evidence retrieval failed for '{vector_store_value}': {ex}") from ex
-
-    # prepare_response receives the already-filtered latest-information result;
-    # periodic evidence is explicitly included in the custom prompt below.
-    response_similarity_result = latest_similarity_result or periodic_similarity_result
+        except Exception as ex:
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"Final BookRAG evidence locking failed on "
+                    f"'{vector_store_value}': {ex}"
+                ),
+            ) from ex
     return question_value, vector_store_value, evidence, response_similarity_result
 
 
@@ -695,7 +623,10 @@ def _normalize_bookrag_evidence(*, evidence: dict[str, object] | None, top_k: in
     payload["retrieval_source"] = payload.get("retrieval_source") or "bnode.content"
     payload.setdefault("similarity_headers", [])
     payload.setdefault("similarity_preview", "")
-    payload.setdefault("evidence_text", "")
+    if limited_packages:
+        payload["evidence_text"] = render_bookrag_evidence_packages(limited_packages)
+    else:
+        payload["evidence_text"] = ""
     payload.setdefault("similarity_row_count", 0)
     return payload
 
@@ -805,6 +736,7 @@ def _build_bookrag_llm_input(
             "Keep the response concise and JSON-ready for external API consumers.",
         ],
         "retrieval_scope": payload.get("retrieval_scope"),
+        "query_plan": payload.get("query_plan"),
         "evidence": evidence_items,
     }
 
@@ -814,6 +746,9 @@ def _build_bookrag_dummy_answer(*, question: str, llm_input: dict[str, object]) 
     citations: list[dict[str, object]] = []
     for item in evidence_items[:3]:
         pages = item.get("pages") or [None, None]
+        document = item.get("document") or {}
+        if not isinstance(document, dict):
+            document = {}
         citations.append({
             "rank": item.get("rank"),
             "node_id": item.get("node_id"),
@@ -821,6 +756,10 @@ def _build_bookrag_dummy_answer(*, question: str, llm_input: dict[str, object]) 
             "path": item.get("path"),
             "page_start": pages[0] if len(pages) > 0 else None,
             "page_end": pages[1] if len(pages) > 1 else None,
+            "doc_id": document.get("doc_id"),
+            "filename": document.get("filename"),
+            "publication_date": document.get("publication_date"),
+            "retrieval_track": item.get("retrieval_track"),
         })
 
     if evidence_items:
@@ -968,11 +907,28 @@ def _build_bookrag_llm_prompt(llm_input: dict[str, object]) -> str:
                 ]
                 if filenames:
                     scope_lines.append(f"{label}: " + ", ".join(filenames))
+    query_plan = llm_input.get("query_plan") or {}
+    plan_lines: list[str] = []
+    if isinstance(query_plan, dict):
+        facets = [
+            str(item.get("query") or "").strip()
+            for item in list(query_plan.get("facets") or [])
+            if isinstance(item, dict) and str(item.get("query") or "").strip()
+        ]
+        if facets:
+            plan_lines.append("Required facets: " + " | ".join(facets))
+        output_hints = query_plan.get("output_hints") or {}
+        if isinstance(output_hints, dict) and output_hints:
+            plan_lines.append(
+                "Output requirements: "
+                + json.dumps(output_hints, ensure_ascii=False)
+            )
     prompt_parts = [
         "You are a grounded BookRAG answerer.",
         *instructions,
         "When possible, mention node_id or page references already present in the evidence.",
         "Governed document scope:\n" + "\n".join(scope_lines) if scope_lines else "",
+        "Query plan:\n" + "\n".join(plan_lines) if plan_lines else "",
         "Evidence:",
         "\n\n".join(evidence_lines) if evidence_lines else "(no evidence)",
     ]
@@ -1157,6 +1113,7 @@ async def api_bookrag_answer_get(
             vector_store_name=vector_store_name,
             schema_name=schema_value,
             top_k=top_k_value,
+            lock_final=True,
         )
         evidence = _normalize_bookrag_evidence(evidence=evidence, top_k=top_k_value)
         llm_input = _build_bookrag_llm_input(
@@ -1327,6 +1284,7 @@ async def api_bookrag_answer(request: Request, payload: BookRAGAnswerRequest):
         vector_store_name=payload.vector_store_name,
         schema_name=schema_value,
         top_k=top_k_value,
+        lock_final=True,
     )
     evidence = _normalize_bookrag_evidence(evidence=evidence, top_k=top_k_value)
     llm_input = _build_bookrag_llm_input(
