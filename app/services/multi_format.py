@@ -49,6 +49,7 @@ from app.services.bookrag_document_relations import (
     derive_filename_document_relations,
     persist_document_relations,
 )
+from app.services.bookrag_document_metadata import derive_document_metadata
 from app.services.bookrag_schema import (
     build_bookrag_table_targets,
     prepare_bookrag_block_table,
@@ -59,6 +60,7 @@ from app.services.bookrag_schema import (
     prepare_bookrag_entity_table,
     prepare_bookrag_node_table,
     prepare_bookrag_raw_table,
+    ensure_bookrag_retrieval_view,
 )
 from app.services.bookrag_tree import build_bookrag_nodes, elements_to_bookrag_blocks
 from app.services.bookrag_storage import (
@@ -1909,6 +1911,14 @@ def _build_bookrag_rows_from_raw_elements(
         page_count=page_count,
         language_hint=language_hint,
         created_at=created_at,
+        metadata=derive_document_metadata(
+            filename=filename,
+            content_values=(
+                element.get("text")
+                for element in raw_elements
+                if isinstance(element, dict)
+            ),
+        ),
     )
     nodes = build_bookrag_nodes(document_row, blocks)
     entities: list[dict[str, Any]] = []
@@ -3228,6 +3238,12 @@ def run_bookrag_csv_load(
                 )
             persisted_row_counts[table_key] = actual_count
 
+        retrieval_view_name = ensure_bookrag_retrieval_view(
+            vector_store_name=vector_store_name,
+            schema_name=target_database,
+            execute_sql_fn=execute_sql_fn,
+        )
+
         summary = {
             "status": "ready",
             "csv_run_id": csv_run_id,
@@ -3245,6 +3261,7 @@ def run_bookrag_csv_load(
             "expected_row_counts": expected_row_counts,
             "persisted_row_counts": persisted_row_counts,
             "node_table": f"{target_database}.{expected_table_targets['nodes']}",
+            "retrieval_view": f"{target_database}.{retrieval_view_name}",
             "elapsed_seconds": round(max(0.0, time.perf_counter() - started_at), 6),
             "warnings": warnings,
             "already_loaded": False,
@@ -3845,6 +3862,17 @@ def _apply_bookrag_tree_pipeline(
                 "every stored relationship is available to retrieval."
             )
 
+    retrieval_view_name = ""
+    if all(
+        table_generation[table_key]
+        for table_key in ("documents", "nodes", "document_relations")
+    ):
+        retrieval_view_name = ensure_bookrag_retrieval_view(
+            vector_store_name=vector_store_name,
+            schema_name=effective_schema_name,
+            execute_sql_fn=execute_sql_fn,
+        )
+
     persisted_table_row_counts: dict[str, Any] = {}
     for table_key in BOOKRAG_TABLE_TOGGLE_ORDER:
         if not table_generation[table_key]:
@@ -3887,6 +3915,7 @@ def _apply_bookrag_tree_pipeline(
         "blocks_table_name": persisted_bookrag_tables.get("blocks", ""),
         "nodes_table_name": persisted_bookrag_tables.get("nodes", ""),
         "document_relations_table_name": persisted_bookrag_tables.get("document_relations", ""),
+        "retrieval_view_name": retrieval_view_name,
         "entities_table_name": persisted_bookrag_tables.get("entities", ""),
         "entity_links_table_name": persisted_bookrag_tables.get("entity_links", ""),
         "entity_relations_table_name": persisted_bookrag_tables.get("entity_relations", ""),

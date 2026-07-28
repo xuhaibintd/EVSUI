@@ -382,6 +382,48 @@ class UnstructuredAdminPanelTests(unittest.TestCase):
         self.assertIn("Business Configuration", html)
         self.assertIn('class="admin-rule-tab-panel admin-rule-panel-business"', html)
         self.assertIn("Unstructured IO", html)
+        self.assertIn("Document Metadata", html)
+
+
+class DocumentMetadataAdminTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)))
+        cls.template = cls.env.get_template("partials/document_metadata_admin.html")
+
+    def test_initial_panel_auto_refreshes_and_exposes_autofill(self):
+        html = self.template.render(
+            document_metadata_admin={
+                "auto_refresh": True,
+                "selected_vector_store": "MUBKWM",
+                "documents": [{"doc_id": "doc-1", "filename": "report.pdf"}],
+            }
+        )
+
+        self.assertIn('hx-get="/ui/admin/document-metadata?refresh=true"', html)
+        self.assertIn('hx-post="/ui/admin/document-metadata/autofill"', html)
+        self.assertIn("Auto-fill Metadata", html)
+
+    def test_bookrag_loaded_run_is_selectable_before_vectorstore_is_ready(self):
+        app = SimpleNamespace(state=SimpleNamespace(
+            evs_state={"chat_vs_options": ["MUBKWM"], "selected_vs_name": ""},
+            create_form_values={"target_database": "usecases_japan"},
+        ))
+        with mock.patch.object(
+            web_router_module,
+            "list_bookrag_csv_runs",
+            return_value=[
+                {
+                    "vector_store_name": "MUBKWM_0728",
+                    "target_database": "usecases_japan",
+                    "load_status": "ready",
+                    "vector_store_status": "creating",
+                }
+            ],
+        ):
+            options = web_router_module._bookrag_admin_vector_store_options(app)
+
+        self.assertEqual(options, ["MUBKWM", "MUBKWM_0728"])
 
 
 class DocumentRelationshipAdminTests(unittest.TestCase):

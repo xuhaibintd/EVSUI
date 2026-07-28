@@ -1,0 +1,146 @@
+{% set metadata_admin = document_metadata_admin|default({}) %}
+<div
+  id="document-metadata-admin"
+  class="document-metadata-admin"
+  {% if metadata_admin.auto_refresh %}
+  hx-get="/ui/admin/document-metadata?refresh=true"
+  hx-trigger="load"
+  hx-target="this"
+  hx-swap="outerHTML"
+  {% endif %}
+>
+  {% if metadata_admin.status %}
+  <div class="admin-rule-status {{ metadata_admin.status.kind }}" role="status" aria-live="polite">
+    <strong>{{ metadata_admin.status.title }}</strong>
+    <span>{{ metadata_admin.status.detail }}</span>
+  </div>
+  {% endif %}
+
+  <section class="admin-rule-card">
+    <div class="admin-rule-card-head">
+      <div>
+        <h4>Document Metadata</h4>
+        <p class="muted">Publication date governance for bdoc and the retrieval view</p>
+      </div>
+    </div>
+    <form class="document-relation-toolbar" hx-get="/ui/admin/document-metadata" hx-target="#document-metadata-admin" hx-swap="outerHTML">
+      <label class="field">
+        <span>Vector Store</span>
+        <select name="vector_store_name" required>
+          <option value="">Select a Vector Store</option>
+          {% for name in metadata_admin.vector_store_options|default([]) %}
+          <option value="{{ name }}" {% if name == metadata_admin.selected_vector_store %}selected{% endif %}>{{ name }}</option>
+          {% endfor %}
+          {% if metadata_admin.selected_vector_store and metadata_admin.selected_vector_store not in metadata_admin.vector_store_options|default([]) %}
+          <option value="{{ metadata_admin.selected_vector_store }}" selected>{{ metadata_admin.selected_vector_store }}</option>
+          {% endif %}
+        </select>
+      </label>
+      <button type="submit" class="wizard-btn">Load</button>
+      <button type="submit" name="refresh" value="true" class="ghost wizard-btn">Refresh Vector Stores</button>
+    </form>
+    {% if metadata_admin.selected_vector_store and metadata_admin.documents|default([]) %}
+    <div class="document-relation-import-export">
+      <button
+        type="button"
+        class="wizard-btn"
+        hx-post="/ui/admin/document-metadata/autofill"
+        hx-vals='{"vector_store_name":"{{ metadata_admin.selected_vector_store }}"}'
+        hx-target="#document-metadata-admin"
+        hx-swap="outerHTML"
+      >Auto-fill Metadata</button>
+      <a class="ghost wizard-btn" href="/ui/admin/document-metadata/export?vector_store_name={{ metadata_admin.selected_vector_store|urlencode }}">Export CSV</a>
+      <form
+        enctype="multipart/form-data"
+        hx-post="/ui/admin/document-metadata/import"
+        hx-target="#document-metadata-admin"
+        hx-swap="outerHTML"
+      >
+        <input type="hidden" name="vector_store_name" value="{{ metadata_admin.selected_vector_store }}" />
+        <input type="file" name="metadata_csv" accept=".csv,text/csv" required />
+        <button type="submit" class="ghost wizard-btn">Import CSV</button>
+      </form>
+    </div>
+    {% endif %}
+  </section>
+
+  {% if metadata_admin.latest_documents|default([]) %}
+  <section class="admin-rule-card">
+    <div class="admin-rule-card-head">
+      <h4>Recent Effective Documents (Preview)</h4>
+      <span class="muted">{{ metadata_admin.selected_vector_store }}_bk_retrieval_v</span>
+    </div>
+    <div class="document-relation-admin-table-wrap">
+      <table class="document-relation-admin-table">
+        <thead><tr><th>Rank</th><th>Publication Date</th><th>Filename</th><th>Series</th><th>Role</th><th>Status</th></tr></thead>
+        <tbody>
+        {% for row in metadata_admin.latest_documents %}
+          <tr>
+            <td>{{ row.latest_rank }}</td>
+            <td>{{ row.publication_date }}</td>
+            <td>{{ row.filename }}</td>
+            <td>{{ row.document_series }}</td>
+            <td>{{ row.document_role }}</td>
+            <td>{{ row.metadata_status }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
+  <section class="admin-rule-card">
+    <div class="admin-rule-card-head">
+      <h4>Documents ({{ metadata_admin.documents|default([])|length }})</h4>
+      <span class="muted">Manual edits take precedence over auto-fill</span>
+    </div>
+    {% if metadata_admin.documents|default([]) %}
+    <div class="document-relation-admin-table-wrap">
+      <table class="document-relation-admin-table document-metadata-table">
+        <thead><tr><th>Filename</th><th>Publication Date</th><th>Source</th><th>Series</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody>
+        {% for row in metadata_admin.documents %}
+          <tr>
+            <td>{{ row.filename }}</td>
+            <td>{{ row.publication_date|default('', true) }}</td>
+            <td>{{ row.publication_date_source|default('', true) }}</td>
+            <td>{{ row.document_series|default('', true) }}</td>
+            <td>{{ row.document_role|default('', true) }}</td>
+            <td>{{ row.metadata_status|default('', true) }}</td>
+            <td>
+              <details class="document-relation-edit-details">
+                <summary>Edit</summary>
+                <form class="document-metadata-edit-form" hx-post="/ui/admin/document-metadata/save" hx-target="#document-metadata-admin" hx-swap="outerHTML">
+                  <input type="hidden" name="vector_store_name" value="{{ metadata_admin.selected_vector_store }}" />
+                  <input type="hidden" name="doc_id" value="{{ row.doc_id }}" />
+                  <label class="field"><span>Publication Date</span><input type="date" name="publication_date" value="{{ row.publication_date|default('', true) }}" /></label>
+                  <label class="field"><span>Precision</span><select name="publication_date_precision">
+                    <option value="">Unknown</option>
+                    {% for value in metadata_admin.precision_options %}<option value="{{ value }}" {% if value == row.publication_date_precision %}selected{% endif %}>{{ value }}</option>{% endfor %}
+                  </select></label>
+                  <label class="field"><span>Series</span><select name="document_series">
+                    {% for value in metadata_admin.series_options %}<option value="{{ value }}" {% if value == row.document_series %}selected{% endif %}>{{ value }}</option>{% endfor %}
+                  </select></label>
+                  <label class="field"><span>Role</span><select name="document_role">
+                    {% for value in metadata_admin.role_options %}<option value="{{ value }}" {% if value == row.document_role %}selected{% endif %}>{{ value }}</option>{% endfor %}
+                  </select></label>
+                  <label class="field"><span>Logical Document Key</span><input type="text" name="logical_document_key" value="{{ row.logical_document_key|default('', true) }}" /></label>
+                  <label class="field"><span>Revision</span><input type="number" min="1" name="revision_no" value="{{ row.revision_no|default(1, true) }}" /></label>
+                  <label class="field"><span>Status</span><select name="metadata_status">
+                    {% for value in metadata_admin.status_options %}<option value="{{ value }}" {% if value == row.metadata_status %}selected{% endif %}>{{ value }}</option>{% endfor %}
+                  </select></label>
+                  <button type="submit" class="wizard-btn">Save</button>
+                </form>
+              </details>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="muted">Select a Vector Store to load document metadata.</p>
+    {% endif %}
+  </section>
+</div>

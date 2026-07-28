@@ -396,8 +396,9 @@ def build_bookrag_document_row(
     page_count: int | None,
     language_hint: str | None,
     created_at: str | None,
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    row = {
         "doc_id": doc_id,
         "vector_store_name": _as_text(vector_store_name, max_len=255),
         "workflow_id": _as_text(workflow_id, max_len=64),
@@ -412,6 +413,10 @@ def build_bookrag_document_row(
         "language_hint": _as_text(language_hint, max_len=200),
         "created_at": _as_text(created_at, max_len=50),
     }
+    row.update(metadata or {})
+    for column_name, _ in BOOKRAG_DOCUMENT_COLUMNS:
+        row.setdefault(column_name, None)
+    return row
 
 
 

@@ -9,7 +9,15 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from app.services.bookrag_retrieval import retrieve_bookrag_evidence
+from app.services.bookrag_document_metadata import (
+    fetch_effective_document_scope,
+    fetch_governed_document_scope,
+    question_has_explicit_timeline,
+)
+from app.services.bookrag_retrieval import (
+    render_bookrag_evidence_packages,
+    retrieve_bookrag_evidence,
+)
 from app.services.bookrag_schema import build_bookrag_relationship_contract
 from app.runtime import DEFAULT_EVSUI_API_TOKEN
 from app.teradata_runtime import TERADATA_IMPORT_ERROR, VectorStore, execute_sql
@@ -492,6 +500,61 @@ def _build_bookrag_dummy_data(*, question: str, vector_store_name: str, schema_n
         },
     }
 
+def _bookrag_doc_id_filter(doc_ids: list[object]) -> str:
+    values = sorted({str(value).strip() for value in doc_ids if str(value).strip()})
+    if not values:
+        raise ValueError("At least one document id is required for governed retrieval.")
+    quoted_values = ", ".join("'" + value.replace("'", "''") + "'" for value in values)
+    return f"doc_id IN ({quoted_values})"
+
+
+def _bookrag_package_doc_id(package: dict[str, object]) -> str:
+    match = package.get("match") or {}
+    document = package.get("document") or {}
+    if not isinstance(match, dict):
+        match = {}
+    if not isinstance(document, dict):
+        document = {}
+    return str(match.get("doc_id") or document.get("doc_id") or "").strip()
+
+
+def _mark_bookrag_track(packages: list[dict[str, object]], track: str) -> list[dict[str, object]]:
+    marked: list[dict[str, object]] = []
+    for package in packages:
+        item = dict(package)
+        item["retrieval_track"] = track
+        marked.append(item)
+    return marked
+
+
+def _merge_bookrag_tracks(
+    latest_packages: list[dict[str, object]],
+    periodic_packages: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Keep current evidence first while guaranteeing periodic context is visible."""
+    ordered: list[dict[str, object]] = []
+    seen: set[tuple[str, str]] = set()
+    for index in range(max(len(latest_packages), len(periodic_packages))):
+        for packages in (latest_packages, periodic_packages):
+            if index >= len(packages):
+                continue
+            package = packages[index]
+            match = package.get("match") or {}
+            if not isinstance(match, dict):
+                match = {}
+            key = (
+                _bookrag_package_doc_id(package),
+                str(match.get("node_id") or match.get("content") or "").strip(),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            ordered.append(package)
+    for rank, package in enumerate(ordered, start=1):
+        package["rank"] = rank
+    return ordered
+
+
 def _retrieve_bookrag_evidence_or_raise(*, question: str, vector_store_name: str, schema_name: str | None, top_k: int | None = None):
     if VectorStore is None:
         raise HTTPException(status_code=503, detail=f"VectorStore runtime is unavailable: {TERADATA_IMPORT_ERROR}")
@@ -511,28 +574,95 @@ def _retrieve_bookrag_evidence_or_raise(*, question: str, vector_store_name: str
     except Exception as ex:
         raise HTTPException(status_code=400, detail=f"cannot open VectorStore('{vector_store_value}'): {ex}") from ex
 
+    has_explicit_timeline = question_has_explicit_timeline(question_value)
     try:
-        try:
-            similarity_result = vector_store.similarity_search(
-                question=question_value,
-                top_k=_clamp_top_k(top_k) if top_k is not None else None,
+        if has_explicit_timeline:
+            governed_scope = fetch_effective_document_scope(
+                vector_store_name=vector_store_value,
+                schema_name=schema_name,
+                execute_sql_fn=execute_sql,
             )
-        except TypeError:
-            similarity_result = vector_store.similarity_search(question_value)
+        else:
+            governed_scope = fetch_governed_document_scope(
+                vector_store_name=vector_store_value,
+                schema_name=schema_name,
+                execute_sql_fn=execute_sql,
+            )
     except Exception as ex:
-        raise HTTPException(status_code=500, detail=f"similarity_search failed on '{vector_store_value}': {ex}") from ex
+        raise HTTPException(
+            status_code=500,
+            detail=f"Effective-document scope resolution failed for '{vector_store_value}': {ex}",
+        ) from ex
+    if not list(governed_scope.get("allowed_doc_ids") or []):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"No effective publication dates are available for '{vector_store_value}'. "
+                "Run Document Metadata auto-fill and confirm review rows."
+            ),
+        )
+
+    discovery_top_k = max(20, _clamp_top_k(top_k))
+    allowed_doc_ids = list(governed_scope.get("allowed_doc_ids") or [])
+    periodic_doc_ids = list(governed_scope.get("periodic_doc_ids") or [])
+    try:
+        latest_similarity_result = vector_store.similarity_search(
+            question=question_value,
+            top_k=discovery_top_k,
+            filter=_bookrag_doc_id_filter(allowed_doc_ids),
+        )
+        periodic_similarity_result = None
+        if periodic_doc_ids:
+            periodic_similarity_result = vector_store.similarity_search(
+                question=question_value,
+                top_k=discovery_top_k,
+                filter=_bookrag_doc_id_filter(periodic_doc_ids),
+            )
+    except Exception as ex:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Governed similarity_search failed on '{vector_store_value}': {ex}. "
+                "This retrieval path requires VectorStore SQL filter support."
+            ),
+        ) from ex
 
     try:
-        evidence = retrieve_bookrag_evidence(
+        latest_evidence = retrieve_bookrag_evidence(
             vector_store_name=vector_store_value,
-            similarity_result=similarity_result,
+            similarity_result=latest_similarity_result,
             execute_sql_fn=execute_sql,
             schema_name=schema_name,
         )
+        periodic_evidence = {"packages": []}
+        if periodic_similarity_result is not None:
+            periodic_evidence = retrieve_bookrag_evidence(
+                vector_store_name=vector_store_value,
+                similarity_result=periodic_similarity_result,
+                execute_sql_fn=execute_sql,
+                schema_name=schema_name,
+            )
+        latest_packages = _mark_bookrag_track(
+            list(latest_evidence.get("packages") or []), "latest_related"
+        )
+        periodic_packages = _mark_bookrag_track(
+            list(periodic_evidence.get("packages") or []), "periodic_background"
+        )
+        packages = _merge_bookrag_tracks(latest_packages, periodic_packages)
+        evidence = dict(latest_evidence)
+        evidence["packages"] = packages
+        evidence["package_count"] = len(packages)
+        evidence["packages_total"] = len(packages)
+        evidence["evidence_text"] = render_bookrag_evidence_packages(packages)
+        evidence["retrieval_scope"] = governed_scope
+        evidence["retrieval_source"] = f"{governed_scope.get('view_name')} -> bnode.content"
     except Exception as ex:
         raise HTTPException(status_code=500, detail=f"BookRAG evidence retrieval failed for '{vector_store_value}': {ex}") from ex
 
-    return question_value, vector_store_value, evidence
+    # prepare_response receives the already-filtered latest-information result;
+    # periodic evidence is explicitly included in the custom prompt below.
+    response_similarity_result = latest_similarity_result or periodic_similarity_result
+    return question_value, vector_store_value, evidence, response_similarity_result
 
 
 def _clamp_top_k(raw: int | None, *, default: int = 5, minimum: int = 1, maximum: int = 20) -> int:
@@ -607,6 +737,7 @@ def _build_bookrag_llm_input(
         item: dict[str, object] = {
             "rank": package.get("rank"),
             "score": package.get("score"),
+            "retrieval_track": package.get("retrieval_track") or "latest_related",
             "evidence_type": evidence_type,
             "path": match.get("path") or section_path,
             "section_path": section_path,
@@ -664,12 +795,16 @@ def _build_bookrag_llm_input(
             "return_json_ready": True,
         },
         "instructions": [
-            "Answer only from the supplied evidence.",
+            "Answer only from the supplied evidence and its governed document scope.",
             "Separate observed facts from inference and do not invent missing support.",
             "Attach rank-based citations to material conclusions.",
-            "Prioritize performance, revenue structure, financial position, and risk factors.",
+            "Treat latest_related evidence as the basis for current conclusions, ratings, forecasts, and numeric facts.",
+            "Use periodic_background evidence only to add relevant background, reasons, mechanisms, or detailed analysis.",
+            "When sources conflict, prefer the evidence with the newer publication_date; do not let periodic background override a newer conclusion.",
+            "Do not claim that a source is uniquely strongest, weakest, or comprehensive unless the supplied evidence directly establishes that comparison.",
             "Keep the response concise and JSON-ready for external API consumers.",
         ],
+        "retrieval_scope": payload.get("retrieval_scope"),
         "evidence": evidence_items,
     }
 
@@ -742,6 +877,7 @@ def _build_bookrag_llm_prompt(llm_input: dict[str, object]) -> str:
         title = str(item.get("title") or item.get("section_title") or "").strip()
         node_id = str(item.get("node_id") or "").strip()
         content = str(item.get("content") or "").strip()
+        document = item.get("document") or {}
         if len(content) > 1800:
             content = content[:1800] + " ..."
         entity_items = list(item.get("entities") or [])
@@ -767,7 +903,28 @@ def _build_bookrag_llm_prompt(llm_input: dict[str, object]) -> str:
                 for field in ("from_entity_text", "from_entity_id", "relationship", "to_entity_text", "to_entity_id")
             )
         )
-        lines = [f"[{item.get('rank')}] node_id={node_id} title={title}{page_label}", content]
+        document_label = " ".join(
+            part
+            for part in (
+                str(document.get("filename") or "").strip(),
+                f"publication_date={document.get('publication_date')}"
+                if document.get("publication_date")
+                else "",
+                f"series={document.get('document_series')}"
+                if document.get("document_series")
+                else "",
+                f"role={document.get('document_role')}"
+                if document.get("document_role")
+                else "",
+            )
+            if part
+        )
+        lines = [f"[{item.get('rank')}] node_id={node_id} title={title}{page_label}"]
+        track = str(item.get("retrieval_track") or "latest_related").strip()
+        lines.append(f"Evidence track: {track}")
+        if document_label:
+            lines.append(f"Document: {document_label}")
+        lines.append(content)
         if entity_preview:
             lines.append(f"Entities: {entity_preview}")
         if relation_preview:
@@ -786,10 +943,36 @@ def _build_bookrag_llm_prompt(llm_input: dict[str, object]) -> str:
                 line += f" — {description}"
             lines.append(line)
         evidence_lines.append("\n".join(lines))
+    scope = llm_input.get("retrieval_scope") or {}
+    scope_lines: list[str] = []
+    if isinstance(scope, dict):
+        if scope.get("mode") == "explicit_timeline":
+            scope_lines.append("Mode: explicit timeline; obsolete revisions were excluded.")
+        elif scope.get("mode") == "latest_related_with_periodic_background":
+            scope_lines.append(
+                "Mode: latest related evidence plus periodic background; obsolete revisions were excluded."
+            )
+            scope_lines.append(
+                f"Eligible documents: {len(list(scope.get('allowed_doc_ids') or []))}; "
+                f"periodic candidates: {len(list(scope.get('periodic_doc_ids') or []))}."
+            )
+        else:
+            for label, key in (
+                ("Primary", "primary_documents"),
+                ("Supplement", "supplemental_documents"),
+            ):
+                filenames = [
+                    str(row.get("filename") or row.get("doc_id") or "").strip()
+                    for row in list(scope.get(key) or [])
+                    if isinstance(row, dict)
+                ]
+                if filenames:
+                    scope_lines.append(f"{label}: " + ", ".join(filenames))
     prompt_parts = [
         "You are a grounded BookRAG answerer.",
         *instructions,
         "When possible, mention node_id or page references already present in the evidence.",
+        "Governed document scope:\n" + "\n".join(scope_lines) if scope_lines else "",
         "Evidence:",
         "\n\n".join(evidence_lines) if evidence_lines else "(no evidence)",
     ]
@@ -812,7 +995,13 @@ def _extract_bookrag_answer_text(result: object) -> str:
     return str(format_preview(result, max_chars=None)).strip()
 
 
-def _build_bookrag_live_answer_or_raise(*, question: str, vector_store_name: str, llm_input: dict[str, object]) -> dict[str, object]:
+def _build_bookrag_live_answer_or_raise(
+    *,
+    question: str,
+    vector_store_name: str,
+    llm_input: dict[str, object],
+    similarity_result: object,
+) -> dict[str, object]:
     if VectorStore is None:
         raise HTTPException(status_code=503, detail=f"VectorStore runtime is unavailable: {TERADATA_IMPORT_ERROR}")
     try:
@@ -820,31 +1009,32 @@ def _build_bookrag_live_answer_or_raise(*, question: str, vector_store_name: str
     except Exception as ex:
         raise HTTPException(status_code=400, detail=f"cannot open VectorStore('{vector_store_name}'): {ex}") from ex
 
-    ask_prompt = _build_bookrag_llm_prompt(llm_input)
-    ask_fn = getattr(vector_store, "ask", None)
-    if not callable(ask_fn):
-        raise HTTPException(status_code=500, detail=f"VectorStore.ask is unavailable on '{vector_store_name}'.")
+    response_prompt = _build_bookrag_llm_prompt(llm_input)
+    prepare_response_fn = getattr(vector_store, "prepare_response", None)
+    if not callable(prepare_response_fn):
+        raise HTTPException(status_code=500, detail=f"VectorStore.prepare_response is unavailable on '{vector_store_name}'.")
     try:
         try:
-            ask_result = ask_fn(question=question, prompt=ask_prompt)
+            ask_result = prepare_response_fn(
+                similarity_results=similarity_result,
+                question=question,
+                prompt=response_prompt,
+            )
         except TypeError:
             try:
-                ask_result = ask_fn(question, ask_prompt)
+                ask_result = prepare_response_fn(similarity_result, question, response_prompt)
             except TypeError:
-                try:
-                    ask_result = ask_fn(question=question)
-                except TypeError:
-                    ask_result = ask_fn(question)
+                ask_result = prepare_response_fn(similarity_result, question=question)
     except Exception as ex:
-        raise HTTPException(status_code=500, detail=f"VectorStore.ask failed on '{vector_store_name}': {ex}") from ex
+        raise HTTPException(status_code=500, detail=f"VectorStore.prepare_response failed on '{vector_store_name}': {ex}") from ex
 
     answer_text = _extract_bookrag_answer_text(ask_result)
     if not answer_text:
-        raise HTTPException(status_code=500, detail=f"VectorStore.ask returned empty answer on '{vector_store_name}'.")
+        raise HTTPException(status_code=500, detail=f"VectorStore.prepare_response returned empty answer on '{vector_store_name}'.")
     citations = _build_bookrag_citations_from_llm_input(llm_input)
     return {
         "mode": "live",
-        "model": "vectorstore.ask",
+        "model": "vectorstore.prepare_response",
         "grounded": bool(citations),
         "text": answer_text,
         "citations": citations,
@@ -896,7 +1086,7 @@ async def api_bookrag_retrieve_get(
         auth_context = _require_api_access(request)
         if auth_context.get("mode") == "session":
             _ensure_connected_runtime_for_session(request, request.app)
-        question_value, vector_store_value, evidence = _retrieve_bookrag_evidence_or_raise(
+        question_value, vector_store_value, evidence, _ = _retrieve_bookrag_evidence_or_raise(
             question=question,
             vector_store_name=vector_store_name,
             schema_name=schema_value,
@@ -962,7 +1152,7 @@ async def api_bookrag_answer_get(
         auth_context = _require_api_access(request)
         if auth_context.get("mode") == "session":
             _ensure_connected_runtime_for_session(request, request.app)
-        question_value, vector_store_value, evidence = _retrieve_bookrag_evidence_or_raise(
+        question_value, vector_store_value, evidence, similarity_result = _retrieve_bookrag_evidence_or_raise(
             question=question,
             vector_store_name=vector_store_name,
             schema_name=schema_value,
@@ -976,7 +1166,12 @@ async def api_bookrag_answer_get(
             include_entities=True,
             include_mapping=True,
         )
-        answer = _build_bookrag_live_answer_or_raise(question=question_value, vector_store_name=vector_store_value, llm_input=llm_input)
+        answer = _build_bookrag_live_answer_or_raise(
+            question=question_value,
+            vector_store_name=vector_store_value,
+            llm_input=llm_input,
+            similarity_result=similarity_result,
+        )
         return {
             "meta": _build_api_meta(request=request, auth_context=auth_context, top_k=top_k_value),
             "question": question_value,
@@ -1083,7 +1278,7 @@ async def api_bookrag_retrieve(request: Request, payload: BookRAGRetrieveRequest
 
     schema_value = _normalize_optional_text(payload.schema_name)
     top_k_value = _clamp_top_k(payload.top_k)
-    question, vector_store_name, evidence = _retrieve_bookrag_evidence_or_raise(
+    question, vector_store_name, evidence, _ = _retrieve_bookrag_evidence_or_raise(
         question=payload.question,
         vector_store_name=payload.vector_store_name,
         schema_name=schema_value,
@@ -1127,7 +1322,7 @@ async def api_bookrag_answer(request: Request, payload: BookRAGAnswerRequest):
 
     schema_value = _normalize_optional_text(payload.schema_name)
     top_k_value = _clamp_top_k(payload.top_k)
-    question, vector_store_name, evidence = _retrieve_bookrag_evidence_or_raise(
+    question, vector_store_name, evidence, similarity_result = _retrieve_bookrag_evidence_or_raise(
         question=payload.question,
         vector_store_name=payload.vector_store_name,
         schema_name=schema_value,
@@ -1141,7 +1336,12 @@ async def api_bookrag_answer(request: Request, payload: BookRAGAnswerRequest):
         include_entities=bool(payload.include_entities),
         include_mapping=bool(payload.include_mapping),
     )
-    answer = _build_bookrag_live_answer_or_raise(question=question, vector_store_name=vector_store_name, llm_input=llm_input)
+    answer = _build_bookrag_live_answer_or_raise(
+        question=question,
+        vector_store_name=vector_store_name,
+        llm_input=llm_input,
+        similarity_result=similarity_result,
+    )
 
     user_time = datetime.now().strftime("%H:%M")
     assistant_time = datetime.now().strftime("%H:%M")

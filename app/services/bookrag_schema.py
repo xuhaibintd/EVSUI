@@ -30,7 +30,19 @@ BOOKRAG_DOCUMENT_COLUMNS: list[tuple[str, str]] = [
     ("page_count", "INTEGER"),
     ("language_hint", "VARCHAR(200)"),
     ("created_at", "VARCHAR(50)"),
+    ("publication_date", "DATE"),
+    ("publication_date_source", "VARCHAR(32)"),
+    ("publication_date_precision", "VARCHAR(16)"),
+    ("document_series", "VARCHAR(32)"),
+    ("document_role", "VARCHAR(32)"),
+    ("logical_document_key", "VARCHAR(255) CHARACTER SET UNICODE"),
+    ("revision_no", "INTEGER"),
+    ("metadata_status", "VARCHAR(16)"),
+    ("metadata_updated_by", "VARCHAR(128) CHARACTER SET UNICODE"),
+    ("metadata_updated_at", "TIMESTAMP(6)"),
 ]
+
+BOOKRAG_DOCUMENT_METADATA_COLUMNS: list[tuple[str, str]] = BOOKRAG_DOCUMENT_COLUMNS[13:]
 
 BOOKRAG_BLOCK_COLUMNS: list[tuple[str, str]] = [
     ("doc_id", "VARCHAR(64)"),
@@ -395,6 +407,11 @@ def build_bookrag_relationship_contract(vector_store_name: str) -> dict[str, Any
     """Return physical table names plus the document-scoped join contract."""
     targets = build_bookrag_table_targets(vector_store_name)
     return {
+        "retrieval_view": {
+            "name": build_bookrag_retrieval_view_name(vector_store_name),
+            "document_rank_column": "latest_rank",
+            "effective_document_rule": "publication_date IS NOT NULL and not target of bdrel.updates",
+        },
         "tables": {
             table_key: {
                 "name": targets[table_key],
@@ -416,6 +433,11 @@ def build_bookrag_relationship_contract(vector_store_name: str) -> dict[str, Any
             for spec in BOOKRAG_RELATIONSHIP_SPECS
         ],
     }
+
+
+def build_bookrag_retrieval_view_name(vector_store_name: str) -> str:
+    base_name = _sanitize_identifier(f"{vector_store_name}_bk", fallback="bookrag_bk")
+    return _with_suffix(base_name, "retrieval_v")
 
 def _build_table_ddl(qualified_table: str, columns: list[tuple[str, str]]) -> str:
     column_signature = tuple(name for name, _ in columns)
@@ -479,7 +501,7 @@ def prepare_bookrag_tables(
     execute_sql_fn: ExecuteSqlFn | None,
 ) -> list[str]:
     warnings: list[str] = []
-    warnings.extend(_ensure_table(schema_name, table_targets["documents"], BOOKRAG_DOCUMENT_COLUMNS, execute_sql_fn))
+    warnings.extend(prepare_bookrag_document_table(schema_name, table_targets, execute_sql_fn))
     warnings.extend(_ensure_table(schema_name, table_targets["blocks"], BOOKRAG_BLOCK_COLUMNS, execute_sql_fn))
     warnings.extend(_ensure_table(schema_name, table_targets["nodes"], BOOKRAG_NODE_COLUMNS, execute_sql_fn))
     warnings.extend(prepare_bookrag_document_relation_table(schema_name, table_targets, execute_sql_fn))
@@ -610,8 +632,158 @@ def prepare_bookrag_document_table(
     execute_sql_fn: ExecuteSqlFn | None,
 ) -> list[str]:
     warnings: list[str] = []
+    table_name = table_targets["documents"]
+    qualified_table = _qualified_table_sql(schema_name, table_name)
+    if _teradata_table_exists(qualified_table, execute_sql_fn):
+        added_columns = migrate_bookrag_document_metadata_columns(
+            schema_name=schema_name,
+            table_name=table_name,
+            execute_sql_fn=execute_sql_fn,
+        )
+        if added_columns:
+            warnings.append(
+                "Added BookRAG document metadata column(s): "
+                + ", ".join(added_columns)
+                + "."
+            )
     warnings.extend(_ensure_table(schema_name, table_targets["documents"], BOOKRAG_DOCUMENT_COLUMNS, execute_sql_fn))
     return warnings
+
+
+def migrate_bookrag_document_metadata_columns(
+    *,
+    schema_name: str | None,
+    table_name: str,
+    execute_sql_fn: ExecuteSqlFn | None,
+) -> tuple[str, ...]:
+    """Add nullable governed-retrieval metadata columns to an existing bdoc."""
+    if execute_sql_fn is None:
+        raise RuntimeError("teradataml.execute_sql is unavailable.")
+    qualified_table = _qualified_table_sql(schema_name, table_name)
+    if not _teradata_table_exists(qualified_table, execute_sql_fn):
+        return ()
+
+    added: list[str] = []
+    for column_name, column_type in BOOKRAG_DOCUMENT_METADATA_COLUMNS:
+        try:
+            execute_sql_fn(f'SELECT TOP 1 "{column_name}" FROM {qualified_table}')
+            continue
+        except Exception as ex:
+            message = str(ex).lower()
+            missing = "3810" in message or (
+                "column" in message
+                and ("does not exist" in message or "not found" in message)
+            )
+            if not missing:
+                raise
+        execute_sql_fn(
+            f'ALTER TABLE {qualified_table} ADD "{column_name}" {column_type}'
+        )
+        added.append(column_name)
+    return tuple(added)
+
+
+def prepare_bookrag_retrieval_view(
+    *,
+    vector_store_name: str,
+    schema_name: str | None,
+    execute_sql_fn: ExecuteSqlFn | None,
+) -> str:
+    """Create the single governed retrieval view used by API and MCP SQL access."""
+    if execute_sql_fn is None:
+        raise RuntimeError("teradataml.execute_sql is unavailable.")
+    targets = build_bookrag_table_targets(vector_store_name)
+    qualified_documents = _qualified_table_sql(schema_name, targets["documents"])
+    qualified_nodes = _qualified_table_sql(schema_name, targets["nodes"])
+    qualified_relations = _qualified_table_sql(schema_name, targets["document_relations"])
+    view_name = build_bookrag_retrieval_view_name(vector_store_name)
+    qualified_view = _qualified_table_sql(schema_name, view_name)
+    execute_sql_fn(
+        f"""
+REPLACE VIEW {qualified_view} AS
+SELECT
+    n."doc_id",
+    ranked_docs."filename",
+    ranked_docs."publication_date",
+    ranked_docs."publication_date_source",
+    ranked_docs."publication_date_precision",
+    ranked_docs."document_series",
+    ranked_docs."document_role",
+    ranked_docs."logical_document_key",
+    ranked_docs."revision_no",
+    ranked_docs."metadata_status",
+    ranked_docs."latest_rank",
+    n."node_id",
+    n."node_type",
+    n."level",
+    n."ordinal",
+    n."title",
+    n."page_start",
+    n."page_end",
+    n."path",
+    n."is_leaf",
+    n."content"
+FROM {qualified_nodes} AS n
+JOIN (
+    SELECT
+        d."doc_id",
+        d."filename",
+        d."publication_date",
+        d."publication_date_source",
+        d."publication_date_precision",
+        d."document_series",
+        d."document_role",
+        d."logical_document_key",
+        d."revision_no",
+        d."metadata_status",
+        ROW_NUMBER() OVER (
+            ORDER BY d."publication_date" DESC, d."filename" ASC, d."doc_id" ASC
+        ) AS "latest_rank"
+    FROM {qualified_documents} AS d
+    WHERE d."publication_date" IS NOT NULL
+      AND NOT EXISTS (
+          SELECT 1
+          FROM {qualified_relations} AS r
+          WHERE r."relation_type" = 'updates'
+            AND r."to_doc_id" = d."doc_id"
+      )
+) AS ranked_docs
+  ON ranked_docs."doc_id" = n."doc_id"
+"""
+    )
+    return view_name
+
+
+def ensure_bookrag_retrieval_view(
+    *,
+    vector_store_name: str,
+    schema_name: str | None,
+    execute_sql_fn: ExecuteSqlFn | None,
+) -> str:
+    """Create a missing view, or replace one that lacks the governed contract."""
+    if execute_sql_fn is None:
+        raise RuntimeError("teradataml.execute_sql is unavailable.")
+    view_name = build_bookrag_retrieval_view_name(vector_store_name)
+    qualified_view = _qualified_table_sql(schema_name, view_name)
+    try:
+        execute_sql_fn(
+            f'SELECT TOP 1 "doc_id", "publication_date", "document_role", '
+            f'"latest_rank", "node_id", "content" FROM {qualified_view}'
+        )
+        return view_name
+    except Exception as ex:
+        message = str(ex).lower()
+        missing_view = "3807" in message or "does not exist" in message or "not found" in message
+        missing_contract_column = "3810" in message or (
+            "column" in message and ("does not exist" in message or "not found" in message)
+        )
+        if not (missing_view or missing_contract_column):
+            raise
+        return prepare_bookrag_retrieval_view(
+            vector_store_name=vector_store_name,
+            schema_name=schema_name,
+            execute_sql_fn=execute_sql_fn,
+        )
 
 
 def prepare_bookrag_raw_table(

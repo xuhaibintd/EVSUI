@@ -3,7 +3,13 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
-from app.services.bookrag_schema import BOOKRAG_DOCUMENT_COLUMNS, _ensure_table
+from app.services.bookrag_schema import (
+    BOOKRAG_DOCUMENT_COLUMNS,
+    _ensure_table,
+    migrate_bookrag_document_metadata_columns,
+    ensure_bookrag_retrieval_view,
+    prepare_bookrag_retrieval_view,
+)
 
 
 class BookragTablePreparationTests(unittest.TestCase):
@@ -70,6 +76,72 @@ class BookragTablePreparationTests(unittest.TestCase):
 
         self.assertEqual(warnings, [])
         self.assertIn('CREATE SET TABLE "demo"."store_bdoc"', execute_mock.call_args.args[0])
+
+    @mock.patch("app.services.bookrag_schema._teradata_table_exists", return_value=True)
+    def test_metadata_migration_adds_only_missing_columns(self, _exists_mock: mock.Mock) -> None:
+        def execute(sql: str):
+            if sql.startswith('SELECT TOP 1 "publication_date"'):
+                raise RuntimeError("[3810] Column does not exist")
+            return None
+
+        execute_mock = mock.Mock(side_effect=execute)
+        added = migrate_bookrag_document_metadata_columns(
+            schema_name="demo",
+            table_name="MUBKWM_bk_bdoc",
+            execute_sql_fn=execute_mock,
+        )
+
+        self.assertEqual(added, ("publication_date",))
+        add_sql = [
+            call.args[0]
+            for call in execute_mock.call_args_list
+            if call.args[0].startswith("ALTER TABLE")
+        ]
+        self.assertEqual(
+            add_sql,
+            ['ALTER TABLE "demo"."MUBKWM_bk_bdoc" ADD "publication_date" DATE'],
+        )
+
+    def test_retrieval_view_ranks_effective_documents_by_publication_date(self) -> None:
+        execute_mock = mock.Mock()
+
+        view_name = prepare_bookrag_retrieval_view(
+            vector_store_name="MUBKWM",
+            schema_name="usecases_japan",
+            execute_sql_fn=execute_mock,
+        )
+
+        self.assertEqual(view_name, "MUBKWM_bk_retrieval_v")
+        sql = execute_mock.call_args.args[0]
+        self.assertIn('ORDER BY d."publication_date" DESC', sql)
+        self.assertIn('r."relation_type" = \'updates\'', sql)
+        self.assertIn('r."to_doc_id" = d."doc_id"', sql)
+        self.assertIn('"usecases_japan"."MUBKWM_bk_bnode"', sql)
+
+    def test_existing_retrieval_view_is_not_replaced_on_regular_access(self) -> None:
+        execute_mock = mock.Mock()
+
+        view_name = ensure_bookrag_retrieval_view(
+            vector_store_name="MUBKWM",
+            schema_name="usecases_japan",
+            execute_sql_fn=execute_mock,
+        )
+
+        self.assertEqual(view_name, "MUBKWM_bk_retrieval_v")
+        self.assertEqual(execute_mock.call_count, 1)
+        self.assertIn('SELECT TOP 1 "doc_id", "publication_date"', execute_mock.call_args.args[0])
+
+    def test_missing_retrieval_view_is_created(self) -> None:
+        execute_mock = mock.Mock(side_effect=[RuntimeError("[3807] Object does not exist"), None])
+
+        view_name = ensure_bookrag_retrieval_view(
+            vector_store_name="MUBKWM",
+            schema_name="usecases_japan",
+            execute_sql_fn=execute_mock,
+        )
+
+        self.assertEqual(view_name, "MUBKWM_bk_retrieval_v")
+        self.assertIn("REPLACE VIEW", execute_mock.call_args.args[0])
 
 
 if __name__ == "__main__":

@@ -29,7 +29,8 @@ EVSUI is a `FastAPI + Jinja2 + HTMX` interface for working with Teradata Vector 
 
 - Supports `VectorStore.ask` and `VectorStore.similarity_search`
 - Independent Run List dropdown for chat target vector store
-- Current BookRAG retrieval starts with semantic similarity search over `bnode.content`. For each matched node it reconstructs the ancestor section chain and attaches the source block, document metadata, governed document-relation labels, and node-local entity/relation metadata when available.
+- BookRAG retrieval uses semantic similarity over `bnode.content`. For questions without an explicit timeline, the API first resolves the governed document scope and discards semantic matches outside that scope. Each retained node is expanded with its ancestor section chain, source block, document metadata, governed document-relation labels, and node-local entity/relation metadata when available.
+- Latest-document governance adds publication metadata to `bdoc`, excludes obsolete `bdrel.updates` targets, and exposes one `<vector_store>_bk_retrieval_v` view for both API and MCP SQL access. See [BookRAG Latest-Document Governance](docs/bookrag_latest_document_governance.md).
 - Related-document rows and entity relations enrich a matched evidence package; they are not additional retrieval edges. The current service does not automatically retrieve a related document, walk an entity graph, compare all relevant sections, or validate that a generated answer's claims are supported by its returned citation candidates.
 
 ### BookRAG Commercial Application Scenarios

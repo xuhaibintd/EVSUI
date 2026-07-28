@@ -421,6 +421,14 @@ def _normalize_document_row(row: dict[str, Any]) -> dict[str, Any]:
         "page_count": _as_int(row.get("page_count")),
         "language_hint": _as_text(row.get("language_hint")),
         "created_at": _as_text(row.get("created_at")),
+        "publication_date": _as_text(row.get("publication_date")),
+        "publication_date_source": _as_text(row.get("publication_date_source")),
+        "publication_date_precision": _as_text(row.get("publication_date_precision")),
+        "document_series": _as_text(row.get("document_series")),
+        "document_role": _as_text(row.get("document_role")),
+        "logical_document_key": _as_text(row.get("logical_document_key")),
+        "revision_no": _as_int(row.get("revision_no")),
+        "metadata_status": _as_text(row.get("metadata_status")),
     }
 
 
@@ -701,6 +709,14 @@ def build_bookrag_evidence_packages(
         "page_count",
         "language_hint",
         "created_at",
+        "publication_date",
+        "publication_date_source",
+        "publication_date_precision",
+        "document_series",
+        "document_role",
+        "logical_document_key",
+        "revision_no",
+        "metadata_status",
     ]
     document_rows = _safe_fetch_rows_by_ids(
         schema_name=effective_schema_name,

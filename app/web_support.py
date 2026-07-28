@@ -642,6 +642,20 @@ def _build_home_context(request: Request, app) -> dict:
             "source": "database",
             "auto_refresh": True,
         },
+        "document_metadata_admin": {
+            "vector_store_options": list(state.get("chat_vs_options") or []),
+            "selected_vector_store": str(
+                state.get("last_created_vs_name") or state.get("selected_vs_name") or ""
+            ).strip(),
+            "documents": [],
+            "latest_documents": [],
+            "series_options": ["main", "summary", "monthly", "spot", "topics", "other"],
+            "role_options": ["comprehensive", "update", "theme", "performance", "other"],
+            "precision_options": ["day", "month"],
+            "status_options": ["confirmed", "review", "missing"],
+            "status": None,
+            "auto_refresh": True,
+        },
         "document_upload_error": "",
         "document_upload_notices": app.state.document_upload_notices,
         "eval_panel": build_precision_eval_panel_context(document_root=DOCUMENT_UPLOAD_DIR, debug_root=DEBUG_UPLOAD_DIR),

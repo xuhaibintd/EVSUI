@@ -1021,6 +1021,29 @@
   gap: 0.8rem;
 }
 
+.document-metadata-admin {
+  display: grid;
+  gap: 0.8rem;
+  margin-bottom: 1rem;
+}
+
+.document-metadata-edit-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(12rem, 1fr));
+  gap: 0.55rem;
+  min-width: 34rem;
+  padding: 0.5rem 0;
+}
+
+.document-metadata-edit-form .wizard-btn {
+  align-self: end;
+}
+
+.document-metadata-table td:first-child {
+  min-width: 18rem;
+  overflow-wrap: anywhere;
+}
+
 .document-relation-toolbar,
 .document-relation-admin-form {
   display: grid;
@@ -1082,5 +1105,10 @@
   .document-relation-toolbar,
   .document-relation-admin-form {
     grid-template-columns: 1fr;
+  }
+
+  .document-metadata-edit-form {
+    grid-template-columns: 1fr;
+    min-width: 20rem;
   }
 }

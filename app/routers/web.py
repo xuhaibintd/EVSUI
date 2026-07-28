@@ -36,6 +36,17 @@ from app.services.bookrag_document_relations import (
     save_document_relation,
     validate_document_relations,
 )
+from app.services.bookrag_document_metadata import (
+    BOOKRAG_DOCUMENT_ROLES,
+    BOOKRAG_DOCUMENT_SERIES,
+    BOOKRAG_METADATA_STATUSES,
+    BOOKRAG_PUBLICATION_DATE_PRECISIONS,
+    backfill_document_metadata,
+    fetch_document_metadata,
+    fetch_latest_document_preview,
+    save_document_metadata,
+)
+from app.services.bookrag_schema import ensure_bookrag_retrieval_view
 from app.services.create_config import CREATE_FIELD_MAX_LEN, default_create_values
 from app.services.doc_modes.constants import collect_doc_pipeline_ui_values
 from app.services.multi_format import (
@@ -140,6 +151,31 @@ def _document_relation_schema_name(app) -> str | None:
     return str(create_values.get("target_database") or params.get("username") or "").strip() or None
 
 
+def _bookrag_admin_vector_store_options(app) -> list[str]:
+    """Include locally loaded BookRAG runs before their Vector Store becomes Ready."""
+    state = app.state.evs_state
+    schema_name = _document_relation_schema_name(app)
+    local_run_names: list[str] = []
+    for run in list_bookrag_csv_runs():
+        if str(run.get("load_status") or "").strip().lower() != "ready":
+            continue
+        run_schema = str(run.get("target_database") or "").strip()
+        if schema_name and run_schema and run_schema.lower() != schema_name.lower():
+            continue
+        name = str(run.get("vector_store_name") or "").strip()
+        if name:
+            local_run_names.append(name)
+    return list(dict.fromkeys(
+        str(item).strip()
+        for item in (
+            list(state.get("chat_vs_options") or [])
+            + local_run_names
+            + [state.get("last_created_vs_name"), state.get("selected_vs_name")]
+        )
+        if str(item or "").strip()
+    ))
+
+
 def _document_relation_admin_context(
     app,
     *,
@@ -148,14 +184,7 @@ def _document_relation_admin_context(
     auto_refresh: bool = False,
 ) -> dict:
     state = app.state.evs_state
-    options = list(dict.fromkeys(
-        str(item).strip()
-        for item in (
-            list(state.get("chat_vs_options") or [])
-            + [state.get("last_created_vs_name"), state.get("selected_vs_name")]
-        )
-        if str(item or "").strip()
-    ))
+    options = _bookrag_admin_vector_store_options(app)
     selected = str(
         vector_store_name
         or state.get("last_created_vs_name")
@@ -198,6 +227,57 @@ def _document_relation_admin_context(
             context["status"] = {
                 "kind": "error",
                 "title": "Document Relationship Load Failed",
+                "detail": str(ex),
+            }
+    return context
+
+
+def _document_metadata_admin_context(
+    app,
+    *,
+    vector_store_name: str = "",
+    status: dict | None = None,
+    auto_refresh: bool = False,
+) -> dict:
+    state = app.state.evs_state
+    options = _bookrag_admin_vector_store_options(app)
+    selected = str(
+        vector_store_name
+        or state.get("last_created_vs_name")
+        or state.get("selected_vs_name")
+        or ""
+    ).strip()
+    context = {
+        "vector_store_options": options,
+        "selected_vector_store": selected,
+        "documents": [],
+        "latest_documents": [],
+        "series_options": BOOKRAG_DOCUMENT_SERIES,
+        "role_options": BOOKRAG_DOCUMENT_ROLES,
+        "precision_options": BOOKRAG_PUBLICATION_DATE_PRECISIONS,
+        "status_options": BOOKRAG_METADATA_STATUSES,
+        "status": status,
+        "auto_refresh": auto_refresh,
+    }
+    if not selected:
+        return context
+    try:
+        schema_name = _document_relation_schema_name(app)
+        context["documents"] = fetch_document_metadata(
+            vector_store_name=selected,
+            schema_name=schema_name,
+            execute_sql_fn=execute_sql,
+        )
+        context["latest_documents"] = fetch_latest_document_preview(
+            vector_store_name=selected,
+            schema_name=schema_name,
+            execute_sql_fn=execute_sql,
+        )
+    except Exception as ex:
+        if status is None:
+            context["status"] = {
+                "kind": "error",
+                "title": "Document Metadata Load Failed",
                 "detail": str(ex),
             }
     return context
@@ -1291,6 +1371,219 @@ async def update_bookrag_section_rules_panel(request: Request):
 
 
 
+@router.get("/ui/admin/document-metadata", response_class=HTMLResponse)
+async def load_document_metadata_admin(
+    request: Request,
+    vector_store_name: str = "",
+    refresh: bool = False,
+):
+    if not _is_logged_in(request, request.app):
+        return HTMLResponse("Unauthorized", status_code=401)
+    _activate_session_state(request, request.app)
+    selected = vector_store_name.strip()
+    if selected:
+        request.app.state.evs_state["selected_vs_name"] = selected
+    status = _refresh_document_relation_vector_store_options(request) if refresh else None
+    if refresh:
+        _persist_active_session_state(request, request.app)
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "partials/document_metadata_admin.html",
+        {"document_metadata_admin": _document_metadata_admin_context(
+            request.app,
+            vector_store_name=selected,
+            status=status,
+        )},
+    )
+
+
+@router.post("/ui/admin/document-metadata/autofill", response_class=HTMLResponse)
+async def autofill_document_metadata_admin(
+    request: Request,
+    vector_store_name: str = Form(default=""),
+):
+    if not _is_logged_in(request, request.app):
+        return HTMLResponse("Unauthorized", status_code=401)
+    _activate_session_state(request, request.app)
+    selected = vector_store_name.strip()
+    try:
+        updated = backfill_document_metadata(
+            vector_store_name=selected,
+            schema_name=_document_relation_schema_name(request.app),
+            execute_sql_fn=execute_sql,
+            username=str(request.cookies.get("evsui_user", "")) or "metadata-rule",
+        )
+        status = {
+            "kind": "ok",
+            "title": "Metadata Auto-fill Complete",
+            "detail": f"Updated {updated} document(s); manual dates were preserved.",
+        }
+    except Exception as ex:
+        status = {"kind": "error", "title": "Metadata Auto-fill Failed", "detail": str(ex)}
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "partials/document_metadata_admin.html",
+        {"document_metadata_admin": _document_metadata_admin_context(
+            request.app,
+            vector_store_name=selected,
+            status=status,
+        )},
+    )
+
+
+@router.post("/ui/admin/document-metadata/save", response_class=HTMLResponse)
+async def save_document_metadata_admin(
+    request: Request,
+    vector_store_name: str = Form(default=""),
+    doc_id: str = Form(default=""),
+    publication_date: str = Form(default=""),
+    publication_date_precision: str = Form(default=""),
+    document_series: str = Form(default=""),
+    document_role: str = Form(default=""),
+    logical_document_key: str = Form(default=""),
+    revision_no: str = Form(default="1"),
+    metadata_status: str = Form(default=""),
+):
+    if not _is_logged_in(request, request.app):
+        return HTMLResponse("Unauthorized", status_code=401)
+    _activate_session_state(request, request.app)
+    selected = vector_store_name.strip()
+    try:
+        saved = save_document_metadata(
+            vector_store_name=selected,
+            schema_name=_document_relation_schema_name(request.app),
+            doc_id=doc_id,
+            values={
+                "publication_date": publication_date,
+                "publication_date_precision": publication_date_precision,
+                "document_series": document_series,
+                "document_role": document_role,
+                "logical_document_key": logical_document_key,
+                "revision_no": revision_no,
+                "metadata_status": metadata_status,
+            },
+            execute_sql_fn=execute_sql,
+            username=str(request.cookies.get("evsui_user", "")),
+        )
+        status = {
+            "kind": "ok",
+            "title": "Document Metadata Saved",
+            "detail": f"Saved metadata for {saved.get('filename') or saved['doc_id']}.",
+        }
+    except Exception as ex:
+        status = {"kind": "error", "title": "Document Metadata Save Failed", "detail": str(ex)}
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "partials/document_metadata_admin.html",
+        {"document_metadata_admin": _document_metadata_admin_context(
+            request.app,
+            vector_store_name=selected,
+            status=status,
+        )},
+    )
+
+
+@router.get("/ui/admin/document-metadata/export")
+async def export_document_metadata_admin(request: Request, vector_store_name: str = ""):
+    if not _is_logged_in(request, request.app):
+        return HTMLResponse("Unauthorized", status_code=401)
+    _activate_session_state(request, request.app)
+    selected = vector_store_name.strip()
+    rows = fetch_document_metadata(
+        vector_store_name=selected,
+        schema_name=_document_relation_schema_name(request.app),
+        execute_sql_fn=execute_sql,
+    )
+    fieldnames = [
+        "doc_id",
+        "filename",
+        "publication_date",
+        "publication_date_source",
+        "publication_date_precision",
+        "document_series",
+        "document_role",
+        "logical_document_key",
+        "revision_no",
+        "metadata_status",
+    ]
+    buffer = io.StringIO(newline="")
+    writer = csv.DictWriter(buffer, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(rows)
+    return Response(
+        content="\ufeff" + buffer.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{selected}_bdoc_metadata.csv"'},
+    )
+
+
+@router.post("/ui/admin/document-metadata/import", response_class=HTMLResponse)
+async def import_document_metadata_admin(
+    request: Request,
+    vector_store_name: str = Form(default=""),
+    metadata_csv: UploadFile = File(default=None),
+):
+    if not _is_logged_in(request, request.app):
+        return HTMLResponse("Unauthorized", status_code=401)
+    _activate_session_state(request, request.app)
+    selected = vector_store_name.strip()
+    try:
+        if metadata_csv is None or not metadata_csv.filename:
+            raise ValueError("Select a document metadata CSV file.")
+        payload = (await metadata_csv.read()).decode("utf-8-sig")
+        imported = [dict(row) for row in csv.DictReader(io.StringIO(payload))]
+        schema_name = _document_relation_schema_name(request.app)
+        documents = fetch_document_metadata(
+            vector_store_name=selected,
+            schema_name=schema_name,
+            execute_sql_fn=execute_sql,
+        )
+        filename_map: dict[str, str] = {}
+        duplicate_filenames: set[str] = set()
+        for document in documents:
+            filename = str(document.get("filename") or "")
+            if filename in filename_map:
+                duplicate_filenames.add(filename)
+            filename_map[filename] = str(document.get("doc_id") or "")
+        for row in imported:
+            doc_id = str(row.get("doc_id") or "").strip()
+            if not doc_id:
+                filename = str(row.get("filename") or "").strip()
+                if filename in duplicate_filenames or filename not in filename_map:
+                    raise ValueError(f"Filename is missing or not unique: {filename!r}.")
+                doc_id = filename_map[filename]
+            save_document_metadata(
+                vector_store_name=selected,
+                schema_name=schema_name,
+                doc_id=doc_id,
+                values=row,
+                execute_sql_fn=execute_sql,
+                username=str(request.cookies.get("evsui_user", "")),
+                ensure_view=False,
+            )
+        ensure_bookrag_retrieval_view(
+            vector_store_name=selected,
+            schema_name=schema_name,
+            execute_sql_fn=execute_sql,
+        )
+        status = {
+            "kind": "ok",
+            "title": "Metadata CSV Imported",
+            "detail": f"Validated and saved {len(imported)} document row(s).",
+        }
+    except Exception as ex:
+        status = {"kind": "error", "title": "Metadata CSV Import Failed", "detail": str(ex)}
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "partials/document_metadata_admin.html",
+        {"document_metadata_admin": _document_metadata_admin_context(
+            request.app,
+            vector_store_name=selected,
+            status=status,
+        )},
+    )
+
+
 @router.get("/ui/admin/document-relations", response_class=HTMLResponse)
 async def load_document_relations_admin(
     request: Request,
@@ -1336,6 +1629,16 @@ async def initialize_document_relations_admin(
         if not documents:
             raise RuntimeError("bdoc contains no documents; bdrel was not initialized.")
         created = ensure_document_relation_table(
+            vector_store_name=selected,
+            schema_name=schema_name,
+            execute_sql_fn=execute_sql,
+        )
+        fetch_document_metadata(
+            vector_store_name=selected,
+            schema_name=schema_name,
+            execute_sql_fn=execute_sql,
+        )
+        ensure_bookrag_retrieval_view(
             vector_store_name=selected,
             schema_name=schema_name,
             execute_sql_fn=execute_sql,
@@ -1402,6 +1705,16 @@ async def save_document_relations_admin(
             if all((original_from_doc_id.strip(), original_relation_type.strip(), original_to_doc_id.strip()))
             else None,
         )
+        fetch_document_metadata(
+            vector_store_name=selected,
+            schema_name=schema_name,
+            execute_sql_fn=execute_sql,
+        )
+        ensure_bookrag_retrieval_view(
+            vector_store_name=selected,
+            schema_name=schema_name,
+            execute_sql_fn=execute_sql,
+        )
         status = {
             "kind": "ok",
             "title": "Relationship Saved",
@@ -1439,6 +1752,16 @@ async def delete_document_relations_admin(
             from_doc_id=from_doc_id.strip(),
             relation_type=relation_type.strip(),
             to_doc_id=to_doc_id.strip(),
+            execute_sql_fn=execute_sql,
+        )
+        fetch_document_metadata(
+            vector_store_name=selected,
+            schema_name=_document_relation_schema_name(request.app),
+            execute_sql_fn=execute_sql,
+        )
+        ensure_bookrag_retrieval_view(
+            vector_store_name=selected,
+            schema_name=_document_relation_schema_name(request.app),
             execute_sql_fn=execute_sql,
         )
         status = {"kind": "ok", "title": "Relationship Deleted", "detail": "The relationship was deleted."}
@@ -1536,6 +1859,16 @@ async def import_document_relations_admin(
                 execute_sql_fn=execute_sql,
                 username=str(request.cookies.get("evsui_user", "")),
             )
+        fetch_document_metadata(
+            vector_store_name=selected,
+            schema_name=schema_name,
+            execute_sql_fn=execute_sql,
+        )
+        ensure_bookrag_retrieval_view(
+            vector_store_name=selected,
+            schema_name=schema_name,
+            execute_sql_fn=execute_sql,
+        )
         status = {
             "kind": "ok",
             "title": "Relationship CSV Imported",
