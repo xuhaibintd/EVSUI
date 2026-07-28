@@ -43,7 +43,6 @@ from app.services.bookrag_document_metadata import (
     BOOKRAG_PUBLICATION_DATE_PRECISIONS,
     backfill_document_metadata,
     fetch_document_metadata,
-    fetch_latest_document_preview,
     save_document_metadata,
 )
 from app.services.bookrag_schema import ensure_bookrag_retrieval_view
@@ -251,7 +250,6 @@ def _document_metadata_admin_context(
         "vector_store_options": options,
         "selected_vector_store": selected,
         "documents": [],
-        "latest_documents": [],
         "series_options": BOOKRAG_DOCUMENT_SERIES,
         "role_options": BOOKRAG_DOCUMENT_ROLES,
         "precision_options": BOOKRAG_PUBLICATION_DATE_PRECISIONS,
@@ -264,11 +262,6 @@ def _document_metadata_admin_context(
     try:
         schema_name = _document_relation_schema_name(app)
         context["documents"] = fetch_document_metadata(
-            vector_store_name=selected,
-            schema_name=schema_name,
-            execute_sql_fn=execute_sql,
-        )
-        context["latest_documents"] = fetch_latest_document_preview(
             vector_store_name=selected,
             schema_name=schema_name,
             execute_sql_fn=execute_sql,

@@ -648,7 +648,6 @@ def _build_home_context(request: Request, app) -> dict:
                 state.get("last_created_vs_name") or state.get("selected_vs_name") or ""
             ).strip(),
             "documents": [],
-            "latest_documents": [],
             "series_options": ["main", "summary", "monthly", "spot", "topics", "other"],
             "role_options": ["comprehensive", "update", "theme", "performance", "other"],
             "precision_options": ["day", "month"],

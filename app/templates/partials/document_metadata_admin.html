@@ -64,32 +64,6 @@
     {% endif %}
   </section>
 
-  {% if metadata_admin.latest_documents|default([]) %}
-  <section class="admin-rule-card">
-    <div class="admin-rule-card-head">
-      <h4>Recent Effective Documents (Preview)</h4>
-      <span class="muted">{{ metadata_admin.selected_vector_store }}_bk_retrieval_v</span>
-    </div>
-    <div class="document-relation-admin-table-wrap">
-      <table class="document-relation-admin-table">
-        <thead><tr><th>Rank</th><th>Publication Date</th><th>Filename</th><th>Series</th><th>Role</th><th>Status</th></tr></thead>
-        <tbody>
-        {% for row in metadata_admin.latest_documents %}
-          <tr>
-            <td>{{ row.latest_rank }}</td>
-            <td>{{ row.publication_date }}</td>
-            <td>{{ row.filename }}</td>
-            <td>{{ row.document_series }}</td>
-            <td>{{ row.document_role }}</td>
-            <td>{{ row.metadata_status }}</td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </section>
-  {% endif %}
-
   <section class="admin-rule-card">
     <div class="admin-rule-card-head">
       <h4>Documents ({{ metadata_admin.documents|default([])|length }})</h4>

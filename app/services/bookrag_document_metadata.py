@@ -374,30 +374,6 @@ def backfill_document_metadata(
     return updated
 
 
-def fetch_latest_document_preview(
-    *,
-    vector_store_name: str,
-    schema_name: str | None,
-    execute_sql_fn: ExecuteSqlFn | None,
-    limit: int = 3,
-) -> list[dict[str, Any]]:
-    if execute_sql_fn is None:
-        raise RuntimeError("teradataml.execute_sql is unavailable.")
-    view_name = ensure_bookrag_retrieval_view(
-        vector_store_name=vector_store_name,
-        schema_name=schema_name,
-        execute_sql_fn=execute_sql_fn,
-    )
-    qualified_view = _qualified_table_sql(schema_name, view_name)
-    cursor = execute_sql_fn(
-        'SELECT DISTINCT "doc_id", "filename", "publication_date", '
-        '"document_series", "document_role", "metadata_status", "latest_rank" '
-        f"FROM {qualified_view} WHERE \"latest_rank\" <= {max(1, int(limit))} "
-        'ORDER BY "latest_rank"'
-    )
-    return _cursor_rows(cursor)
-
-
 def fetch_governed_document_scope(
     *,
     vector_store_name: str,

@@ -59,7 +59,8 @@ MUBKWM_bk_retrieval_v: 旧版を除外し、publication_date 順の latest_rank 
 2. Select the vector store and run `Auto-fill Metadata`.
 3. Confirm rows whose source is `filename` and status is `review`; correct the publication date when necessary.
 4. In `Document Relationships`, register `new document --updates--> old document` for revisions.
-5. Verify `Effective Latest 3` before using API or MCP retrieval.
+5. Verify each document's publication date, series, role, and metadata status
+   before using API or MCP retrieval.
 
 CSV export and import are available for bulk review. Manual values use `publication_date_source=manual` and are preserved by later auto-fill runs.
 

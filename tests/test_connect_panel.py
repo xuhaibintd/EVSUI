@@ -403,6 +403,7 @@ class DocumentMetadataAdminTests(unittest.TestCase):
         self.assertIn('hx-get="/ui/admin/document-metadata?refresh=true"', html)
         self.assertIn('hx-post="/ui/admin/document-metadata/autofill"', html)
         self.assertIn("Auto-fill Metadata", html)
+        self.assertNotIn("Recent Effective Documents", html)
 
     def test_bookrag_loaded_run_is_selectable_before_vectorstore_is_ready(self):
         app = SimpleNamespace(state=SimpleNamespace(
