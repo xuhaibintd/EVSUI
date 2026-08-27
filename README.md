@@ -8,6 +8,7 @@ EVSUI is a `FastAPI + Jinja2 + HTMX` interface for working with Teradata Vector 
 
 - [Getting Started](#getting-started)
 - [Using EVSUI](#using-evsui)
+- [Overall Design](#overall-design)
 - [Feature Overview](#overview)
 - [Runtime Dependencies](#runtime-dependencies)
 - [Unstructured Configuration](#unstructured-configuration-reference)
@@ -176,6 +177,136 @@ For the uploaded-file `Text PDF Only` flow, the UI does not populate `object_nam
 - **Unstructured API key missing**: configure the key under `unstructured` or save it in **Administration** for the active session.
 - **Teradata connection fails**: confirm that Host, Username, Password, UES URL, and PAT Token are populated and reachable from the machine running EVSUI. Add the PEM/certificate file if your environment requires it.
 - **A vector store does not appear in Retrieval**: select **Run List** on the Retrieval page; the Connect & Manage list does not update it.
+
+## Overall Design
+
+EVSUI is a server-rendered web application running in one FastAPI process. Jinja2 renders complete pages and HTMX replaces page fragments for interactive operations. Web routes and JSON API routes share the same domain services, while integration modules isolate Teradata and Unstructured calls from UI code.
+
+### Component architecture
+
+```mermaid
+flowchart LR
+    subgraph Clients["Clients"]
+        Browser["Browser<br/>Jinja2 pages + HTMX"]
+        ApiClient["External API client<br/>Bearer token or API key"]
+    end
+
+    subgraph App["EVSUI FastAPI process"]
+        Web["Web router<br/>HTML and HTMX endpoints"]
+        API["API router<br/>BookRAG JSON endpoints"]
+        Session["Authentication and session state<br/>per user, in memory"]
+        Flow["Application workflows<br/>connect / create / retrieve / destroy"]
+        Service["Domain services<br/>document modes / BookRAG / evaluation"]
+        TDAdapter["Teradata runtime adapter<br/>teradatagenai / teradataml / teradatasql"]
+        USAdapter["Unstructured workflow adapter<br/>on-demand jobs"]
+
+        Web --> Session
+        API --> Session
+        Web --> Flow
+        API --> Service
+        Flow --> Service
+        Service --> TDAdapter
+        Service --> USAdapter
+    end
+
+    subgraph Local["Local runtime data"]
+        Config["Ignored local config<br/>login / connection / Unstructured defaults"]
+        Files["uploads/<br/>documents / PEM / JSON / CSV / manifests"]
+    end
+
+    subgraph External["External services"]
+        TD["Teradata<br/>source tables / BookRAG tables / vector stores"]
+        US["Unstructured Workflow API<br/>document parsing and enrichment"]
+    end
+
+    Browser --> Web
+    ApiClient --> API
+    Config -.-> Session
+    Config -.-> Service
+    Files <--> Service
+    TDAdapter <--> TD
+    USAdapter <--> US
+```
+
+The principal code boundaries are:
+
+| Layer | Main location | Responsibility |
+|---|---|---|
+| Application entry | `app/main.py` | Creates FastAPI, mounts static files, and registers routers |
+| Web delivery | `app/routers/web.py`, `app/templates/`, `app/static/` | Login, HTML/HTMX endpoints, forms, and browser behavior |
+| JSON API | `app/routers/api.py` | BookRAG schema, retrieval, answer, and health endpoints |
+| Workflow orchestration | `app/workflows/` | Coordinates create, chat, and destroy operations |
+| Domain services | `app/services/` | Document processing, manifests, BookRAG schema/tree/retrieval, and SQL helpers |
+| Document-mode plug-ins | `app/services/doc_modes/` | Selects `Text PDF Only`, `Multi-Format`, or `Multi-Format BookRAG` behavior through one handler registry |
+| Runtime integrations | `app/teradata_runtime.py`, `app/services/unstructured_runtime.py` | Loads external SDKs and resolves integration configuration |
+| Session state | `app/session_state.py` | Keeps each signed-in user's connection, create form, uploads, and chat state isolated |
+
+### Vector store creation paths
+
+All creation modes converge on `VectorStore.create()`, but they prepare its source differently.
+
+```mermaid
+flowchart TB
+    Upload["Uploaded or configured documents"] --> Mode{"Content Processing Mode"}
+
+    Mode -->|"Text PDF Only"| Text["Use standard document/source parameters"]
+    Text --> TextCreate["VectorStore.create()"]
+
+    Mode -->|"Multi-Format"| MFParse["Unstructured workflow<br/>Partitioner + optional enrichment + Chunker"]
+    MFParse --> MFRaw["Raw JSON + parsing manifest"]
+    MFRaw --> MFCSV["Generate standard chunk CSV"]
+    MFCSV --> MFLoad["Load one *_unstructured table into Teradata"]
+    MFLoad --> MFCreate["VectorStore.create()<br/>data=text, key=id"]
+
+    Mode -->|"Multi-Format BookRAG"| BRParse["Unstructured workflow<br/>Partitioner + optional enrichment; no Chunker"]
+    BRParse --> BRRaw["Raw JSON + parsing manifest"]
+    BRRaw --> BRCSV["Build document, block, node,<br/>relationship, audit, and optional graph CSVs"]
+    BRCSV --> BRLoad["Load selected BookRAG tables into Teradata"]
+    BRLoad --> BRCreate["VectorStore.create()<br/>data=content, key=(doc_id, node_id)"]
+
+    TextCreate --> Poll["Poll VectorStore.status()"]
+    MFCreate --> Poll
+    BRCreate --> Poll
+    Poll --> Terminal{"Terminal state"}
+    Terminal -->|Ready| Ready["Available for retrieval"]
+    Terminal -->|Failed| Failed["Show failure and retain diagnostics"]
+```
+
+For both multi-format modes, parsing, JSON-to-CSV conversion, and Teradata loading are deliberately separate stages. Each stage writes a manifest with paths, checksums, row counts, and status. A later stage accepts only a verified `ready` manifest, so an Unstructured call does not need to be repeated when only transformation or loading must be retried.
+
+### Retrieval path
+
+Standard retrieval calls the selected Vector Store directly. BookRAG adds governed document scoping and reconstructs a traceable evidence package around each semantic match.
+
+```mermaid
+flowchart LR
+    Question["User or API question"] --> Select["Select vector store<br/>Retrieval Run List"]
+    Select --> Method{"Retrieval method"}
+
+    Method -->|"VectorStore.ask"| Ask["Grounded answer from VectorStore"]
+    Method -->|"VectorStore.similarity_search"| Similarity["Semantic matches"]
+    Method -->|"BookRAG API"| BRSimilarity["Similarity search over bnode.content"]
+
+    BRSimilarity --> Scope["Latest-document policy<br/>and governed document scope"]
+    Scope --> Key["Resolve composite match<br/>(doc_id, node_id)"]
+    Key --> Expand["Expand ancestor sections and source block"]
+    Expand --> Enrich["Attach bdoc metadata, bdrel labels,<br/>and optional entity context"]
+    Enrich --> Evidence["Structured evidence packages<br/>with page and section provenance"]
+    Evidence --> Response["UI response or JSON API response"]
+
+    Ask --> Response
+    Similarity --> Response
+```
+
+Detailed BookRAG table relationships and transformation rules are documented in [BookRAG Pipeline: Data Structures and Processing Flow](docs/bookrag_pipeline_diagram.md). The external SQL join contract should always be obtained from `GET /api/bookrag/schema` rather than inferred from table names.
+
+### State and persistence model
+
+- Login sessions, connection status, current form values, upload selections, and chat history are held in process memory per `evsui_sid`. Restarting the process clears this UI state.
+- Uploaded files, PEM files, raw JSON, generated CSV files, and manifests are stored below `uploads/`. They survive a process restart until removed from disk.
+- Vector stores, standard multi-format source tables, and BookRAG tables are persisted in Teradata.
+- `app/config/local_dev.json`, auth-user files, and optional model-catalog overrides are local, ignored configuration and must not be committed.
+- The UI exposes independent management and retrieval list refreshes by design; selecting or deleting in one panel does not silently change the other panel's current list.
 
 ## Overview
 

@@ -52,6 +52,8 @@ erDiagram
     DOCUMENTS ||--o{ BLOCKS : "doc_id"
     DOCUMENTS ||--o{ NODES : "doc_id"
     DOCUMENTS ||--o{ ENTITIES : "doc_id"
+    DOCUMENTS ||--o{ DOCUMENT_RELATIONS : "from_doc_id"
+    DOCUMENTS ||--o{ DOCUMENT_RELATIONS : "to_doc_id"
 
     NODES ||--o{ ENTITY_LINKS : "node_id"
     NODES ||--o{ ENTITY_RELATIONS : "source_node_id"
@@ -73,10 +75,10 @@ erDiagram
     }
 
     RAW {
-        string id PK
-        string doc_id FK
+        string doc_id PK,FK
+        int ordinal_raw PK
+        string id
         string element_id
-        int ordinal_raw
         string parent_id
         string type
         int page_number
@@ -88,8 +90,8 @@ erDiagram
     }
 
     BLOCKS {
-        string doc_id FK
-        string element_id
+        string doc_id PK,FK
+        string element_id PK
         string parent_id
         int category_depth
         int heading_level
@@ -103,8 +105,8 @@ erDiagram
     }
 
     NODES {
+        string doc_id PK,FK
         string node_id PK
-        string doc_id FK
         string source_element_id
         string parent_node_id
         string node_type
@@ -119,8 +121,8 @@ erDiagram
     }
 
     ENTITIES {
+        string doc_id PK,FK
         string entity_id PK
-        string doc_id FK
         string canonical_name
         string display_name
         string entity_type
@@ -129,9 +131,9 @@ erDiagram
     }
 
     ENTITY_LINKS {
+        string doc_id PK,FK
         string link_id PK
         string entity_id FK
-        string doc_id FK
         string node_id FK
         string section_node_id
         string source_field
@@ -142,8 +144,8 @@ erDiagram
     }
 
     ENTITY_RELATIONS {
+        string doc_id PK,FK
         string relation_id PK
-        string doc_id FK
         string source_element_id
         string source_node_id FK
         string section_node_id
@@ -153,6 +155,16 @@ erDiagram
         string to_entity_id FK
         string to_entity_text
         string section_path
+    }
+
+    DOCUMENT_RELATIONS {
+        string from_doc_id PK,FK
+        string relation_type PK
+        string to_doc_id PK,FK
+        string from_filename
+        string to_filename
+        string relation_description
+        string source_type
     }
 ```
 
@@ -185,7 +197,7 @@ flowchart TD
 
     SEC_NODE --> NODE_TABLE[(NODES table)]
     LEAF_NODE --> NODE_TABLE
-    NODE_TABLE --> VECTOR[VectorStore retrieval source<br/>key_columns = node_id<br/>data_columns = content]
+    NODE_TABLE --> VECTOR[VectorStore retrieval source<br/>key_columns = doc_id, node_id<br/>data_columns = content]
 ```
 
 ## 4. Runtime Object Flow
@@ -214,16 +226,18 @@ demo_bk_bdoc   documents
 demo_bk_braw   raw elements
 demo_bk_bblk   normalized blocks
 demo_bk_bnode  document tree nodes
+demo_bk_bdrel  governed document relationships
 demo_bk_bent   entities
 demo_bk_belnk  entity mentions linked to nodes
 demo_bk_brel   entity relations
+demo_bk_retrieval_v  governed retrieval view
 ```
 
 The current BookRAG VectorStore source is the node table:
 
 ```text
 object_names = <schema>.<vector_store_name>_bk_bnode
-key_columns  = ["node_id"]
+key_columns  = ["doc_id", "node_id"]
 data_columns = ["content"]
 ```
 
