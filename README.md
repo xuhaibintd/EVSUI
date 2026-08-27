@@ -1,8 +1,181 @@
-# Teradata Vector Store
+# EVSUI — Teradata Vector Store UI
 
 Teradata Vector Store provides vector-search and retrieval capabilities on top of Teradata data. It stores document chunks and embeddings as managed vector stores, then exposes operations for creation, health checks, listing, deletion, semantic similarity search, and grounded Q&A through `VectorStore` and `VSManager`.
 
 EVSUI is a `FastAPI + Jinja2 + HTMX` interface for working with Teradata Vector Store. It helps users connect to Teradata, create vector stores from uploaded or configured document sources, validate retrieval in chat, run precision checks, and manage per-session Unstructured IO credentials.
+
+## Contents
+
+- [Getting Started](#getting-started)
+- [Using EVSUI](#using-evsui)
+- [Feature Overview](#overview)
+- [Runtime Dependencies](#runtime-dependencies)
+- [Unstructured Configuration](#unstructured-configuration-reference)
+- [BookRAG Data Contract](#bookrag-data-and-relationship-contract)
+- [BookRAG API](#bookrag-api-notes)
+- [Authentication and Local Configuration](#authentication-and-local-configuration-reference)
+- [Project Structure and Routes](#project-structure)
+
+## Getting Started
+
+### Prerequisites
+
+Before installing EVSUI, make sure you have:
+
+- Python 3.10 or later. Python 3.11.8 is verified for this repository.
+- Git, if you are cloning the repository.
+- Network access to a Teradata system and these Teradata credentials:
+  - database host, username, and password;
+  - UES URL, normally ending in `/open-analytics`;
+  - PAT token;
+  - PEM, key, or certificate file when required by the target environment.
+- An Unstructured API URL and API key only if you plan to use `Multi-Format` or `Multi-Format BookRAG`. `Text PDF Only` does not use Unstructured.
+
+### 1. Get the code
+
+```bash
+git clone https://github.com/xuhaibintd/EVSUI.git
+cd EVSUI
+```
+
+If you already have the repository, run the remaining commands from its root directory (the directory containing `requirements.txt`).
+
+### 2. Create a virtual environment and install dependencies
+
+Windows PowerShell:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+If PowerShell blocks the activation script, allow it for the current terminal only, then activate again:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\.venv\Scripts\Activate.ps1
+```
+
+Linux or macOS:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+### 3. Configure at least one login user
+
+EVSUI does not provide a default UI login. Copy the example config and set a non-empty username and password before starting the server.
+
+Windows PowerShell:
+
+```powershell
+Copy-Item app/config/local_dev.example.json app/config/local_dev.json
+```
+
+Linux or macOS:
+
+```bash
+cp app/config/local_dev.example.json app/config/local_dev.json
+```
+
+Edit `app/config/local_dev.json`. A minimal working login configuration is:
+
+```json
+{
+  "login": {
+    "username": "admin",
+    "password": "replace-with-a-strong-password",
+    "users": {}
+  },
+  "connection": {
+    "host": "",
+    "username": "",
+    "password": "",
+    "ues_url": "",
+    "pat_token": "",
+    "pem_file": ""
+  },
+  "unstructured": {
+    "api_key": "",
+    "api_url": "https://platform.unstructuredapp.io/api/v1"
+  }
+}
+```
+
+The `connection` values are optional defaults for the Connect & Manage form. You may leave them blank and enter the values in the browser. The `unstructured.api_key` may remain blank unless you use a multi-format mode.
+
+`app/config/local_dev.json` is ignored by Git. Keep real passwords, PAT tokens, API keys, and certificate files out of version control.
+
+As a single-user alternative, set `POC_ADMIN_USER` and `POC_ADMIN_PASSWORD` in the shell that starts EVSUI. These variables are used only when no users are defined in the local config or auth-user file.
+
+### 4. Start EVSUI
+
+With the virtual environment active, run:
+
+```bash
+python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8010
+```
+
+Open <http://127.0.0.1:8010> and sign in with the credentials configured in the previous step. The `--reload` option is intended for local development.
+
+To verify that the web process is running:
+
+```bash
+curl http://127.0.0.1:8010/healthz
+```
+
+Windows PowerShell can use:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8010/healthz
+```
+
+The expected response is `{"status":"ok"}`. This endpoint checks the EVSUI process only; use **Vector Store Health check** after connecting to verify Teradata Vector Store access.
+
+## Using EVSUI
+
+### Connect to Teradata
+
+1. Sign in to EVSUI and open **Connect & Manage**.
+2. Enter the database **Host**, **Username**, and **Password**.
+3. Enter the **UES URL** and **PAT Token**. Both are required by the connection workflow.
+4. Upload a `.pem`, `.key`, or `.crt` file when your environment requires one.
+5. Select **Connect**. A successful result confirms both database context creation and Vector Store authentication.
+6. Run **Vector Store Health check**, then **Get Vector Store List**. The list does not run automatically after connecting.
+
+### Create a vector store
+
+1. Open **Vector Store Creation** and upload one or more documents.
+2. Select a **Content Processing Mode**:
+   - **Text PDF Only** sends the configured PDF/document source through the standard `VectorStore.create()` flow.
+   - **Multi-Format** uses Unstructured, generates the standard chunk table, and then creates a vector store from that table.
+   - **Multi-Format BookRAG** uses Unstructured and builds document-scoped BookRAG tables before vector creation.
+3. Set the Vector Store name, embeddings model, search algorithm, and any mode-specific settings.
+4. For either multi-format mode, complete the three visible stages in order: **Document Parsing**, **Generate CSV from JSON**, and **Load CSV to Unstructured Table** or **Load CSV to Tables**. Then select the table-ready run shown in the Vector Store name field.
+5. Select **Create Vector Store** and wait until the status reaches `Ready` or `Failed`. By default, the server keeps polling without a time-based cutoff.
+
+For the uploaded-file `Text PDF Only` flow, the UI does not populate `object_names` automatically. Supply the source fields required by your Teradata Vector Store configuration.
+
+### Retrieve and review results
+
+1. Open **Vector Store Retrieval**.
+2. Select **Run List** to refresh the retrieval-specific list, then choose a vector store. The management and retrieval lists refresh independently.
+3. Choose `VectorStore.ask`, `VectorStore.similarity_search`, or **BookRAG API**, enter a question, and select **Send**.
+4. Use **Precision Evaluation** to compare a source PDF with generated JSON output.
+5. Use **Administration** to set per-session Unstructured credentials and, for BookRAG stores, manage document metadata and document relationships.
+
+### Common startup problems
+
+- **Server auth is not configured**: set a login user in `app/config/local_dev.json`, `app/config/auth_users.json`, or `POC_ADMIN_USER` / `POC_ADMIN_PASSWORD`, then restart EVSUI.
+- **PowerShell cannot activate `.venv`**: apply the process-scoped execution-policy command shown above; it affects only the current PowerShell process.
+- **Unstructured API key missing**: configure the key under `unstructured` or save it in **Administration** for the active session.
+- **Teradata connection fails**: confirm that Host, Username, Password, UES URL, and PAT Token are populated and reachable from the machine running EVSUI. Add the PEM/certificate file if your environment requires it.
+- **A vector store does not appear in Retrieval**: select **Run List** on the Retrieval page; the Connect & Manage list does not update it.
 
 ## Overview
 
@@ -109,18 +282,16 @@ Section construction uses Unstructured structure metadata where available, with 
 - After a loaded BookRAG store reaches `Ready`, the app verifies that the vector index row count matches the non-empty `bnode.content` row count. `EVS_BOOKRAG_INDEX_READY_TIMEOUT_SECONDS` can optionally add a database-visibility grace period; the default is a single immediate verification. An unavailable verification query is a warning; a successfully verified empty or incomplete index is an error.
 - If `create()` reports `already exists`, the app verifies existence with unfiltered `VSManager.list()` and only reuses the store when its current status is `Ready`.
 
-## Requirements
+## Runtime Dependencies
 
-- Python 3.10+
-- Dependencies in `requirements.txt`:
-  - `fastapi`
-  - `uvicorn[standard]`
-  - `jinja2`
-  - `python-multipart`
-  - `teradataml`
-  - `teradatagenai`
-  - `unstructured-client`
-  - `packaging`
+All Python dependencies are installed by `python -m pip install -r requirements.txt`. The file currently includes:
+
+- Web application: `fastapi`, `uvicorn[standard]`, `jinja2`, and `python-multipart`.
+- Teradata integration: `teradatagenai`, `teradataml`, `teradatamlwidgets`, `teradatasql`, and `teradatasqlalchemy`.
+- Document processing: `unstructured-client`.
+- Version handling: `packaging`.
+
+There is no Node.js build step. Templates, HTMX behavior, JavaScript, and CSS are served directly by FastAPI. Runtime upload/staging directories under `uploads/` are created automatically and are ignored by Git.
 
 ## Unstructured Chain Guide
 
@@ -416,8 +587,9 @@ client_rules:
   - use bnode rather than bleaf for embedding and retrieval
 ```
 
-## Multi Format Config
+## Unstructured Configuration Reference
 
+- This configuration is required only for `Multi-Format` and `Multi-Format BookRAG`.
 - For local debugging, copy `app/config/local_dev.example.json` to `app/config/local_dev.json` and fill in `unstructured`.
 - `app/config/local_dev.json` is ignored by Git and must not be committed.
 - Users can override Unstructured IO settings for their active session from the Admin Rules page.
@@ -438,9 +610,12 @@ Example:
 }
 ```
 
-- Optional runtime env:
+- Optional runtime environment variables:
+  - `UNSTRUCTURED_REQUEST_TIMEOUT_MS` (default: `120000`)
   - `UNSTRUCTURED_WORKFLOW_POLL_SECONDS` (default: `1800`)
-  - `UNSTRUCTURED_WORKFLOW_POLL_INTERVAL` (default: `2`)
+  - `UNSTRUCTURED_WORKFLOW_POLL_INTERVAL_SECONDS` (default: `2`)
+  - `BOOKRAG_WORKFLOW_POLL_SECONDS` and `BOOKRAG_WORKFLOW_POLL_INTERVAL_SECONDS` override the shared polling values for BookRAG.
+  - `MULTI_FORMAT_WORKFLOW_POLL_SECONDS` and `MULTI_FORMAT_WORKFLOW_POLL_INTERVAL_SECONDS` override them for Multi-Format.
   - `UNSTRUCTURED_TERADATA_FLUSH_WAIT_SECONDS` (default: `20`)
   - `UNSTRUCTURED_TERADATA_FLUSH_WAIT_INTERVAL` (default: `2`)
 
@@ -449,76 +624,31 @@ Notes:
 - Workflow API URL default: `https://platform.unstructuredapp.io/api/v1`
 - If the config file exists but does not contain an API key, multi-format create will fail with `Unstructured API key missing`.
 
-## Quick Start
-
-```bash
-cd EVSUI
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8010
-```
-
 ## BookRAG API Notes
 
 - `GET /api/bookrag/schema?vector_store_name=...&schema_name=...` returns the authoritative physical table names, primary keys, table roles, and logical join contract for MCP/SQL clients.
 - `GET /api/bookrag/retrieve` with no query parameters returns a dummy connectivity payload.
 - `GET /api/bookrag/retrieve?question=...&vector_store_name=...` runs a real retrieval.
 - `POST /api/bookrag/retrieve` runs a real retrieval from a JSON body with `question` and `vector_store_name`.
-- API access accepts either the normal EVSUI login session cookie or `Authorization: Bearer <token>` / `x-api-key: <token>` when `EVSUI_API_TOKEN` is configured.
+- API access accepts either the normal EVSUI login session cookie or `Authorization: Bearer <token>` / `x-api-key: <token>`.
+- Set `EVSUI_API_TOKEN` before exposing an API endpoint outside a local development machine. If it is not set, the current development fallback is `evsui-dev-token`.
 
-Windows PowerShell:
+Example:
 
-```powershell
-cd EVSUI
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8010
+```bash
+curl -H "Authorization: Bearer $EVSUI_API_TOKEN" \
+  "http://127.0.0.1:8010/api/bookrag/schema?vector_store_name=my_store&schema_name=my_database"
 ```
 
-Open: `http://127.0.0.1:8010`
+## Authentication and Local Configuration Reference
 
-## Login
+- `EVSUI_LOCAL_CONFIG` can point to a local config file other than `app/config/local_dev.json`.
+- `app/config/auth_users.json` is also supported for local user lists and is ignored by Git. Its format is `{"users":{"alice":"alice-pass","bob":"bob-pass"}}`.
+- `POC_AUTH_FILE` can point to a different auth-user JSON file.
+- `POC_ADMIN_USER` and `POC_ADMIN_PASSWORD` provide a fallback single user only when no config-file users exist.
+- Each login gets its own in-memory session (`evsui_sid`) and independent UI state, including Unstructured settings.
 
-- For local debugging, configure login defaults in `app/config/local_dev.json`.
-- If values are absent, the login page and connection form are left blank for the user to fill in.
-- `app/config/auth_users.json` is still supported for local user lists, but it is ignored by Git.
-
-```json
-{
-  "login": {
-    "username": "admin",
-    "password": "change-me",
-    "users": {
-      "alice": "alice-pass",
-      "bob": "bob-pass"
-    }
-  }
-}
-```
-
-- Connection defaults can be configured in the same local file:
-
-```json
-{
-  "connection": {
-    "host": "db-host",
-    "username": "db-user",
-    "password": "db-password",
-    "ues_url": "https://example/open-analytics",
-    "pat_token": "ccp-token",
-    "pem_file": "uploads\\pem\\debug.pem"
-  }
-}
-```
-
-- Optional:
-  - `POC_AUTH_FILE` to point to a different JSON file path.
-  - Fallback single-user env vars: `POC_ADMIN_USER`, `POC_ADMIN_PASSWORD` (used only when config file has no users).
-
-- Multi-user isolation:
-  - Each login gets its own session (`evsui_sid`) and independent UI state, including Unstructured IO settings.
+Credentials in these local JSON files are stored as plain text. Use strong filesystem permissions, HTTPS through a trusted reverse proxy, a non-default `EVSUI_API_TOKEN`, and an appropriate production authentication layer before allowing non-local access.
 
 ## Project Structure
 
