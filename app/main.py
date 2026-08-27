@@ -10,7 +10,7 @@ from app.routers.web import router as web_router
 from app.web_support import initialize_app_state
 
 
-app = FastAPI(title="Teradata Vector Store", version="0.3.0")
+app = FastAPI(title="Teradata Vector Store", version="0.4.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 initialize_app_state(app, Jinja2Templates(directory=str(TEMPLATES_DIR)))
 app.include_router(web_router)

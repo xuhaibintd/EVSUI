@@ -729,6 +729,20 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
         self.assertEqual(partition_node['settings']['model'], 'gpt-4o')
         self.assertEqual(partition_node['settings']['provider_api_key'], 'secret-key')
 
+    def test_bookrag_hi_res_partition_forwards_coordinates(self) -> None:
+        partition_node, _request_parameters, warnings = multi_format._build_bookrag_workflow_partition_node(
+            src=Path('sample.pdf'),
+            partition_strategy='hi_res',
+            languages=['eng'],
+            image_partition_parameters={
+                'coordinates': False,
+                'unique_element_ids': True,
+            },
+        )
+
+        self.assertEqual(warnings, [])
+        self.assertFalse(partition_node['settings']['coordinates'])
+
     def test_bookrag_ner_model_mismatch_drops_explicit_model(self) -> None:
         create_values = self._create_values(
             multi_format_bookrag_enable_ner='true',
@@ -748,6 +762,26 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
         self.assertEqual(ner_node['settings']['provider_type'], 'openai')
         self.assertNotIn('model', ner_node['settings'])
         self.assertTrue(any('does not match subtype' in warning for warning in warnings))
+
+    def test_bookrag_explicit_vlm_omits_redundant_enrichments(self) -> None:
+        create_values = self._create_values(
+            multi_format_bookrag_enable_image_description='true',
+            multi_format_bookrag_enable_table_to_html='true',
+            multi_format_bookrag_enable_table_description='true',
+            multi_format_bookrag_enable_generative_ocr='true',
+        )
+
+        _workflow_name, workflow_nodes, _request_parameters, warnings, _profile = (
+            multi_format._build_bookrag_reusable_workflow_definition(
+                create_values=create_values,
+                partition_strategy='vlm',
+                languages=[],
+                image_partition_parameters={'unique_element_ids': True},
+            )
+        )
+
+        self.assertEqual([node['name'] for node in workflow_nodes], ['Partitioner'])
+        self.assertTrue(any('redundant enrichment nodes were omitted' in warning for warning in warnings))
 
     def test_bookrag_image_partition_options_read_bookrag_overrides(self) -> None:
         options, warnings, summary = multi_format._resolve_bookrag_image_partition_options(

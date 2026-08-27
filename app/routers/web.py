@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import csv
 import io
-import uuid
+import json
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
@@ -14,7 +14,6 @@ from app.runtime import (
     DOCUMENT_UPLOAD_DIR,
     SESSION_COOKIE_NAME,
 )
-from app.local_config import local_login_defaults
 from app.services.precision_eval import (
     build_precision_eval_panel_context,
     build_precision_eval_prototype_context,
@@ -82,13 +81,13 @@ from app.web_support import (
     _clear_health_result,
     _clear_list_result,
     _collect_upload_files,
+    _current_user,
     _default_evs_state,
     _derive_base_url,
     _ensure_connected_runtime_for_session,
     _format_preview,
     _is_logged_in,
     _is_poc_auth_configured,
-    _is_valid_poc_login,
     _is_vectorstore_already_exists_error,
     _mask_token,
     _new_connect_step,
@@ -109,6 +108,35 @@ from app.workflows.create_flow import handle_upload_and_prepare_create
 from app.workflows.destroy_flow import handle_destroy_selected
 
 router = APIRouter()
+
+
+def _admin_principal(request: Request):
+    principal = request.app.state.auth_store.get_session(_session_id_from_request(request))
+    if principal is None or principal.role != "admin":
+        return None
+    return principal
+
+
+def _render_user_admin(request: Request, *, status: dict[str, str] | None = None, status_code: int = 200):
+    principal = _admin_principal(request)
+    if principal is None:
+        return HTMLResponse("Forbidden", status_code=403)
+    _activate_session_state(request, request.app)
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "user_admin.html",
+        {
+            "logged_in": True,
+            "username": principal.username,
+            "user_role": principal.role,
+            "user_initials": principal.username[:2].upper(),
+            "evs": request.app.state.evs_state,
+            "users": request.app.state.auth_store.list_users(),
+            "roles": ("admin", "operator", "viewer"),
+            "status": status,
+        },
+        status_code=status_code,
+    )
 
 
 def _admin_checkbox_checked(form_data, field_name: str) -> bool:
@@ -321,15 +349,14 @@ async def home(request: Request):
 async def login_page(request: Request):
     if _is_logged_in(request, request.app):
         return RedirectResponse(url="/", status_code=303)
-    default_username, default_password = local_login_defaults()
     return request.app.state.templates.TemplateResponse(
         request,
         "login.html",
         {
             "error": "",
             "logged_in": False,
-            "username": default_username,
-            "password": default_password,
+            "username": "",
+            "password": "",
             "user_initials": "",
         },
     )
@@ -338,31 +365,38 @@ async def login_page(request: Request):
 @router.post("/login", response_class=HTMLResponse)
 async def login_submit(request: Request, username: str = Form(default=""), password: str = Form(default="")):
     clean_username = username.strip()
-    if _is_valid_poc_login(clean_username, password):
-        sid = uuid.uuid4().hex
-        request.app.state.user_sessions[sid] = _new_session_scope(username=clean_username)
+    principal = request.app.state.auth_store.authenticate(clean_username, password)
+    if principal is not None:
+        sid = request.app.state.auth_store.create_session(principal)
+        scope = _new_session_scope(username=principal.username)
+        scope["role"] = principal.role
+        request.app.state.user_sessions[sid] = scope
         secure_cookie = request.url.scheme == "https"
         response = RedirectResponse(url="/", status_code=303)
-        response.set_cookie("evsui_auth", "1", httponly=True, samesite="lax", secure=secure_cookie)
-        response.set_cookie("evsui_user", clean_username, httponly=True, samesite="lax", secure=secure_cookie)
-        response.set_cookie(SESSION_COOKIE_NAME, sid, httponly=True, samesite="lax", secure=secure_cookie)
+        response.set_cookie(
+            SESSION_COOKIE_NAME,
+            sid,
+            max_age=request.app.state.auth_store.session_ttl_seconds,
+            httponly=True,
+            samesite="lax",
+            secure=secure_cookie,
+        )
         return response
-    if not _is_poc_auth_configured():
+    if not _is_poc_auth_configured(request.app):
         error_message = (
-            "Server auth is not configured. Set POC_AUTH_FILE "
-            "(or POC_ADMIN_USER / POC_ADMIN_PASSWORD)."
+            "Server auth is not configured. Set EVSUI_BOOTSTRAP_ADMIN and "
+            "EVSUI_BOOTSTRAP_PASSWORD, then restart EVSUI."
         )
     else:
         error_message = "Invalid username or password."
-    default_username, default_password = local_login_defaults()
     return request.app.state.templates.TemplateResponse(
         request,
         "login.html",
         {
             "error": error_message,
             "logged_in": False,
-            "username": clean_username or default_username,
-            "password": password or default_password,
+            "username": clean_username,
+            "password": "",
             "user_initials": "",
         },
     )
@@ -372,12 +406,154 @@ async def login_submit(request: Request, username: str = Form(default=""), passw
 async def logout(request: Request):
     sid = _session_id_from_request(request)
     if sid:
+        request.app.state.auth_store.revoke_session(sid)
         request.app.state.user_sessions.pop(sid, None)
     response = RedirectResponse(url="/login", status_code=303)
-    response.delete_cookie("evsui_auth")
-    response.delete_cookie("evsui_user")
     response.delete_cookie(SESSION_COOKIE_NAME)
     return response
+
+
+@router.get("/admin/users", response_class=HTMLResponse)
+async def user_admin_page(request: Request):
+    return _render_user_admin(request)
+
+
+@router.post("/admin/users/create", response_class=HTMLResponse)
+async def user_admin_create(
+    request: Request,
+    username: str = Form(default=""),
+    display_name: str = Form(default=""),
+    password: str = Form(default=""),
+    role: str = Form(default="viewer"),
+):
+    if _admin_principal(request) is None:
+        return HTMLResponse("Forbidden", status_code=403)
+    try:
+        request.app.state.auth_store.create_user(
+            username=username,
+            display_name=display_name,
+            password=password,
+            role=role,
+        )
+        status = {"kind": "ok", "detail": f"User '{username.strip()}' created."}
+        return _render_user_admin(request, status=status)
+    except Exception as ex:
+        return _render_user_admin(
+            request,
+            status={"kind": "error", "detail": str(ex)},
+            status_code=400,
+        )
+
+
+@router.post("/admin/users/{username}/toggle", response_class=HTMLResponse)
+async def user_admin_toggle(request: Request, username: str, enabled: str = Form(default="false")):
+    principal = _admin_principal(request)
+    if principal is None:
+        return HTMLResponse("Forbidden", status_code=403)
+    try:
+        next_enabled = enabled.strip().lower() in {"1", "true", "yes", "on"}
+        request.app.state.auth_store.set_enabled(username, next_enabled)
+        if not next_enabled and username.lower() == principal.username.lower():
+            request.app.state.user_sessions.pop(_session_id_from_request(request), None)
+            response = RedirectResponse(url="/login", status_code=303)
+            response.delete_cookie(SESSION_COOKIE_NAME)
+            return response
+        action = "enabled" if next_enabled else "disabled"
+        return _render_user_admin(
+            request,
+            status={"kind": "ok", "detail": f"User '{username}' {action}."},
+        )
+    except Exception as ex:
+        return _render_user_admin(
+            request,
+            status={"kind": "error", "detail": str(ex)},
+            status_code=400,
+        )
+
+
+@router.post("/admin/users/{username}/password", response_class=HTMLResponse)
+async def user_admin_password(request: Request, username: str, password: str = Form(default="")):
+    principal = _admin_principal(request)
+    if principal is None:
+        return HTMLResponse("Forbidden", status_code=403)
+    try:
+        request.app.state.auth_store.reset_password(username, password)
+        request.app.state.user_sessions = {
+            sid: scope
+            for sid, scope in request.app.state.user_sessions.items()
+            if str(scope.get("username") or "").lower() != username.lower()
+        }
+        if username.lower() == principal.username.lower():
+            response = RedirectResponse(url="/login", status_code=303)
+            response.delete_cookie(SESSION_COOKIE_NAME)
+            return response
+        return _render_user_admin(
+            request,
+            status={"kind": "ok", "detail": f"Password for '{username}' reset; existing sessions revoked."},
+        )
+    except Exception as ex:
+        return _render_user_admin(
+            request,
+            status={"kind": "error", "detail": str(ex)},
+            status_code=400,
+        )
+
+
+@router.post("/admin/users/{username}/role", response_class=HTMLResponse)
+async def user_admin_role(request: Request, username: str, role: str = Form(default="viewer")):
+    principal = _admin_principal(request)
+    if principal is None:
+        return HTMLResponse("Forbidden", status_code=403)
+    try:
+        request.app.state.auth_store.set_role(username, role)
+        if username.lower() == principal.username.lower() and role != "admin":
+            return RedirectResponse(url="/", status_code=303)
+        return _render_user_admin(
+            request,
+            status={"kind": "ok", "detail": f"Role for '{username}' changed to '{role}'."},
+        )
+    except Exception as ex:
+        return _render_user_admin(
+            request,
+            status={"kind": "error", "detail": str(ex)},
+            status_code=400,
+        )
+
+
+@router.get("/admin/users/export")
+async def user_admin_export(request: Request):
+    if _admin_principal(request) is None:
+        return HTMLResponse("Forbidden", status_code=403)
+    payload = request.app.state.auth_store.export_users()
+    return Response(
+        content=json.dumps(payload, ensure_ascii=False, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": 'attachment; filename="evsui-users.json"'},
+    )
+
+
+@router.post("/admin/users/import", response_class=HTMLResponse)
+async def user_admin_import(request: Request, users_file: UploadFile = File(...)):
+    if _admin_principal(request) is None:
+        return HTMLResponse("Forbidden", status_code=403)
+    try:
+        raw = await users_file.read()
+        if len(raw) > 2 * 1024 * 1024:
+            raise ValueError("User import file exceeds 2 MiB.")
+        payload = json.loads(raw.decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("User import file must contain a JSON object.")
+        imported = request.app.state.auth_store.import_users(payload)
+        return _render_user_admin(
+            request,
+            status={"kind": "ok", "detail": f"Imported {imported} user(s)."},
+        )
+    except Exception as ex:
+        return _render_user_admin(
+            request,
+            status={"kind": "error", "detail": str(ex)},
+            status_code=400,
+        )
 
 
 @router.post("/ui/evs/connect", response_class=HTMLResponse)
@@ -1404,7 +1580,7 @@ async def autofill_document_metadata_admin(
             vector_store_name=selected,
             schema_name=_document_relation_schema_name(request.app),
             execute_sql_fn=execute_sql,
-            username=str(request.cookies.get("evsui_user", "")) or "metadata-rule",
+            username=_current_user(request) or "metadata-rule",
         )
         status = {
             "kind": "ok",
@@ -1456,7 +1632,7 @@ async def save_document_metadata_admin(
                 "metadata_status": metadata_status,
             },
             execute_sql_fn=execute_sql,
-            username=str(request.cookies.get("evsui_user", "")),
+            username=_current_user(request),
         )
         status = {
             "kind": "ok",
@@ -1551,7 +1727,7 @@ async def import_document_metadata_admin(
                 doc_id=doc_id,
                 values=row,
                 execute_sql_fn=execute_sql,
-                username=str(request.cookies.get("evsui_user", "")),
+                username=_current_user(request),
                 ensure_view=False,
             )
         ensure_bookrag_retrieval_view(
@@ -1689,7 +1865,7 @@ async def save_document_relations_admin(
             },
             documents=documents,
             execute_sql_fn=execute_sql,
-            username=str(request.cookies.get("evsui_user", "")),
+            username=_current_user(request),
             original_key=(
                 original_from_doc_id.strip(),
                 original_relation_type.strip(),
@@ -1850,7 +2026,7 @@ async def import_document_relations_admin(
                 relation=row,
                 documents=documents,
                 execute_sql_fn=execute_sql,
-                username=str(request.cookies.get("evsui_user", "")),
+                username=_current_user(request),
             )
         fetch_document_metadata(
             vector_store_name=selected,

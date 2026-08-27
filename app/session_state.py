@@ -4,15 +4,56 @@ import hmac
 import json
 import logging
 import os
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Callable
 
 from fastapi import Request
+from starlette.datastructures import State
 
 from app.local_config import local_auth_users, local_connection_defaults, local_login_defaults, local_unstructured_defaults
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
+SESSION_SCOPE_KEYS = {
+    "evs_state",
+    "create_form_values",
+    "last_create_operation",
+    "document_uploads",
+    "document_upload_notices",
+    "chat_history",
+}
+class SessionAwareState(State):
+    """Starlette state whose mutable UI fields are isolated per async request."""
+
+    def __init__(self, state: dict[str, Any] | None = None) -> None:
+        super().__init__(state)
+        object.__setattr__(
+            self,
+            "_session_scope_context",
+            ContextVar(f"evsui_active_session_scope_{id(self)}", default=None),
+        )
+
+    def activate_session_scope(self, scope: dict[str, Any]) -> None:
+        self._session_scope_context.set(scope)
+
+    def active_session_scope(self) -> dict[str, Any] | None:
+        return self._session_scope_context.get()
+
+    def __getattr__(self, key: Any) -> Any:
+        if key in SESSION_SCOPE_KEYS:
+            scope = self._session_scope_context.get()
+            if scope is not None and key in scope:
+                return scope[key]
+        return super().__getattr__(key)
+
+    def __setattr__(self, key: Any, value: Any) -> None:
+        if key in SESSION_SCOPE_KEYS:
+            scope = self._session_scope_context.get()
+            if scope is not None:
+                scope[key] = value
+                return
+        super().__setattr__(key, value)
 
 
 def _configured_path_exists(path_hint: str, vs_basics_dir: Path) -> bool:
@@ -121,6 +162,7 @@ def refresh_disconnected_connect_defaults(state: dict, load_defaults: Callable[[
 def new_session_scope(username: str, default_evs_state_fn: Callable[[], dict], default_create_values_fn: Callable[[], dict]) -> dict:
     return {
         "username": username.strip(),
+        "role": "viewer",
         "evs_state": default_evs_state_fn(),
         "create_form_values": default_create_values_fn(),
         "last_create_operation": None,
@@ -135,7 +177,12 @@ def session_id_from_request(request: Request, session_cookie_name: str) -> str:
 
 
 def current_user(request: Request) -> str:
-    return request.cookies.get("evsui_user", "")
+    sid = str(request.cookies.get("evsui_sid", "")).strip()
+    auth_store = getattr(request.app.state, "auth_store", None)
+    if auth_store is not None:
+        principal = auth_store.get_session(sid, touch=False)
+        return principal.username if principal is not None else ""
+    return str(request.cookies.get("evsui_user", ""))
 
 
 def activate_session_state(
@@ -149,13 +196,23 @@ def activate_session_state(
     sessions = app.state.user_sessions
     scope = sessions.get(sid)
     if scope is None:
+        auth_store = getattr(app.state, "auth_store", None)
+        principal = auth_store.get_session(sid) if auth_store is not None else None
         scope = new_session_scope(
-            username=current_user(request),
+            username=principal.username if principal is not None else current_user(request),
             default_evs_state_fn=default_evs_state_fn,
             default_create_values_fn=default_create_values_fn,
         )
+        if principal is not None:
+            scope["role"] = principal.role
         if sid:
             sessions[sid] = scope
+
+    activate = getattr(app.state, "activate_session_scope", None)
+    if callable(activate):
+        activate(scope)
+        refresh_disconnected_connect_defaults(scope["evs_state"], default_evs_state_fn)
+        return scope
 
     app.state.evs_state = scope["evs_state"]
     refresh_disconnected_connect_defaults(app.state.evs_state, default_evs_state_fn)
@@ -173,6 +230,9 @@ def persist_active_session_state(request: Request, app, session_cookie_name: str
         return
     scope = app.state.user_sessions.get(sid)
     if scope is None:
+        return
+    active_scope = getattr(app.state, "active_session_scope", None)
+    if callable(active_scope) and active_scope() is scope:
         return
     scope["evs_state"] = app.state.evs_state
     scope["create_form_values"] = app.state.create_form_values
@@ -224,14 +284,13 @@ def user_initials(username: str) -> str:
 
 
 def is_logged_in(request: Request, app, session_cookie_name: str) -> bool:
-    if request.cookies.get("evsui_auth") != "1":
-        return False
     sid = session_id_from_request(request, session_cookie_name)
     if not sid:
         return False
-    if sid in app.state.user_sessions:
-        return True
-    return bool(current_user(request).strip())
+    auth_store = getattr(app.state, "auth_store", None)
+    if auth_store is not None:
+        return auth_store.get_session(sid) is not None
+    return sid in app.state.user_sessions and request.cookies.get("evsui_auth") == "1"
 
 
 def poc_admin_credentials() -> tuple[str, str]:

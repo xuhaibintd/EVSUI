@@ -404,7 +404,8 @@ def _has_valid_external_api_token(request: Request) -> bool:
 
 def _resolve_api_access_context(request: Request) -> dict[str, str] | None:
     if _is_logged_in(request, request.app):
-        principal = str(request.cookies.get("evsui_user", "")).strip() or "browser_session"
+        scope = _activate_session_state(request, request.app)
+        principal = str((scope or {}).get("username") or "").strip() or "browser_session"
         return {"mode": "session", "principal": principal}
     return _resolve_external_token_context(request)
 

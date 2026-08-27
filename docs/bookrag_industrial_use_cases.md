@@ -273,10 +273,10 @@ This taxonomy prevents prompt changes from being used to hide corpus, metadata, 
 
 | Control area | Current EVSUI support | Required production decision |
 |---|---|---|
-| Authentication | Local users and API token | Enterprise identity, MFA/SSO, service identity, token lifecycle |
-| Authorization | Session-level UI separation | Corpus/document/row-level access aligned with source permissions |
-| Session durability | In-process state | Multi-process/session store, recovery, timeout, and logout policy |
-| Audit | Operational response details and local manifests | Durable access, retrieval, metadata-change, export, and approval logs |
+| Authentication | SQLite users, Argon2 passwords, expiring/revocable server sessions, API token | Enterprise identity, MFA/SSO, service identity, token lifecycle |
+| Authorization | Admin-enforced user management and request-level UI separation | Corpus/document/row-level access aligned with source permissions |
+| Session durability | Identity/session records survive restart; connection/form/chat state remains process-local | Shared state store for multi-replica recovery and background work |
+| Audit | Authentication events, operational response details, and local manifests | Durable retrieval, metadata-change, export, and approval logs with retention policy |
 | Document governance | Metadata and relationship administration | Source ownership, ingestion SLA, completeness, effective-date rules |
 | Data protection | Ignored local secrets and upload paths | Encryption, secret manager, malware scanning, retention, deletion, legal hold |
 | Model governance | Configurable retrieval policy and measurable outputs | Versioning, change approval, regression suite, drift monitoring, rollback |

@@ -6,8 +6,11 @@ from datetime import datetime
 
 from fastapi import Request, UploadFile
 
+from app.auth_store import AuthStore, auth_database_path
+
 from app.runtime import (
     AUTH_USERS_FILE_DEFAULT,
+    AUTH_DATABASE_FILE_DEFAULT,
     DEBUG_UPLOAD_DIR,
     DEFAULT_CHAT_VS_NAME,
     DEFAULT_PAT_TOKEN,
@@ -15,6 +18,7 @@ from app.runtime import (
     PEM_UPLOAD_DIR,
     PROJECT_DIR,
     SESSION_COOKIE_NAME,
+    SESSION_TTL_SECONDS_DEFAULT,
     VS_BASICS_DIR,
 )
 from app.services.create_config import (
@@ -39,11 +43,12 @@ from app.session_state import (
     default_evs_state,
     is_logged_in,
     is_poc_auth_configured,
-    is_valid_poc_login,
     load_auth_users,
     load_connect_defaults,
     new_session_scope,
+    poc_admin_credentials,
     persist_active_session_state,
+    SessionAwareState,
     session_id_from_request,
     user_initials,
 )
@@ -591,6 +596,7 @@ def _build_home_context(request: Request, app) -> dict:
     state = app.state.evs_state
 
     username = _current_user(request)
+    principal = app.state.auth_store.get_session(_session_id_from_request(request), touch=False)
     bookrag_section_rules = load_bookrag_section_rules()
     bookrag_csv_runs = list_bookrag_csv_runs()
     bookrag_loaded_csv_runs = [
@@ -666,6 +672,7 @@ def _build_home_context(request: Request, app) -> dict:
         "json_inspector": build_unstructured_json_inspector_context(),
         "logged_in": _is_logged_in(request, app),
         "username": username,
+        "user_role": principal.role if principal is not None else "viewer",
         "user_initials": _user_initials(username),
     }
 
@@ -684,19 +691,28 @@ def _is_logged_in(request: Request, app) -> bool:
     return is_logged_in(request, app, SESSION_COOKIE_NAME)
 
 
-def _is_poc_auth_configured() -> bool:
+def _is_poc_auth_configured(app=None) -> bool:
+    if app is not None and getattr(app.state, "auth_store", None) is not None:
+        return app.state.auth_store.count_users() > 0
     return is_poc_auth_configured(_load_auth_users)
 
 
-def _is_valid_poc_login(username: str, password: str) -> bool:
-    return is_valid_poc_login(username, password, _load_auth_users)
-
 def initialize_app_state(app, templates) -> None:
+    existing_state = dict(getattr(app.state, "_state", {}) or {})
+    app.state = SessionAwareState(existing_state)
     app.state.templates = templates
+    auth_store = AuthStore(
+        auth_database_path(AUTH_DATABASE_FILE_DEFAULT),
+        session_ttl_seconds=SESSION_TTL_SECONDS_DEFAULT,
+    )
+    auth_store.initialize()
+    legacy_users = _load_auth_users()
+    if not legacy_users:
+        fallback_username, fallback_password = poc_admin_credentials()
+        if fallback_username and fallback_password:
+            legacy_users[fallback_username] = fallback_password
+    auth_store.bootstrap(legacy_users)
+    app.state.auth_store = auth_store
     app.state.user_sessions = {}
-    app.state.evs_state = _default_evs_state()
-    app.state.create_form_values = default_create_values()
-    app.state.last_create_operation = None
-    app.state.document_uploads = []
-    app.state.document_upload_notices = []
-    app.state.chat_history = []
+    fallback_scope = _new_session_scope()
+    app.state.activate_session_scope(fallback_scope)

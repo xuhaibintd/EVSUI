@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import time
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,69 @@ def create_unstructured_client(*, api_key: str, api_url: str, timeout_ms: int | 
         server_url=api_url.rstrip("/"),
         timeout_ms=timeout_ms,
     )
+
+
+def _sdk_payload(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (list, tuple)):
+        return [_sdk_payload(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _sdk_payload(item) for key, item in value.items()}
+    if is_dataclass(value):
+        return _sdk_payload(asdict(value))
+    for method_name in ("model_dump", "to_dict"):
+        method = getattr(value, method_name, None)
+        if callable(method):
+            try:
+                return _sdk_payload(method())
+            except TypeError:
+                continue
+    if hasattr(value, "__dict__"):
+        return {
+            str(key): _sdk_payload(item)
+            for key, item in vars(value).items()
+            if not str(key).startswith("_")
+        }
+    return str(value)
+
+
+def get_unstructured_job_diagnostics(client, *, job_id: str) -> dict[str, Any]:
+    """Return best-effort processing details without hiding the original error."""
+    from unstructured_client.models import operations
+
+    diagnostics: dict[str, Any] = {}
+    calls = (
+        ("details", "get_job_details", "GetJobDetailsRequest", "job_details"),
+        ("failed_files", "get_job_failed_files", "GetJobFailedFilesRequest", "job_failed_files"),
+    )
+    for key, method_name, request_type_name, response_attr in calls:
+        method = getattr(client.jobs, method_name, None)
+        if not callable(method):
+            continue
+        try:
+            # These endpoint-specific request classes were added after the
+            # original Jobs SDK. Their wire shape is the same as GetJobRequest,
+            # so retain compatibility with partially upgraded SDK clients.
+            request_type = getattr(operations, request_type_name, operations.GetJobRequest)
+            response = method(request=request_type(job_id=job_id))
+            status_code = int(getattr(response, "status_code", 0) or 0)
+            if status_code >= 400:
+                diagnostics[f"{key}_error"] = f"status={status_code}"
+                continue
+            diagnostics[key] = _sdk_payload(getattr(response, response_attr, None))
+        except Exception as ex:
+            diagnostics[f"{key}_error"] = str(ex)
+    return diagnostics
+
+
+def _format_job_diagnostics(diagnostics: dict[str, Any]) -> str:
+    if not diagnostics:
+        return ""
+    rendered = json.dumps(diagnostics, ensure_ascii=False, default=str)
+    if len(rendered) > 4000:
+        rendered = rendered[:3997] + "..."
+    return f" diagnostics={rendered}"
 
 
 def create_unstructured_on_demand_job(
@@ -98,7 +162,11 @@ def wait_for_unstructured_job(client, *, job_id: str, timeout_seconds: int, poll
         if status == "COMPLETED":
             return job_info
         if status in {"FAILED", "STOPPED"}:
-            raise RuntimeError(f"Unstructured job ended with status={status}. job_id={job_id}")
+            diagnostics = get_unstructured_job_diagnostics(client, job_id=job_id)
+            raise RuntimeError(
+                f"Unstructured job ended with status={status}. job_id={job_id}"
+                f"{_format_job_diagnostics(diagnostics)}"
+            )
         last_status = status or last_status
         if time.time() - started >= timeout_seconds:
             raise RuntimeError(

@@ -82,10 +82,10 @@ from app.services.bookrag_storage import (
     validate_prepared_unstructured_table_csv,
     write_bookrag_raw_stage_file,
 )
-from app.services.unstructured_job_runner import (
-    create_unstructured_client as _create_unstructured_client,
-    enforce_unstructured_job_submission_spacing as _enforce_unstructured_job_submission_spacing,
-    run_unstructured_workflow_job_for_file as _run_unstructured_workflow_job_for_file,
+from app.integrations.unstructured.gateway import (
+    create_client as _create_unstructured_client,
+    run_workflow_for_file as _run_unstructured_workflow_job_for_file,
+    space_job_submissions as _enforce_unstructured_job_submission_spacing,
 )
 from app.services.unstructured_workflow_builder import (
     build_bookrag_reusable_workflow_definition as _workflow_builder_build_bookrag_reusable_workflow_definition,
@@ -1582,103 +1582,6 @@ def _element_to_chunk_row(
     return row
 
 
-def _partition_document_chunks(
-    client,
-    src: Path,
-    *,
-    chunk_size: int,
-    chunk_overlap: int,
-    partition_strategy: str,
-    languages: list[str],
-    include_orig_elements: bool,
-    overlap_all: bool,
-    chunking_strategy: str = "basic",
-    new_after_n_chars: int | None = None,
-    combine_under_n_chars: int | None = None,
-    multipage_sections: bool | None = None,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
-    from unstructured_client.models import operations
-
-    content_type = mimetypes.guess_type(src.name)[0] or "application/octet-stream"
-    partition_parameters: dict[str, Any] = {
-        "files": {
-            "content": src.read_bytes(),
-            "file_name": src.name,
-            "content_type": content_type,
-        },
-        "strategy": partition_strategy,
-        "chunking_strategy": chunking_strategy,
-        "max_characters": chunk_size,
-        "new_after_n_chars": chunk_size if new_after_n_chars is None else new_after_n_chars,
-        "overlap": chunk_overlap,
-        "overlap_all": overlap_all,
-        "include_orig_elements": include_orig_elements,
-    }
-    if combine_under_n_chars is not None:
-        partition_parameters["combine_under_n_chars"] = combine_under_n_chars
-    if multipage_sections is not None:
-        partition_parameters["multipage_sections"] = multipage_sections
-    if languages:
-        partition_parameters["languages"] = languages
-
-    resp = client.general.partition(
-        request=operations.PartitionRequest(
-            partition_parameters=partition_parameters,
-        )
-    )
-    if int(getattr(resp, "status_code", 0) or 0) >= 400:
-        raise RuntimeError(f"Unstructured partition failed. status={getattr(resp, 'status_code', '?')}")
-    elements = getattr(resp, "elements", None) or []
-    rows: list[dict[str, Any]] = []
-    chunk_sequence = 0
-    for element in elements:
-        if not isinstance(element, dict):
-            continue
-        chunk_sequence += 1
-        row = _element_to_chunk_row(element, src=src, content_type=content_type, row_sequence=chunk_sequence)
-        if row:
-            rows.append(row)
-    return rows, elements, partition_parameters
-
-
-def _partition_document_elements(
-    client,
-    src: Path,
-    *,
-    partition_strategy: str,
-    languages: list[str],
-    include_orig_elements: bool,
-    extra_partition_parameters: dict[str, Any] | None = None,
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    from unstructured_client.models import operations
-
-    content_type = mimetypes.guess_type(src.name)[0] or "application/octet-stream"
-    partition_parameters: dict[str, Any] = {
-        "files": {
-            "content": src.read_bytes(),
-            "file_name": src.name,
-            "content_type": content_type,
-        },
-        "strategy": partition_strategy,
-        "include_orig_elements": include_orig_elements,
-    }
-    if languages:
-        partition_parameters["languages"] = languages
-    if extra_partition_parameters:
-        partition_parameters.update({key: value for key, value in extra_partition_parameters.items() if value is not None})
-
-    resp = client.general.partition(
-        request=operations.PartitionRequest(
-            partition_parameters=partition_parameters,
-        )
-    )
-    if int(getattr(resp, "status_code", 0) or 0) >= 400:
-        raise RuntimeError(f"Unstructured partition failed. status={getattr(resp, 'status_code', '?')}")
-    elements = getattr(resp, "elements", None) or []
-    return elements, partition_parameters
-
-
-
 def _build_bookrag_workflow_partition_node(
     *,
     src: Path,
@@ -1734,117 +1637,6 @@ def _build_multi_format_workflow_definition(
     )
 
 
-def _find_bookrag_workflow_by_name(client, workflow_name: str):
-    from unstructured_client.models import operations
-
-    response = client.workflows.list_workflows(request=operations.ListWorkflowsRequest())
-    if int(getattr(response, "status_code", 0) or 0) >= 400:
-        raise RuntimeError(f"Unstructured list_workflows failed. status={getattr(response, 'status_code', '?')}")
-    for info in getattr(response, "response_list_workflows", None) or []:
-        if str(getattr(info, "name", "") or "").strip() == workflow_name:
-            return info
-    return None
-
-
-def _workflow_nodes_signature(workflow_nodes: list[Any]) -> str:
-    normalized: list[Any] = []
-    for node in workflow_nodes:
-        if isinstance(node, dict):
-            normalized.append(node)
-            continue
-        model_dump = getattr(node, "model_dump", None)
-        if callable(model_dump):
-            normalized.append(model_dump(mode="json", exclude_none=True))
-            continue
-        to_dict = getattr(node, "to_dict", None)
-        if callable(to_dict):
-            normalized.append(to_dict())
-            continue
-        normalized.append(
-            {
-                key: value
-                for key, value in vars(node).items()
-                if not key.startswith("_")
-            }
-        )
-    return json.dumps(normalized, ensure_ascii=False, sort_keys=True, default=str)
-
-
-def _ensure_bookrag_reusable_workflow(
-    client,
-    *,
-    workflow_name: str,
-    workflow_nodes: list[dict[str, Any]],
-    create_values: dict[str, str],
-) -> tuple[str, str, list[str]]:
-    from unstructured_client.models import operations, shared
-
-    warnings: list[str] = []
-    runtime = _load_unstructured_runtime_settings()
-    configured_workflow_id = str(
-        create_values.get("multi_format_bookrag_workflow_id", "")
-        or runtime.get("bookrag_workflow_id")
-        or os.getenv("BOOKRAG_WORKFLOW_ID", "")
-    ).strip()
-    desired_signature = _workflow_nodes_signature(workflow_nodes)
-    desired_models = [shared.WorkflowNode(**node) for node in workflow_nodes]
-
-    existing = None
-    workflow_id = configured_workflow_id
-    if workflow_id:
-        response = client.workflows.get_workflow(request=operations.GetWorkflowRequest(workflow_id=workflow_id))
-        if int(getattr(response, "status_code", 0) or 0) >= 400:
-            raise RuntimeError(f"Unstructured get_workflow failed. status={getattr(response, 'status_code', '?')}, workflow_id={workflow_id}")
-        existing = getattr(response, "workflow_information", None)
-        if existing is None:
-            raise RuntimeError(f"Unstructured get_workflow returned no workflow information. workflow_id={workflow_id}")
-    else:
-        existing = _find_bookrag_workflow_by_name(client, workflow_name)
-        workflow_id = str(getattr(existing, "id", "") or "").strip() if existing is not None else ""
-
-    if existing is not None:
-        current_signature = _workflow_nodes_signature(list(getattr(existing, "workflow_nodes", None) or []))
-        current_name = str(getattr(existing, "name", "") or "").strip()
-        current_type = str(getattr(getattr(existing, "workflow_type", ""), "value", getattr(existing, "workflow_type", "")) or "").strip().lower()
-        if current_signature != desired_signature or current_name != workflow_name or current_type != "custom":
-            update = shared.UpdateWorkflow(
-                name=workflow_name,
-                workflow_type=shared.WorkflowType.CUSTOM,
-                workflow_nodes=desired_models,
-            )
-            response = client.workflows.update_workflow(
-                request=operations.UpdateWorkflowRequest(
-                    workflow_id=workflow_id,
-                    update_workflow=update,
-                )
-            )
-            if int(getattr(response, "status_code", 0) or 0) >= 400:
-                raise RuntimeError(f"Unstructured update_workflow failed. status={getattr(response, 'status_code', '?')}, workflow_id={workflow_id}")
-            warnings.append(f"Updated reusable BookRAG workflow '{workflow_name}' ({workflow_id}).")
-        else:
-            warnings.append(f"Reused existing BookRAG workflow '{workflow_name}' ({workflow_id}).")
-        return workflow_id, workflow_name, warnings
-
-    workflow = shared.CreateWorkflow(
-        name=workflow_name,
-        workflow_type=shared.WorkflowType.CUSTOM,
-        workflow_nodes=desired_models,
-    )
-    response = client.workflows.create_workflow(
-        request=operations.CreateWorkflowRequest(
-            create_workflow=workflow,
-        )
-    )
-    if int(getattr(response, "status_code", 0) or 0) >= 400:
-        raise RuntimeError(f"Unstructured workflow creation failed. status={getattr(response, 'status_code', '?')}")
-    info = getattr(response, "workflow_information", None)
-    workflow_id = str(getattr(info, "id", "") or "").strip()
-    if not workflow_id:
-        raise RuntimeError("Unstructured workflow creation returned no workflow ID.")
-    warnings.append(f"Created reusable BookRAG workflow '{workflow_name}' ({workflow_id}).")
-    return workflow_id, workflow_name, warnings
-
-
 def _insert_chunk_rows(
     schema_name: str | None,
     table_name: str,
@@ -1864,11 +1656,6 @@ def _insert_chunk_rows(
         execute_sql_fn(f"INSERT INTO {qualified_table} ({quoted_cols}) VALUES ({values_sql})")
         inserted += 1
     return inserted
-
-
-def _new_unstructured_client():
-    api_key, api_url = _load_unstructured_runtime_config()
-    return _create_unstructured_client(api_key=api_key, api_url=api_url)
 
 
 def _build_bookrag_rows_from_raw_elements(

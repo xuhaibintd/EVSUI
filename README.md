@@ -15,6 +15,7 @@ EVSUI is a `FastAPI + Jinja2 + HTMX` interface for working with Teradata Vector 
 - [BookRAG Data Contract](#bookrag-data-and-relationship-contract)
 - [BookRAG API](#bookrag-api-notes)
 - [Authentication and Local Configuration](#authentication-and-local-configuration-reference)
+- [Multi-user Administration](#multi-user-administration)
 - [Project Structure and Routes](#project-structure)
 
 ## Getting Started
@@ -68,29 +69,33 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-### 3. Configure at least one login user
+### 3. Configure the first administrator
 
-EVSUI does not provide a default UI login. Copy the example config and set a non-empty username and password before starting the server.
+EVSUI stores users and server-side sessions in SQLite. The database is created automatically at `data/evsui.db`; Python's built-in SQLite driver requires no separate database installation. Set the bootstrap administrator only for the first start.
 
 Windows PowerShell:
 
 ```powershell
-Copy-Item app/config/local_dev.example.json app/config/local_dev.json
+$env:EVSUI_BOOTSTRAP_ADMIN = "admin"
+$env:EVSUI_BOOTSTRAP_PASSWORD = "replace-with-a-strong-password"
 ```
 
 Linux or macOS:
 
 ```bash
-cp app/config/local_dev.example.json app/config/local_dev.json
+export EVSUI_BOOTSTRAP_ADMIN=admin
+export EVSUI_BOOTSTRAP_PASSWORD='replace-with-a-strong-password'
 ```
 
-Edit `app/config/local_dev.json`. A minimal working login configuration is:
+The password is stored only as an Argon2 hash. After the administrator exists, the bootstrap variables do not update or overwrite it. Use **Users** in the top bar to manage accounts.
+
+For optional Teradata and Unstructured defaults, copy `app/config/local_dev.example.json` to `app/config/local_dev.json`. The login section is retained only for first-run migration from older installations. A representative local configuration is:
 
 ```json
 {
   "login": {
-    "username": "admin",
-    "password": "replace-with-a-strong-password",
+    "username": "",
+    "password": "",
     "users": {}
   },
   "connection": {
@@ -108,11 +113,11 @@ Edit `app/config/local_dev.json`. A minimal working login configuration is:
 }
 ```
 
+On an empty SQLite database, legacy users from `app/config/local_dev.json`, `app/config/auth_users.json`, `POC_AUTH_FILE`, or the old `POC_ADMIN_USER`/`POC_ADMIN_PASSWORD` variables are imported once. The first imported user becomes `admin`; later imported users become `operator`. New installations should use the `EVSUI_BOOTSTRAP_*` variables instead.
+
 The `connection` values are optional defaults for the Connect & Manage form. You may leave them blank and enter the values in the browser. The `unstructured.api_key` may remain blank unless you use a multi-format mode.
 
 `app/config/local_dev.json` is ignored by Git. Keep real passwords, PAT tokens, API keys, and certificate files out of version control.
-
-As a single-user alternative, set `POC_ADMIN_USER` and `POC_ADMIN_PASSWORD` in the shell that starts EVSUI. These variables are used only when no users are defined in the local config or auth-user file.
 
 ### 4. Start EVSUI
 
@@ -172,7 +177,7 @@ For the uploaded-file `Text PDF Only` flow, the UI does not populate `object_nam
 
 ### Common startup problems
 
-- **Server auth is not configured**: set a login user in `app/config/local_dev.json`, `app/config/auth_users.json`, or `POC_ADMIN_USER` / `POC_ADMIN_PASSWORD`, then restart EVSUI.
+- **Server auth is not configured**: set `EVSUI_BOOTSTRAP_ADMIN` and `EVSUI_BOOTSTRAP_PASSWORD`, then restart EVSUI.
 - **PowerShell cannot activate `.venv`**: apply the process-scoped execution-policy command shown above; it affects only the current PowerShell process.
 - **Unstructured API key missing**: configure the key under `unstructured` or save it in **Administration** for the active session.
 - **Teradata connection fails**: confirm that Host, Username, Password, UES URL, and PAT Token are populated and reachable from the machine running EVSUI. Add the PEM/certificate file if your environment requires it.
@@ -194,14 +199,16 @@ flowchart LR
     subgraph App["EVSUI FastAPI process"]
         Web["Web router<br/>HTML and HTMX endpoints"]
         API["API router<br/>BookRAG JSON endpoints"]
-        Session["Authentication and session state<br/>per user, in memory"]
+        Auth["Authentication and roles<br/>Argon2 + SQLite"]
+        Session["Request-scoped UI state<br/>isolated by server session"]
         Flow["Application workflows<br/>connect / create / retrieve / destroy"]
         Service["Domain services<br/>document modes / BookRAG / evaluation"]
         TDAdapter["Teradata runtime adapter<br/>teradatagenai / teradataml / teradatasql"]
-        USAdapter["Unstructured workflow adapter<br/>on-demand jobs"]
+        USAdapter["Unstructured integration gateway<br/>contracts + on-demand jobs"]
 
-        Web --> Session
-        API --> Session
+        Web --> Auth
+        API --> Auth
+        Auth --> Session
         Web --> Flow
         API --> Service
         Flow --> Service
@@ -210,7 +217,8 @@ flowchart LR
     end
 
     subgraph Local["Local runtime data"]
-        Config["Ignored local config<br/>login / connection / Unstructured defaults"]
+        AuthDB["data/evsui.db<br/>users / sessions / roles / audit"]
+        Config["Ignored local config<br/>connection / Unstructured defaults"]
         Files["uploads/<br/>documents / PEM / JSON / CSV / manifests"]
     end
 
@@ -221,6 +229,7 @@ flowchart LR
 
     Browser --> Web
     ApiClient --> API
+    AuthDB <--> Auth
     Config -.-> Session
     Config -.-> Service
     Files <--> Service
@@ -239,7 +248,9 @@ The principal code boundaries are:
 | Domain services | `app/services/` | Document processing, manifests, BookRAG schema/tree/retrieval, and SQL helpers |
 | Document-mode plug-ins | `app/services/doc_modes/` | Selects `Text PDF Only`, `Multi-Format`, or `Multi-Format BookRAG` behavior through one handler registry |
 | Runtime integrations | `app/teradata_runtime.py`, `app/services/unstructured_runtime.py` | Loads external SDKs and resolves integration configuration |
-| Session state | `app/session_state.py` | Keeps each signed-in user's connection, create form, uploads, and chat state isolated |
+| Unstructured boundary | `app/integrations/unstructured/` | Validates workflow contracts and exposes one stable gateway to submit, poll, diagnose, and download jobs |
+| Authentication | `app/auth_store.py` | SQLite schema, Argon2 passwords, login lockout, roles, server sessions, import/export, and audit records |
+| Session state | `app/session_state.py` | Uses context-local state so concurrent requests cannot swap user connection, form, upload, or chat state |
 
 ### Vector store creation paths
 
@@ -302,10 +313,12 @@ Detailed BookRAG table relationships and transformation rules are documented in 
 
 ### State and persistence model
 
-- Login sessions, connection status, current form values, upload selections, and chat history are held in process memory per `evsui_sid`. Restarting the process clears this UI state.
+- Users, roles, password hashes, server-side session records, and authentication audit records are persisted in `data/evsui.db`.
+- Connection status, current form values, upload selections, and chat history remain process-local per `evsui_sid`. They are request-scoped and concurrent-user safe, but restarting the process resets this temporary UI state.
+- Session cookies contain only a random opaque ID. The server stores only its SHA-256 hash, applies an eight-hour default expiry, and revokes sessions on logout, password reset, or user disable.
 - Uploaded files, PEM files, raw JSON, generated CSV files, and manifests are stored below `uploads/`. They survive a process restart until removed from disk.
 - Vector stores, standard multi-format source tables, and BookRAG tables are persisted in Teradata.
-- `app/config/local_dev.json`, auth-user files, and optional model-catalog overrides are local, ignored configuration and must not be committed.
+- `data/`, `app/config/local_dev.json`, legacy auth-user files, and optional model-catalog overrides are local, ignored runtime data and must not be committed.
 - The UI exposes independent management and retrieval list refreshes by design; selecting or deleting in one panel does not silently change the other panel's current list.
 
 ## Overview
@@ -420,9 +433,10 @@ All Python dependencies are installed by `python -m pip install -r requirements.
 - Web application: `fastapi`, `uvicorn[standard]`, `jinja2`, and `python-multipart`.
 - Teradata integration: `teradatagenai`, `teradataml`, `teradatamlwidgets`, `teradatasql`, and `teradatasqlalchemy`.
 - Document processing: `unstructured-client`.
+- Authentication: `argon2-cffi`; SQLite is supplied by Python's standard library.
 - Version handling: `packaging`.
 
-There is no Node.js build step. Templates, HTMX behavior, JavaScript, and CSS are served directly by FastAPI. Runtime upload/staging directories under `uploads/` are created automatically and are ignored by Git.
+There is no Node.js build step and no TypeScript dependency. Templates, HTMX 2.x behavior, native JavaScript ES Modules, and CSS are served directly by FastAPI. Runtime upload/staging directories under `uploads/` are created automatically and are ignored by Git.
 
 ## Unstructured Chain Guide
 
@@ -476,6 +490,8 @@ Official references:
 1. **Unstructured** (`doc_pipeline_mode=multi_format`)
 - Uses the **Workflow Endpoint**.
 - Current transport path: `local file -> POST /jobs -> inline job_nodes`
+- The integration gateway validates the DAG before network I/O and isolates SDK/REST changes from BookRAG orchestration.
+- Failed jobs include best-effort processing details and failed-file diagnostics when the service exposes them.
 - Implemented chain: `Partitioner -> optional Enrichment nodes -> Chunker`
 - Current workflow chunker options in EVSUI:
   - `chunk_by_character`
@@ -489,6 +505,7 @@ Official references:
 - Uses the **Workflow Endpoint**.
 - Current transport path: `local file -> POST /jobs -> inline job_nodes`
 - Current implemented chain: `Partitioner -> optional Enrichment nodes`
+- Explicit VLM partitioning omits redundant image-description, table-description, table-to-HTML, and generative-OCR nodes before submission.
 - Current app behavior stores raw workflow output and the derived document/block/node structures in Teradata BookRAG tables.
 - Visual architecture reference: [BookRAG Pipeline: Data Structures and Processing Flow](docs/bookrag_pipeline_diagram.md)
 - Current app behavior submits an on-demand job with inline `job_nodes`; it does **not** currently create/reuse a named Workflow and does **not** run by `workflow_id`.
@@ -528,6 +545,7 @@ Official references:
 - `Fast + enrichment nodes`: do not expect enrichment outputs.
 - `Auto/High Res + enrichment nodes`: supported when the file content and routed partition path are eligible.
 - `VLM + separate enrichment nodes`: do not add them as a normal design pattern; official workflow guidance says they are not needed or allowed.
+- Image description, table description, table-to-HTML, and generative OCR select their provider through the node `subtype`; current Pipeline API examples use an empty `settings` object. Do not inject Partition Endpoint parameters or speculative `provider_type`/`model` fields into these nodes. NER retains its documented provider/model settings.
 
 ### Current EVSUI Defaults
 
@@ -777,17 +795,52 @@ curl -H "Authorization: Bearer $EVSUI_API_TOKEN" \
 
 ## Authentication and Local Configuration Reference
 
+- `EVSUI_DATABASE_PATH` changes the SQLite path from the default `data/evsui.db`.
+- `EVSUI_BOOTSTRAP_ADMIN` and `EVSUI_BOOTSTRAP_PASSWORD` create the first administrator only while the user table is empty.
 - `EVSUI_LOCAL_CONFIG` can point to a local config file other than `app/config/local_dev.json`.
-- `app/config/auth_users.json` is also supported for local user lists and is ignored by Git. Its format is `{"users":{"alice":"alice-pass","bob":"bob-pass"}}`.
+- `app/config/auth_users.json` remains supported only as a first-run legacy import source and is ignored by Git. Its format is `{"users":{"alice":"alice-pass","bob":"bob-pass"}}`.
 - `POC_AUTH_FILE` can point to a different auth-user JSON file.
-- `POC_ADMIN_USER` and `POC_ADMIN_PASSWORD` provide a fallback single user only when no config-file users exist.
-- Each login gets its own in-memory session (`evsui_sid`) and independent UI state, including Unstructured settings.
+- `POC_ADMIN_USER` and `POC_ADMIN_PASSWORD` are legacy first-run inputs only.
+- Roles are `admin`, `operator`, and `viewer`. This release enforces `admin` on user administration; corpus-level and document-level authorization remain future production controls.
+- Five consecutive invalid passwords lock an account for five minutes.
+- Each login gets a persisted server-side session and independent request-scoped UI state, including Unstructured settings.
 
-Credentials in these local JSON files are stored as plain text. Use strong filesystem permissions, HTTPS through a trusted reverse proxy, a non-default `EVSUI_API_TOKEN`, and an appropriate production authentication layer before allowing non-local access.
+Legacy credentials in local JSON files are plain text, but SQLite stores only Argon2 password hashes. Remove legacy passwords after verifying migration. Use strong filesystem permissions, HTTPS through a trusted reverse proxy, a non-default `EVSUI_API_TOKEN`, and an appropriate production authentication layer before allowing non-local access.
+
+## Multi-user Administration
+
+Only an `admin` can open `GET /admin/users`. The page supports:
+
+- creating users with `admin`, `operator`, or `viewer` roles;
+- enabling and disabling accounts;
+- resetting a password and revoking that user's existing sessions;
+- exporting a versioned JSON bundle whose passwords remain Argon2 hashes;
+- importing the same bundle to migrate users between EVSUI installations.
+
+Do not edit `evsui.db` while EVSUI is running. For backup, stop the process or use SQLite's online backup tooling and keep the database together with its `-wal` and `-shm` files. SQLite is appropriate for one EVSUI application instance. Move authentication storage to PostgreSQL or another shared database before running multiple application replicas.
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant W as FastAPI
+    participant A as SQLite AuthStore
+    participant S as Request-scoped UI state
+    B->>W: POST /login
+    W->>A: Verify Argon2 password
+    A-->>W: User ID and role
+    W->>A: Store SHA-256(session ID), expiry
+    W-->>B: HttpOnly evsui_sid
+    B->>W: Authenticated request
+    W->>A: Validate active session
+    W->>S: Activate this session's state
+    S-->>W: Isolated connection/form/chat state
+```
 
 ## Project Structure
 
 - Application entry and routes: `app/main.py`
+- Authentication database: `app/auth_store.py`
+- Unstructured integration boundary: `app/integrations/unstructured/`
 - Local debug config example: `app/config/local_dev.example.json`
 - Service layer:
   - `app/services/create_config.py` (create form schema/coercion)
@@ -808,6 +861,9 @@ Credentials in these local JSON files are stored as plain text. Use strong files
 
 - `GET /` Home
 - `GET /login`, `POST /login`, `POST /logout`
+- `GET /admin/users`, `POST /admin/users/create`
+- `POST /admin/users/{username}/toggle`, `/role`, `/password`
+- `GET /admin/users/export`, `POST /admin/users/import`
 - `POST /ui/evs/connect`, `POST /ui/evs/reset`
 - `POST /ui/evs/upload-pem`
 - `POST /ui/evs/health`, `POST /ui/evs/list`

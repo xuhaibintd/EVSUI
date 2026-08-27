@@ -7,5 +7,6 @@ teradataml>=20.0.0.10
 teradatamlwidgets>=20.0.0.7
 teradatasql>=20.0.0.60
 teradatasqlalchemy>=20.0.0.9
-unstructured-client==0.44.1
+unstructured-client==0.46.2
+argon2-cffi>=23.1.0
 packaging>=24.0

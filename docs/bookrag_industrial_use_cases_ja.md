@@ -273,10 +273,10 @@ production_owner:
 
 | 統制領域 | 現行 EVSUI | 本番で決めること |
 |---|---|---|
-| 認証 | ローカル user、API token | 企業 ID、MFA/SSO、service identity、token lifecycle |
-| 認可 | session 単位の UI 分離 | 元権限と一致する corpus/document/row-level access |
-| Session 永続性 | process 内 state | 複数 process の session store、復旧、timeout、logout |
-| 監査 | operation 詳細と local manifest | access、検索、metadata 変更、export、承認の永続 log |
+| 認証 | SQLite user、Argon2 password、期限・失効付き server session、API token | 企業 ID、MFA/SSO、service identity、token lifecycle |
+| 認可 | admin 限定 user 管理と request 単位の UI 分離 | 元権限と一致する corpus/document/row-level access |
+| Session 永続性 | identity/session record は再起動後も保持、connection/form/chat state は process 内 | 複数 replica 用 shared state store と background work の復旧 |
+| 監査 | 認証 event、operation 詳細、local manifest | 検索、metadata 変更、export、承認の永続 log と保持 policy |
 | 文書統制 | metadata・relationship 管理 | 元責任者、取込 SLA、完全性、発効日規則 |
 | データ保護 | Git 除外 secret、upload path | 暗号化、secret manager、malware scan、保存、削除、legal hold |
 | Model governance | 設定可能な検索 policy と評価 output | version、変更承認、回帰試験、drift、rollback |

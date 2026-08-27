@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="user-admin-layout">
+  <article class="panel user-admin-panel">
+    <header class="user-admin-header">
+      <div>
+        <p class="eyebrow">Access administration</p>
+        <h1>User Management</h1>
+        <p class="muted">Accounts are stored in SQLite. Exported passwords remain Argon2 hashes.</p>
+      </div>
+      <a class="chip-btn" href="/">Back to EVSUI</a>
+    </header>
+
+    {% if status %}
+    <div class="admin-rule-status {{ status.kind }}" role="status">{{ status.detail }}</div>
+    {% endif %}
+
+    <section class="user-admin-actions">
+      <form class="user-create-form" method="post" action="/admin/users/create">
+        <label class="field"><span>Username</span><input name="username" required maxlength="128" autocomplete="off" /></label>
+        <label class="field"><span>Display name</span><input name="display_name" maxlength="128" autocomplete="off" /></label>
+        <label class="field"><span>Initial password</span><input type="password" name="password" required minlength="8" autocomplete="new-password" /></label>
+        <label class="field"><span>Role</span><select name="role">{% for role in roles %}<option value="{{ role }}">{{ role }}</option>{% endfor %}</select></label>
+        <button type="submit">Create user</button>
+      </form>
+
+      <div class="user-transfer-actions">
+        <a class="chip-btn" href="/admin/users/export">Export users</a>
+        <form method="post" action="/admin/users/import" enctype="multipart/form-data">
+          <label class="field"><span>Import users JSON</span><input type="file" name="users_file" accept="application/json,.json" required /></label>
+          <button type="submit">Import and update</button>
+        </form>
+      </div>
+    </section>
+
+    <div class="user-table-wrap">
+      <table class="data-table user-table">
+        <thead><tr><th>User</th><th>Display name</th><th>Role</th><th>Status</th><th>Last login</th><th>Actions</th></tr></thead>
+        <tbody>
+          {% for user in users %}
+          <tr>
+            <td>{{ user.username }}</td>
+            <td>{{ user.display_name or '—' }}</td>
+            <td>{{ user.role }}</td>
+            <td>{% if user.enabled %}Enabled{% else %}Disabled{% endif %}</td>
+            <td>{{ user.last_login_display or '—' }}</td>
+            <td class="user-row-actions">
+              <form method="post" action="/admin/users/{{ user.username }}/role">
+                <select name="role" aria-label="Role for {{ user.username }}">{% for role in roles %}<option value="{{ role }}" {% if role == user.role %}selected{% endif %}>{{ role }}</option>{% endfor %}</select>
+                <button class="ghost" type="submit">Set role</button>
+              </form>
+              <form method="post" action="/admin/users/{{ user.username }}/toggle">
+                <input type="hidden" name="enabled" value="{% if user.enabled %}false{% else %}true{% endif %}" />
+                <button class="ghost" type="submit">{% if user.enabled %}Disable{% else %}Enable{% endif %}</button>
+              </form>
+              <form method="post" action="/admin/users/{{ user.username }}/password">
+                <input type="password" name="password" minlength="8" placeholder="New password" required autocomplete="new-password" />
+                <button class="ghost" type="submit">Reset</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </article>
+</section>
+{% endblock %}

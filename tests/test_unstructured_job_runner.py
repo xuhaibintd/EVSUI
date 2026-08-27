@@ -5,7 +5,11 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from app.services.unstructured_job_runner import create_unstructured_on_demand_job
+from app.services.unstructured_job_runner import (
+    create_unstructured_on_demand_job,
+    get_unstructured_job_diagnostics,
+    wait_for_unstructured_job,
+)
 
 
 class _Response:
@@ -69,6 +73,38 @@ class UnstructuredJobSubmissionTests(unittest.TestCase):
                 )
 
         self.assertEqual(post_mock.call_count, 1)
+
+    def test_job_diagnostics_reads_details_and_failed_files(self) -> None:
+        jobs = mock.Mock()
+        jobs.get_job_details.return_value = mock.Mock(
+            status_code=200,
+            job_details={"processed_files": 2},
+        )
+        jobs.get_job_failed_files.return_value = mock.Mock(
+            status_code=200,
+            job_failed_files={"files": [{"filename": "bad.pdf"}]},
+        )
+
+        diagnostics = get_unstructured_job_diagnostics(mock.Mock(jobs=jobs), job_id="job-123")
+
+        self.assertEqual(diagnostics["details"], {"processed_files": 2})
+        self.assertEqual(diagnostics["failed_files"]["files"][0]["filename"], "bad.pdf")
+
+    def test_failed_job_error_contains_diagnostics(self) -> None:
+        failed_info = mock.Mock(status="FAILED")
+        jobs = mock.Mock()
+        jobs.get_job.return_value = mock.Mock(status_code=200, job_information=failed_info)
+        client = mock.Mock(jobs=jobs)
+        with mock.patch(
+            "app.services.unstructured_job_runner.get_unstructured_job_diagnostics",
+            return_value={"failed_files": {"files": [{"filename": "bad.pdf"}]}},
+        ), self.assertRaisesRegex(RuntimeError, "bad.pdf"):
+            wait_for_unstructured_job(
+                client,
+                job_id="job-123",
+                timeout_seconds=10,
+                poll_interval_seconds=1,
+            )
 
 
 if __name__ == "__main__":

@@ -8,3 +8,4 @@ app/config/auth_users.json
 app/config/local_dev.json
 app/config/unstructured.json
 app/config/unstructured_models.json
+data/

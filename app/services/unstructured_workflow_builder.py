@@ -5,6 +5,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from app.integrations.unstructured.contracts import validate_workflow_nodes
+
 
 def _to_bool(raw: Any, default: bool = False) -> bool:
     if raw is None:
@@ -424,6 +426,7 @@ def build_bookrag_workflow_partition_node(
     infer_table_structure = bool(image_partition_parameters.get("infer_table_structure"))
     requested_strategy = (partition_strategy or "auto").strip().lower() or "auto"
     unique_element_ids = bool(image_partition_parameters.get("unique_element_ids", True))
+    coordinates = bool(image_partition_parameters.get("coordinates", True))
     vlm_provider = str(image_partition_parameters.get("vlm_provider") or "").strip()
     vlm_model = str(image_partition_parameters.get("vlm_model") or "").strip()
     vlm_provider_api_key = str(image_partition_parameters.get("vlm_provider_api_key") or "").strip()
@@ -501,6 +504,7 @@ def build_bookrag_workflow_partition_node(
             "strategy": requested_strategy,
             "include_page_breaks": False,
             "unique_element_ids": unique_element_ids,
+            "coordinates": coordinates,
         }
         if languages:
             settings["ocr_languages"] = languages
@@ -527,6 +531,7 @@ def build_bookrag_workflow_partition_node(
         "workflow_type": "custom",
         "workflow_nodes": [workflow_node],
     }
+    validate_workflow_nodes(request_parameters["workflow_nodes"])
     return workflow_node, request_parameters, warnings
 
 
@@ -655,6 +660,27 @@ def build_bookrag_reusable_workflow_definition(
         image_partition_parameters=image_partition_parameters,
     )
     warnings.extend(partition_warnings)
+    if str(partition_node.get("settings", {}).get("strategy") or "").lower() == "vlm":
+        redundant_enrichments = [
+            label
+            for enabled, label in (
+                (enable_image_description, "image description"),
+                (enable_table_to_html, "table to HTML"),
+                (enable_table_description, "table description"),
+                (enable_generative_ocr, "generative OCR"),
+            )
+            if enabled
+        ]
+        if redundant_enrichments:
+            warnings.append(
+                "bookrag explicit VLM partition already performs "
+                + ", ".join(redundant_enrichments)
+                + "; redundant enrichment nodes were omitted."
+            )
+        enable_image_description = False
+        enable_table_to_html = False
+        enable_table_description = False
+        enable_generative_ocr = False
 
     subtype_provider_map = {"openai_ner": "openai", "anthropic_ner": "anthropic"}
     expected_ner_provider = subtype_provider_map.get(ner_subtype, "")
@@ -676,6 +702,8 @@ def build_bookrag_reusable_workflow_definition(
     partition_strategy_label = partition_node['settings'].get('strategy', 'auto')
     partition_subtype_label = partition_node.get('subtype', '') or 'unknown'
     profile_parts = [f"partition:{partition_subtype_label}:{partition_strategy_label}"]
+    # Current Pipeline API enrichment contracts encode the provider in subtype
+    # and document an empty settings object. NER is the exception below.
     if enable_image_description:
         workflow_nodes.append({
             "name": "Image Description",
@@ -727,6 +755,7 @@ def build_bookrag_reusable_workflow_definition(
         "workflow_name": workflow_name,
         "workflow_nodes": workflow_nodes,
     }
+    validate_workflow_nodes(workflow_nodes)
     return workflow_name, workflow_nodes, request_parameters, warnings, ",".join(profile_parts)
 
 
@@ -883,6 +912,7 @@ def build_multi_format_workflow_definition(
         overlap_all=overlap_all,
     )
     workflow_nodes = [partition_node, *enrichment_nodes, chunker_node]
+    validate_workflow_nodes(workflow_nodes)
     request_parameters = {
         "workflow_type": "custom",
         "workflow_name": workflow_name,
