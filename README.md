@@ -327,7 +327,7 @@ Detailed BookRAG table relationships and transformation rules are documented in 
 - Built-in parameter sets for `VECTORDISTANCE / KMEANS / HNSW`
 - `Multi Format` mode uses Unstructured Workflow Endpoint on-demand jobs and a reusable three-stage flow: shared raw JSON, standard unstructured CSV, then `<Vector Store Name>_unstructured` table loading. BookRAG and Multi Format discover the same raw JSON runs; they diverge only at JSON-to-CSV transformation and table loading. The standard Multi-Format JSON-to-row mapping and table contract remain unchanged.
 - `Multi-Format BookRAG` mode uses Unstructured Workflow Endpoint on-demand jobs with inline `job_nodes`, builds document-scoped Teradata tables, and can optionally run `VectorStore.create()` from `bnode.content` with `(doc_id, node_id)` as the vector key. See [BookRAG Pipeline: Data Structures and Processing Flow](docs/bookrag_pipeline_diagram.md) for the visual pipeline and table model.
-- BookRAG is intended for long, structured documents when retrieved passages need section paths, pages, source blocks, and optional table/image/entity context. It provides traceable evidence candidates for review, but it does not by itself perform graph traversal, cross-document entity resolution, contradiction detection, or citation verification. See [BookRAG for Industrial-Grade Applications / 産業用途における BookRAG のユースケース](docs/bookrag_industrial_use_cases.md).
+- BookRAG is intended for long, structured documents when retrieved passages need section paths, pages, source blocks, and optional table/image/entity context. It provides traceable evidence candidates for review, but it does not by itself perform graph traversal, cross-document entity resolution, contradiction detection, or citation verification. See the industrial-use-case decision guide in [English](docs/bookrag_industrial_use_cases.md) or [日本語](docs/bookrag_industrial_use_cases_ja.md).
 
 ### Vector Store Retrieval
 
@@ -761,6 +761,10 @@ Notes:
 - `GET /api/bookrag/retrieve` with no query parameters returns a dummy connectivity payload.
 - `GET /api/bookrag/retrieve?question=...&vector_store_name=...` runs a real retrieval.
 - `POST /api/bookrag/retrieve` runs a real retrieval from a JSON body with `question` and `vector_store_name`.
+- `GET /api/bookrag/answer` with no query parameters returns a dummy answer payload.
+- `GET /api/bookrag/answer?question=...&vector_store_name=...` retrieves governed evidence and generates an answer from the locked final node set.
+- `POST /api/bookrag/answer` accepts a JSON body, retrieves governed evidence, and returns the answer, evidence packages, LLM input, and rank-based citations.
+- Answer citations identify the evidence list used for generation; they are not verified claim-to-source alignments.
 - API access accepts either the normal EVSUI login session cookie or `Authorization: Bearer <token>` / `x-api-key: <token>`.
 - Set `EVSUI_API_TOKEN` before exposing an API endpoint outside a local development machine. If it is not set, the current development fallback is `evsui-dev-token`.
 
@@ -815,7 +819,7 @@ Credentials in these local JSON files are stored as plain text. Use strong files
 - `GET /ui/admin/document-relations`
 - `POST /ui/admin/document-relations/initialize`, `/save`, `/delete`, `/import`
 - `GET /ui/admin/document-relations/export`
-- `GET /api/bookrag/schema`, `GET|POST /api/bookrag/retrieve`
+- `GET /api/bookrag/schema`, `GET|POST /api/bookrag/retrieve`, `GET|POST /api/bookrag/answer`
 - `GET /healthz`
 
 ## Health Check
