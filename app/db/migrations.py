@@ -134,12 +134,62 @@ def _migration_005_connection_profiles(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migration_006_persistent_jobs(connection: sqlite3.Connection) -> None:
+    connection.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS jobs (
+            id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')),
+            owner_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            connection_profile_id INTEGER REFERENCES system_connection_profiles(id) ON DELETE SET NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            result_json TEXT NOT NULL DEFAULT '{}',
+            error TEXT NOT NULL DEFAULT '',
+            progress INTEGER NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
+            attempt INTEGER NOT NULL DEFAULT 0,
+            created_at INTEGER NOT NULL,
+            started_at INTEGER,
+            heartbeat_at INTEGER,
+            finished_at INTEGER,
+            updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS ix_jobs_status_created ON jobs(status, created_at);
+        CREATE INDEX IF NOT EXISTS ix_jobs_owner_created ON jobs(owner_user_id, created_at DESC);
+        """
+    )
+
+
+def _migration_007_artifacts(connection: sqlite3.Connection) -> None:
+    connection.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS artifacts (
+            id TEXT PRIMARY KEY,
+            job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL,
+            owner_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            kind TEXT NOT NULL,
+            path TEXT NOT NULL UNIQUE,
+            size_bytes INTEGER NOT NULL DEFAULT 0,
+            sha256 TEXT NOT NULL DEFAULT '',
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at INTEGER NOT NULL,
+            expires_at INTEGER,
+            deleted_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS ix_artifacts_expiry ON artifacts(expires_at, deleted_at);
+        CREATE INDEX IF NOT EXISTS ix_artifacts_job ON artifacts(job_id);
+        """
+    )
+
+
 MIGRATIONS = (
     Migration(1, "identity_and_audit", _migration_001_identity),
     Migration(2, "legacy_user_connections", _migration_002_legacy_user_connections),
     Migration(3, "system_connection", _migration_003_system_connection),
     Migration(4, "encrypted_pem", _migration_004_encrypted_pem),
     Migration(5, "connection_profiles", _migration_005_connection_profiles),
+    Migration(6, "persistent_jobs", _migration_006_persistent_jobs),
+    Migration(7, "artifacts", _migration_007_artifacts),
 )
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version
 

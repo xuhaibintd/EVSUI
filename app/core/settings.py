@@ -43,6 +43,9 @@ class Settings:
     web_concurrency: int
     csrf_enabled: bool
     max_upload_bytes: int
+    artifact_retention_days: int
+    artifact_cleanup_enabled: bool
+    job_stale_seconds: int
 
     @property
     def is_production(self) -> bool:
@@ -86,6 +89,9 @@ class Settings:
             web_concurrency=_env_int("WEB_CONCURRENCY", 1),
             csrf_enabled=_env_bool("EVSUI_CSRF_ENABLED", True),
             max_upload_bytes=_env_int("EVSUI_MAX_UPLOAD_BYTES", 100 * 1024 * 1024),
+            artifact_retention_days=_env_int("EVSUI_ARTIFACT_RETENTION_DAYS", 30),
+            artifact_cleanup_enabled=_env_bool("EVSUI_ARTIFACT_CLEANUP_ENABLED", False),
+            job_stale_seconds=_env_int("EVSUI_JOB_STALE_SECONDS", 15 * 60, minimum=60),
         )
 
     def validate_runtime(self) -> None:
@@ -93,4 +99,3 @@ class Settings:
             raise RuntimeError(
                 "EVSUI currently requires WEB_CONCURRENCY=1 because Teradata SDK context and UI session state are process-local."
             )
-

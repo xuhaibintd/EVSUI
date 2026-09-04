@@ -26,8 +26,9 @@ class _Upload:
         self.filename = filename
         self._payload = payload
 
-    async def read(self) -> bytes:
-        return self._payload
+    async def read(self, _size: int = -1) -> bytes:
+        payload, self._payload = self._payload, b""
+        return payload
 
 
 class BookRAGDocumentRelationTests(unittest.IsolatedAsyncioTestCase):
@@ -45,6 +46,24 @@ class BookRAGDocumentRelationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(notices, [])
         self.assertEqual(len(rows[0]["doc_id"]), 32)
         self.assertEqual(rows[0]["filename"], rows[0]["name"])
+
+    async def test_oversized_upload_is_removed_and_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir)
+            upload_dir = project / "uploads"
+            upload_dir.mkdir()
+
+            rows, notices = await save_document_uploads(
+                [_Upload("large.pdf", b"12345")],
+                upload_dir,
+                project,
+                lambda: "2026-07-14 00:00:00",
+                max_upload_bytes=4,
+            )
+
+            self.assertEqual(rows, [])
+            self.assertIn("exceeds", notices[0])
+            self.assertEqual(list(upload_dir.rglob("*.pdf")), [])
 
     def test_filename_rules_suggest_summary_and_real_issue_order(self) -> None:
         documents = [

@@ -26,6 +26,7 @@ from app.services.create_config import (
     build_text_core_ui_fields,
     default_create_values,
 )
+from app.services.artifact_lifecycle import ArtifactLifecycle
 from app.services.doc_modes.constants import DOC_PIPELINE_OPTIONS
 from app.services.doc_modes.ui_fields import build_multi_format_bookrag_ui_fields, build_multi_format_ui_fields
 from app.services.bookrag_section_rules import BOOKRAG_SECTION_RULES_PATH, load_bookrag_section_rules
@@ -294,7 +295,14 @@ def _collect_upload_files(form_data, field_name: str = "files") -> list[UploadFi
 
 
 async def _save_document_uploads(files: list[UploadFile]) -> tuple[list[dict], list[str]]:
-    return await save_document_uploads(files, DOCUMENT_UPLOAD_DIR, PROJECT_DIR, _now_ts)
+    settings = Settings.from_env(project_dir=PROJECT_DIR)
+    return await save_document_uploads(
+        files,
+        DOCUMENT_UPLOAD_DIR,
+        PROJECT_DIR,
+        _now_ts,
+        max_upload_bytes=settings.max_upload_bytes,
+    )
 
 
 def _resolve_path_hint(path_hint: str) -> str:
@@ -778,6 +786,11 @@ def initialize_app_state(app, templates, *, settings: Settings | None = None) ->
     auth_store.migrate_legacy_system_pem()
     auth_store.migrate_singleton_connection_profile()
     app.state.auth_store = auth_store
+    app.state.job_repository = auth_store.jobs
+    app.state.artifact_lifecycle = ArtifactLifecycle(
+        auth_store.artifacts,
+        root=PROJECT_DIR / "uploads",
+    )
     app.state.user_sessions = {}
     fallback_scope = _new_session_scope()
     app.state.activate_session_scope(fallback_scope)

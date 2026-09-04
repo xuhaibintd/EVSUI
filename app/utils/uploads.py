@@ -42,6 +42,7 @@ async def save_document_uploads(
     document_upload_dir: Path,
     project_dir: Path,
     now_ts: Callable[[], str],
+    max_upload_bytes: int = 100 * 1024 * 1024,
 ) -> tuple[list[dict], list[str]]:
     uploaded_items: list[dict] = []
     notices: list[str] = []
@@ -64,15 +65,34 @@ async def save_document_uploads(
         relative_path = str(target.relative_to(project_dir))
         existed_before = target.exists()
 
-        payload = await file.read()
-        target.write_bytes(payload)
+        size = 0
+        with target.open("wb") as handle:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > max(1, int(max_upload_bytes)):
+                    handle.close()
+                    target.unlink(missing_ok=True)
+                    try:
+                        target.parent.rmdir()
+                    except OSError:
+                        pass
+                    notices.append(
+                        f"Skipped {safe_name}: file exceeds the {max_upload_bytes}-byte upload limit."
+                    )
+                    break
+                handle.write(chunk)
+        if not target.exists():
+            continue
         uploaded_items.append(
             {
                 "doc_id": doc_id,
                 "name": safe_name,
                 "filename": safe_name,
                 "saved_path": relative_path,
-                "size": len(payload),
+                "size": size,
                 "time": now_ts(),
                 "status": "overwritten" if existed_before else "uploaded",
             }

@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
-import secrets
 import sqlite3
 import time
 from dataclasses import asdict, dataclass
@@ -13,9 +11,12 @@ from typing import Any
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerifyMismatchError
-from cryptography.fernet import Fernet, InvalidToken
+from cryptography.fernet import InvalidToken
 
 from app.db.migrations import run_migrations
+from app.db.sqlite import SQLiteDatabase
+from app.repositories import ArtifactRepository, JobRepository, SessionRepository, UserRepository
+from app.services.credential_vault import CredentialVault
 
 
 AUTH_ROLES = ("admin", "operator", "viewer")
@@ -30,14 +31,6 @@ CONNECTION_CONFIG_TEXT_LIMITS = {
     "pem_file": 2048,
 }
 PEM_CONTENT_MAX_BYTES = 1024 * 1024
-
-
-class _ClosingConnection(sqlite3.Connection):
-    def __exit__(self, exc_type, exc_value, traceback) -> bool:
-        try:
-            return bool(super().__exit__(exc_type, exc_value, traceback))
-        finally:
-            self.close()
 
 
 @dataclass(frozen=True)
@@ -64,10 +57,6 @@ def verify_password(password_hash: str, password: str) -> bool:
         return bool(PASSWORD_HASHER.verify(str(password_hash or ""), str(password or "")))
     except (InvalidHashError, VerifyMismatchError, TypeError, ValueError):
         return False
-
-
-def _session_hash(session_id: str) -> str:
-    return hashlib.sha256(str(session_id or "").encode("utf-8")).hexdigest()
 
 
 def _clean_username(raw: str) -> str:
@@ -118,18 +107,24 @@ class AuthStore:
             else None
         )
         self.allow_generated_credential_key = bool(allow_generated_credential_key)
+        self.database = SQLiteDatabase(self.database_path)
+        self.credential_vault = CredentialVault(
+            database_path=self.database_path,
+            runtime_dir=self.pem_runtime_dir,
+            credential_key=self.credential_key,
+            credential_key_file=self.credential_key_file,
+            allow_generated_key=self.allow_generated_credential_key,
+        )
+        self.users = UserRepository(self.database)
+        self.sessions = SessionRepository(
+            self.database,
+            ttl_seconds=self.session_ttl_seconds,
+        )
+        self.jobs = JobRepository(self.database)
+        self.artifacts = ArtifactRepository(self.database)
 
     def _connect(self) -> sqlite3.Connection:
-        self.database_path.parent.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(
-            self.database_path,
-            timeout=10.0,
-            factory=_ClosingConnection,
-        )
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 10000")
-        return connection
+        return self.database.connect()
 
     def initialize(self) -> None:
         with self._connect() as connection:
@@ -137,16 +132,10 @@ class AuthStore:
             run_migrations(connection)
 
     def count_users(self) -> int:
-        with self._connect() as connection:
-            row = connection.execute("SELECT COUNT(*) AS value FROM users").fetchone()
-        return int(row["value"] if row else 0)
+        return self.users.count()
 
     def count_enabled_admins(self) -> int:
-        with self._connect() as connection:
-            row = connection.execute(
-                "SELECT COUNT(*) AS value FROM users WHERE role='admin' AND enabled=1"
-            ).fetchone()
-        return int(row["value"] if row else 0)
+        return self.users.count_enabled_admins()
 
     def create_user(
         self,
@@ -295,45 +284,14 @@ class AuthStore:
             return self._principal_from_row(row)
 
     def create_session(self, principal: AuthPrincipal) -> str:
-        session_id = secrets.token_urlsafe(32)
-        now = int(time.time())
-        with self._connect() as connection:
-            connection.execute("DELETE FROM sessions WHERE expires_at<=? OR revoked_at IS NOT NULL", (now,))
-            connection.execute(
-                """INSERT INTO sessions(session_id_hash, user_id, created_at, last_seen_at, expires_at)
-                   VALUES(?, ?, ?, ?, ?)""",
-                (_session_hash(session_id), principal.user_id, now, now, now + self.session_ttl_seconds),
-            )
-        return session_id
+        return self.sessions.create(principal.user_id)
 
     def get_session(self, session_id: str, *, touch: bool = True) -> AuthPrincipal | None:
-        if not str(session_id or "").strip():
-            return None
-        now = int(time.time())
-        with self._connect() as connection:
-            row = connection.execute(
-                """SELECT u.*, s.last_seen_at, s.expires_at, s.revoked_at
-                   FROM sessions s JOIN users u ON u.id=s.user_id
-                   WHERE s.session_id_hash=?""",
-                (_session_hash(session_id),),
-            ).fetchone()
-            if row is None or row["revoked_at"] is not None or int(row["expires_at"]) <= now or not bool(row["enabled"]):
-                return None
-            if touch and now - int(row["last_seen_at"] or 0) >= 60:
-                connection.execute(
-                    "UPDATE sessions SET last_seen_at=? WHERE session_id_hash=?",
-                    (now, _session_hash(session_id)),
-                )
-            return self._principal_from_row(row)
+        row = self.sessions.get(session_id, touch=touch)
+        return self._principal_from_row(row) if row is not None else None
 
     def revoke_session(self, session_id: str) -> None:
-        if not session_id:
-            return
-        with self._connect() as connection:
-            connection.execute(
-                "UPDATE sessions SET revoked_at=? WHERE session_id_hash=?",
-                (int(time.time()), _session_hash(session_id)),
-            )
+        self.sessions.revoke(session_id)
 
     def get_system_connection_config(self) -> dict[str, Any] | None:
         with self._connect() as connection:
@@ -730,96 +688,31 @@ class AuthStore:
         return normalized
 
     def _credential_key_path(self) -> Path:
-        if self.credential_key_file is not None:
-            return self.credential_key_file
-        configured = str(os.getenv("EVSUI_CREDENTIAL_KEY_FILE", "")).strip()
-        return Path(configured).expanduser().resolve() if configured else self.database_path.with_suffix(".credentials.key")
+        return self.credential_vault.key_path()
 
-    def _credential_cipher(self) -> Fernet:
-        configured = self.credential_key or str(os.getenv("EVSUI_CREDENTIAL_KEY", "")).strip()
-        if configured:
-            return Fernet(configured.encode("ascii"))
-
-        key_path = self._credential_key_path()
-        key_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            key = key_path.read_bytes().strip()
-        except FileNotFoundError:
-            if not self.allow_generated_credential_key:
-                raise RuntimeError(
-                    f"Credential key file does not exist: {key_path}. "
-                    "Create it before starting EVSUI in production."
-                )
-            generated = Fernet.generate_key()
-            try:
-                with key_path.open("xb") as handle:
-                    handle.write(generated)
-                try:
-                    key_path.chmod(0o600)
-                except OSError:
-                    pass
-                key = generated
-            except FileExistsError:
-                key = key_path.read_bytes().strip()
-        return Fernet(key)
+    def _credential_cipher(self):
+        return self.credential_vault.cipher()
 
     def _encrypt_credential(self, value: str) -> str:
-        if not value:
-            return ""
-        return self._credential_cipher().encrypt(value.encode("utf-8")).decode("ascii")
+        return self.credential_vault.encrypt_text(value)
 
     def _decrypt_credential(self, value: str) -> str:
-        if not value:
-            return ""
-        return self._credential_cipher().decrypt(value.encode("ascii")).decode("utf-8")
+        return self.credential_vault.decrypt_text(value)
 
     def _encrypt_bytes(self, value: bytes) -> str:
-        if not value:
-            return ""
-        return self._credential_cipher().encrypt(value).decode("ascii")
+        return self.credential_vault.encrypt_bytes(value)
 
     def _decrypt_bytes(self, value: str) -> bytes:
-        if not value:
-            return b""
-        return self._credential_cipher().decrypt(value.encode("ascii"))
+        return self.credential_vault.decrypt_bytes(value)
 
     def _materialize_system_pem(self, payload: bytes, filename: str, profile_id: int | None = None) -> str:
-        if not payload:
-            return ""
-        self.pem_runtime_dir.mkdir(parents=True, exist_ok=True)
-        safe_name = Path(filename or "system_connection.pem").name
-        if Path(safe_name).suffix.lower() not in {".pem", ".key", ".crt"}:
-            safe_name = "system_connection.pem"
-        target_dir = self.pem_runtime_dir / str(profile_id) if profile_id is not None else self.pem_runtime_dir
-        target_dir.mkdir(parents=True, exist_ok=True)
-        target = target_dir / safe_name
-        if not target.exists() or target.read_bytes() != payload:
-            target.write_bytes(payload)
-        try:
-            target.chmod(0o600)
-        except OSError:
-            pass
-        return str(target)
+        return self.credential_vault.materialize_pem(payload, filename, profile_id)
 
     def _remove_materialized_profile_pem(self, profile_id: int, filename: str) -> None:
-        safe_name = Path(filename or "").name
-        if not safe_name:
-            return
-        profile_dir = self.pem_runtime_dir / str(int(profile_id))
-        target = profile_dir / safe_name
-        try:
-            target.unlink(missing_ok=True)
-            profile_dir.rmdir()
-        except OSError:
-            pass
+        self.credential_vault.remove_materialized_pem(profile_id, filename)
 
     def list_users(self) -> list[dict[str, Any]]:
-        with self._connect() as connection:
-            rows = connection.execute(
-                """SELECT id, username, display_name, role, enabled, failed_login_count,
-                          locked_until, last_login_at, created_at, updated_at
-                   FROM users ORDER BY username COLLATE NOCASE"""
-            ).fetchall()
+        rows = self.users.list_admin_rows()
         users = []
         for row in rows:
             item = dict(row)
@@ -919,10 +812,7 @@ class AuthStore:
             )
 
     def export_users(self) -> dict[str, Any]:
-        with self._connect() as connection:
-            rows = connection.execute(
-                "SELECT username, display_name, password_hash, role, enabled FROM users ORDER BY username COLLATE NOCASE"
-            ).fetchall()
+        rows = self.users.export_rows()
         users = []
         for row in rows:
             item = dict(row)

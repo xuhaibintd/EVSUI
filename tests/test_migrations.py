@@ -67,7 +67,7 @@ class MigrationTests(unittest.TestCase):
             finally:
                 connection.close()
 
-            self.assertEqual(migrate_database(database_path), [4, 5])
+            self.assertEqual(migrate_database(database_path), [4, 5, 6, 7])
 
             connection = sqlite3.connect(database_path)
             try:

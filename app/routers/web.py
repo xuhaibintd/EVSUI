@@ -115,6 +115,28 @@ def _session_principal(request: Request):
     return auth_store.get_session(_session_id_from_request(request))
 
 
+def _register_document_artifacts(request: Request, uploaded_items: list[dict]) -> None:
+    lifecycle = getattr(request.app.state, "artifact_lifecycle", None)
+    settings = getattr(request.app.state, "settings", None)
+    if lifecycle is None:
+        return
+    principal = _session_principal(request)
+    retention_days = int(getattr(settings, "artifact_retention_days", 30))
+    for item in uploaded_items:
+        try:
+            lifecycle.register_file(
+                Path(_resolve_path_hint(str(item.get("saved_path") or ""))),
+                kind="document-upload",
+                retention_days=retention_days,
+                owner_user_id=principal.user_id if principal is not None else None,
+                metadata={"doc_id": item.get("doc_id"), "filename": item.get("filename")},
+            )
+        except (FileNotFoundError, ValueError) as ex:
+            request.app.state.document_upload_notices.append(
+                f"Artifact registration skipped for {item.get('filename') or 'upload'}: {ex}"
+            )
+
+
 def _render_user_admin(
     request: Request,
     *,
@@ -1020,6 +1042,7 @@ async def upload_documents_for_create(request: Request):
     if saved:
         request.app.state.document_uploads = saved
     request.app.state.document_upload_notices = notices
+    _register_document_artifacts(request, saved)
 
     _persist_active_session_state(request, request.app)
     return request.app.state.templates.TemplateResponse(
@@ -1520,6 +1543,7 @@ async def upload_and_prepare_create(request: Request):
         verify_vectorstore_exists_fn=_verify_vectorstore_exists,
         append_connect_step=_append_connect_step,
     )
+    _register_document_artifacts(request, list(request.app.state.document_uploads or []))
     _persist_active_session_state(request, request.app)
     return response
 
