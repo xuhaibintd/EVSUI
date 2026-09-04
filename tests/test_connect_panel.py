@@ -334,6 +334,12 @@ class ConnectPanelTemplateTests(unittest.TestCase):
     def test_disconnected_state_enables_connect_and_disables_disconnect(self):
         html = self._render(False)
         self.assertIn('data-step1-connected="false"', html)
+        self.assertIn("System connection", html)
+        self.assertIn("Password and PAT configured", html)
+        self.assertNotIn('name="host"', html)
+        self.assertNotIn('name="password"', html)
+        self.assertNotIn('name="pat_token"', html)
+        self.assertNotIn("Save configuration", html)
         self.assertNotIn('name="unstructured_api_url"', html)
         self.assertNotIn('name="unstructured_api_key"', html)
         self.assertIn('<button type="submit" form="evs-connect-form" class="connect-submit-btn progress-btn" data-progress-button aria-disabled="false">', html)
@@ -346,6 +352,27 @@ class ConnectPanelTemplateTests(unittest.TestCase):
         self.assertIn('<button type="submit" form="evs-connect-form" class="connect-submit-btn progress-btn" data-progress-button disabled aria-disabled="true">', html)
         self.assertIn('<form id="evs-reset-form" class="connect-reset-form" hx-post="/ui/evs/reset" hx-target="#section-connect-content" hx-swap="innerHTML">', html)
         self.assertIn('<button type="submit" class="ghost progress-btn" data-progress-button aria-disabled="false">', html)
+
+    def test_htmx_connect_result_renders_status_message_only_once(self):
+        evs = _base_evs(True)
+        evs["last_success"] = "Database connection succeeded."
+
+        html = self.template.render(evs=evs, is_htmx=True)
+
+        self.assertEqual(html.count("Database connection succeeded."), 2)
+        self.assertEqual(html.count(">Database connection succeeded.<"), 1)
+
+    def test_missing_system_configuration_disables_connect_and_guides_admin(self):
+        evs = _base_evs(False)
+        for key in ("host", "username", "password", "ues_url", "pat_token"):
+            evs["params"][key] = ""
+
+        html = self.template.render(evs=evs, is_htmx=False, user_role="admin")
+
+        self.assertIn("System connection is not configured.", html)
+        self.assertIn("Open Administration", html)
+        self.assertIn('href="/admin/users#connection-configuration"', html)
+        self.assertIn('connect-submit-btn progress-btn" data-progress-button disabled aria-disabled="true"', html)
 
     def test_string_connected_values_are_normalized(self):
         html_true = self._render("true")
@@ -362,28 +389,15 @@ class UnstructuredAdminPanelTests(unittest.TestCase):
         cls.env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)))
         cls.template = cls.env.get_template("partials/bookrag_admin_panel.html")
 
-    def test_save_confirmation_status_is_rendered(self):
-        html = self.template.render(
-            evs=_base_evs(True),
-            unstructured_status={
-                "kind": "ok",
-                "title": "Saved",
-                "detail": "Unstructured IO account saved for the current session.",
-            },
-        )
-
-        self.assertIn('hx-post="/ui/admin/unstructured-config"', html)
-        self.assertIn('role="status" aria-live="polite"', html)
-        self.assertIn("Saved", html)
-        self.assertIn("Unstructured IO account saved for the current session.", html)
-
     def test_admin_tabs_are_rendered(self):
-        html = self.template.render(evs=_base_evs(True), unstructured_status=None, json_inspector={"files": [], "selected_file": "", "summary": None, "error": ""})
+        html = self.template.render(evs=_base_evs(True), json_inspector={"files": [], "selected_file": "", "summary": None, "error": ""})
 
-        self.assertIn("External Account Configuration", html)
+        self.assertNotIn("External Account Configuration", html)
         self.assertIn("Business Configuration", html)
         self.assertIn('class="admin-rule-tab-panel admin-rule-panel-business"', html)
-        self.assertIn("Unstructured IO", html)
+        self.assertNotIn("Unstructured IO", html)
+        self.assertNotIn('name="unstructured_api_url"', html)
+        self.assertNotIn('name="unstructured_api_key"', html)
         self.assertIn("Document Metadata", html)
 
 
@@ -531,48 +545,6 @@ class ConnectResetRouteTests(unittest.IsolatedAsyncioTestCase):
             web_router_module._default_evs_state = original_default_state
             web_router_module._persist_active_session_state = original_persist
             web_router_module._render_connect_panel = original_render
-
-
-class UnstructuredAdminRouteTests(unittest.IsolatedAsyncioTestCase):
-    async def test_save_updates_session_params_and_returns_confirmation(self):
-        original_is_logged_in = web_router_module._is_logged_in
-        original_activate = web_router_module._activate_session_state
-        original_persist = web_router_module._persist_active_session_state
-        try:
-            persisted = {"called": False}
-            web_router_module._is_logged_in = lambda request, app: True
-            web_router_module._activate_session_state = lambda request, app: None
-            web_router_module._persist_active_session_state = lambda request, app: persisted.update(called=True)
-
-            def template_response(request, template_name, context):
-                return {
-                    "template_name": template_name,
-                    "context": context,
-                }
-
-            app = SimpleNamespace(
-                state=SimpleNamespace(
-                    evs_state={"params": {}},
-                    templates=SimpleNamespace(TemplateResponse=template_response),
-                )
-            )
-            request = SimpleNamespace(app=app)
-
-            result = await web_router_module.update_unstructured_config_panel(
-                request,
-                unstructured_api_url=" https://session.example/api ",
-                unstructured_api_key=" session-key ",
-            )
-
-            self.assertEqual(app.state.evs_state["params"]["unstructured_api_url"], "https://session.example/api")
-            self.assertEqual(app.state.evs_state["params"]["unstructured_api_key"], "session-key")
-            self.assertTrue(persisted["called"])
-            self.assertEqual(result["template_name"], "partials/bookrag_admin_panel.html")
-            self.assertEqual(result["context"]["unstructured_status"]["title"], "Saved")
-        finally:
-            web_router_module._is_logged_in = original_is_logged_in
-            web_router_module._activate_session_state = original_activate
-            web_router_module._persist_active_session_state = original_persist
 
 
 if __name__ == "__main__":

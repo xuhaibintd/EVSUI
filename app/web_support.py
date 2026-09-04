@@ -11,7 +11,6 @@ from app.auth_store import AuthStore, auth_database_path
 from app.runtime import (
     AUTH_USERS_FILE_DEFAULT,
     AUTH_DATABASE_FILE_DEFAULT,
-    DEBUG_UPLOAD_DIR,
     DEFAULT_CHAT_VS_NAME,
     DEFAULT_PAT_TOKEN,
     DOCUMENT_UPLOAD_DIR,
@@ -28,7 +27,6 @@ from app.services.create_config import (
 )
 from app.services.doc_modes.constants import DOC_PIPELINE_OPTIONS
 from app.services.doc_modes.ui_fields import build_multi_format_bookrag_ui_fields, build_multi_format_ui_fields
-from app.services.precision_eval import build_precision_eval_panel_context, build_precision_eval_prototype_context
 from app.services.bookrag_section_rules import BOOKRAG_SECTION_RULES_PATH, load_bookrag_section_rules
 from app.services.multi_format import (
     list_bookrag_csv_runs,
@@ -39,6 +37,7 @@ from app.services.multi_format import (
 from app.services.unstructured_json_inspector import build_unstructured_json_inspector_context
 from app.session_state import (
     activate_session_state,
+    apply_saved_connection_config,
     current_user,
     default_evs_state,
     is_logged_in,
@@ -50,7 +49,6 @@ from app.session_state import (
     persist_active_session_state,
     SessionAwareState,
     session_id_from_request,
-    user_initials,
 )
 from app.teradata_runtime import (
     TERADATA_IMPORT_ERROR,
@@ -84,7 +82,6 @@ from app.utils.uploads import (
     normalize_pem_filename_for_auth,
     resolve_path_hint,
     save_document_uploads,
-    save_pem_upload,
 )
 
 logger = logging.getLogger("evsui.connect")
@@ -287,10 +284,6 @@ def _derive_base_url(ues_url: str) -> str:
     return src
 
 
-def _save_pem_upload(pem_file: UploadFile) -> str:
-    return save_pem_upload(pem_file, PEM_UPLOAD_DIR, PROJECT_DIR)
-
-
 def _latest_uploaded_pem_relative() -> str:
     return latest_uploaded_pem_relative(PEM_UPLOAD_DIR, PROJECT_DIR)
 
@@ -439,12 +432,23 @@ def _load_connect_defaults() -> dict[str, str]:
     return load_connect_defaults(_latest_uploaded_pem_relative, VS_BASICS_DIR, DEFAULT_PAT_TOKEN)
 
 
+def _load_session_connect_defaults() -> dict[str, str]:
+    defaults = _load_connect_defaults()
+    for key in ("host", "username", "password", "ues_url", "pat_token", "pem_file"):
+        defaults[key] = ""
+    return defaults
+
+
 def _default_evs_state() -> dict:
-    return default_evs_state(_load_connect_defaults)
+    return default_evs_state(_load_session_connect_defaults)
 
 
 def _new_session_scope(username: str = "") -> dict:
     return new_session_scope(username, _default_evs_state, default_create_values)
+
+
+def _apply_saved_connection_config(scope: dict, app, principal) -> bool:
+    return apply_saved_connection_config(scope, app.state.auth_store, principal)
 
 
 def _session_id_from_request(request: Request) -> str:
@@ -452,13 +456,18 @@ def _session_id_from_request(request: Request) -> str:
 
 
 def _activate_session_state(request: Request, app) -> dict:
-    return activate_session_state(
+    scope = activate_session_state(
         request,
         app,
         SESSION_COOKIE_NAME,
         _default_evs_state,
         default_create_values,
     )
+    principal = app.state.auth_store.get_session(_session_id_from_request(request), touch=False)
+    if principal is not None and not scope.get("evs_state", {}).get("connected"):
+        _apply_saved_connection_config(scope, app, principal)
+        app.state.activate_session_scope(scope)
+    return scope
 
 
 def _persist_active_session_state(request: Request, app) -> None:
@@ -587,10 +596,6 @@ def _current_user(request: Request) -> str:
     return current_user(request)
 
 
-def _user_initials(username: str) -> str:
-    return user_initials(username)
-
-
 def _build_home_context(request: Request, app) -> dict:
     _activate_session_state(request, app)
     state = app.state.evs_state
@@ -611,6 +616,7 @@ def _build_home_context(request: Request, app) -> dict:
         if run.get("load_status") == "ready" and run.get("vector_store_status") != "ready"
     ]
     return {
+        "load_app_scripts": True,
         "messages": app.state.chat_history,
         "evs": state,
         "create_ui_sections": build_create_ui_sections(),
@@ -646,7 +652,10 @@ def _build_home_context(request: Request, app) -> dict:
             "table_initialized": False,
             "status": None,
             "source": "database",
-            "auto_refresh": True,
+            # Loading the home page must not close and recreate the shared
+            # Teradata runtime. Users can refresh the list explicitly from the
+            # administration panel when they need it.
+            "auto_refresh": False,
         },
         "document_metadata_admin": {
             "vector_store_options": list(state.get("chat_vs_options") or []),
@@ -659,31 +668,34 @@ def _build_home_context(request: Request, app) -> dict:
             "precision_options": ["day", "month"],
             "status_options": ["confirmed", "review", "missing"],
             "status": None,
-            "auto_refresh": True,
+            "auto_refresh": False,
         },
         "document_upload_error": "",
         "document_upload_notices": app.state.document_upload_notices,
-        "eval_panel": build_precision_eval_panel_context(document_root=DOCUMENT_UPLOAD_DIR, debug_root=DEBUG_UPLOAD_DIR),
-        "precision_eval_prototype": build_precision_eval_prototype_context(),
-        "precision_eval_result": None,
         "bookrag_section_rules": bookrag_section_rules,
         "bookrag_section_rules_path": str(BOOKRAG_SECTION_RULES_PATH),
         "bookrag_section_rules_status": None,
         "json_inspector": build_unstructured_json_inspector_context(),
+        "connection_profiles": app.state.auth_store.list_connection_profiles(),
         "logged_in": _is_logged_in(request, app),
         "username": username,
         "user_role": principal.role if principal is not None else "viewer",
-        "user_initials": _user_initials(username),
     }
 
 
 def _render_connect_panel(request: Request, app):
     _persist_active_session_state(request, app)
     is_htmx = request.headers.get("HX-Request", "").lower() == "true"
+    principal = app.state.auth_store.get_session(_session_id_from_request(request), touch=False)
     return app.state.templates.TemplateResponse(
         request,
         "partials/evs_connect_panel.html",
-        {"evs": app.state.evs_state, "is_htmx": is_htmx},
+        {
+            "evs": app.state.evs_state,
+            "is_htmx": is_htmx,
+            "user_role": principal.role if principal is not None else "viewer",
+            "connection_profiles": app.state.auth_store.list_connection_profiles(),
+        },
     )
 
 
@@ -704,6 +716,8 @@ def initialize_app_state(app, templates) -> None:
     auth_store = AuthStore(
         auth_database_path(AUTH_DATABASE_FILE_DEFAULT),
         session_ttl_seconds=SESSION_TTL_SECONDS_DEFAULT,
+        pem_runtime_dir=PROJECT_DIR / "pem_runtime",
+        legacy_file_root=PROJECT_DIR,
     )
     auth_store.initialize()
     legacy_users = _load_auth_users()
@@ -712,6 +726,9 @@ def initialize_app_state(app, templates) -> None:
         if fallback_username and fallback_password:
             legacy_users[fallback_username] = fallback_password
     auth_store.bootstrap(legacy_users)
+    auth_store.bootstrap_connection_config(_load_connect_defaults())
+    auth_store.migrate_legacy_system_pem()
+    auth_store.migrate_singleton_connection_profile()
     app.state.auth_store = auth_store
     app.state.user_sessions = {}
     fallback_scope = _new_session_scope()

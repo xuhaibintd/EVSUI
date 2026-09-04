@@ -87,7 +87,7 @@ export EVSUI_BOOTSTRAP_ADMIN=admin
 export EVSUI_BOOTSTRAP_PASSWORD='replace-with-a-strong-password'
 ```
 
-The password is stored only as an Argon2 hash. After the administrator exists, the bootstrap variables do not update or overwrite it. Use **Users** in the top bar to manage accounts.
+The password is stored only as an Argon2 hash. After the administrator exists, the bootstrap variables do not update or overwrite it. Use **System Configuration** in the top bar to manage database connection profiles and accounts.
 
 For optional Teradata and Unstructured defaults, copy `app/config/local_dev.example.json` to `app/config/local_dev.json`. The login section is retained only for first-run migration from older installations. A representative local configuration is:
 
@@ -115,7 +115,7 @@ For optional Teradata and Unstructured defaults, copy `app/config/local_dev.exam
 
 On an empty SQLite database, legacy users from `app/config/local_dev.json`, `app/config/auth_users.json`, `POC_AUTH_FILE`, or the old `POC_ADMIN_USER`/`POC_ADMIN_PASSWORD` variables are imported once. The first imported user becomes `admin`; later imported users become `operator`. New installations should use the `EVSUI_BOOTSTRAP_*` variables instead.
 
-The `connection` values are optional defaults for the Connect & Manage form. You may leave them blank and enter the values in the browser. The `unstructured.api_key` may remain blank unless you use a multi-format mode.
+The legacy `connection` values are imported once as the default database connection profile when no system configuration exists. After verifying the imported values, remove them from the JSON file. Administrators can create, edit, delete, and select a default profile under **System Configuration → System Connection**. The home page lets users select one of these profiles before connecting. The `unstructured.api_key` may remain blank unless you use a multi-format mode.
 
 `app/config/local_dev.json` is ignored by Git. Keep real passwords, PAT tokens, API keys, and certificate files out of version control.
 
@@ -172,14 +172,13 @@ For the uploaded-file `Text PDF Only` flow, the UI does not populate `object_nam
 1. Open **Vector Store Retrieval**.
 2. Select **Run List** to refresh the retrieval-specific list, then choose a vector store. The management and retrieval lists refresh independently.
 3. Choose `VectorStore.ask`, `VectorStore.similarity_search`, or **BookRAG API**, enter a question, and select **Send**.
-4. Use **Precision Evaluation** to compare a source PDF with generated JSON output.
-5. Use **Administration** to set per-session Unstructured credentials and, for BookRAG stores, manage document metadata and document relationships.
+5. Use **System Configuration** to set per-session Unstructured credentials. For BookRAG stores, use **Administration** to manage document metadata and document relationships.
 
 ### Common startup problems
 
 - **Server auth is not configured**: set `EVSUI_BOOTSTRAP_ADMIN` and `EVSUI_BOOTSTRAP_PASSWORD`, then restart EVSUI.
 - **PowerShell cannot activate `.venv`**: apply the process-scoped execution-policy command shown above; it affects only the current PowerShell process.
-- **Unstructured API key missing**: configure the key under `unstructured` or save it in **Administration** for the active session.
+- **Unstructured API key missing**: configure the key under `unstructured` or save it in **System Configuration** for the active session.
 - **Teradata connection fails**: confirm that Host, Username, Password, UES URL, and PAT Token are populated and reachable from the machine running EVSUI. Add the PEM/certificate file if your environment requires it.
 - **A vector store does not appear in Retrieval**: select **Run List** on the Retrieval page; the Connect & Manage list does not update it.
 
@@ -313,8 +312,8 @@ Detailed BookRAG table relationships and transformation rules are documented in 
 
 ### State and persistence model
 
-- Users, roles, password hashes, server-side session records, and authentication audit records are persisted in `data/evsui.db`.
-- Connection status, current form values, upload selections, and chat history remain process-local per `evsui_sid`. They are request-scoped and concurrent-user safe, but restarting the process resets this temporary UI state.
+- Users, roles, password hashes, the shared system connection configuration, server-side session records, and authentication audit records are persisted in `data/evsui.db`. The database password, PAT token, and PEM contents are encrypted before they are written. The PEM is materialized only as a restricted runtime file when the SDK needs a filesystem path, using its original filename because Teradata derives the JWT `kid` from that name.
+- Connection status, upload selections, and chat history remain process-local per `evsui_sid`. They are request-scoped and concurrent-user safe, but restarting the process resets this temporary UI state. The shared system connection is loaded from SQLite at login and before connecting.
 - Session cookies contain only a random opaque ID. The server stores only its SHA-256 hash, applies an eight-hour default expiry, and revokes sessions on logout, password reset, or user disable.
 - Uploaded files, PEM files, raw JSON, generated CSV files, and manifests are stored below `uploads/`. They survive a process restart until removed from disk.
 - Vector stores, standard multi-format source tables, and BookRAG tables are persisted in Teradata.
@@ -403,14 +402,9 @@ Do not sell the current implementation as an autonomous knowledge graph, automat
 
 Section construction uses Unstructured structure metadata where available, with a Japanese-oriented local fallback profile. Evaluate heading reconstruction, table preservation, retrieval recall, and source-locator accuracy on each customer's representative corpus before production use.
 
-### Precision Evaluation
+### System Configuration and Admin Rules
 
-- Compares selected source PDF and generated JSON debug output.
-- Produces a precision evaluation report for inspection.
-
-### Admin Rules
-
-- Shows Unstructured IO account settings for the active session.
+- Shows Unstructured IO account settings under **System Configuration**.
 - Saves `unstructured_api_url` and `unstructured_api_key` into the current user session.
 - Session values are used by Multi Format and Multi-Format BookRAG before falling back to `app/config/local_dev.json`.
 
@@ -433,7 +427,7 @@ All Python dependencies are installed by `python -m pip install -r requirements.
 - Web application: `fastapi`, `uvicorn[standard]`, `jinja2`, and `python-multipart`.
 - Teradata integration: `teradatagenai`, `teradataml`, `teradatamlwidgets`, `teradatasql`, and `teradatasqlalchemy`.
 - Document processing: `unstructured-client`.
-- Authentication: `argon2-cffi`; SQLite is supplied by Python's standard library.
+- Authentication and credential encryption: `argon2-cffi` and `cryptography`; SQLite is supplied by Python's standard library.
 - Version handling: `packaging`.
 
 There is no Node.js build step and no TypeScript dependency. Templates, HTMX 2.x behavior, native JavaScript ES Modules, and CSS are served directly by FastAPI. Runtime upload/staging directories under `uploads/` are created automatically and are ignored by Git.
@@ -741,7 +735,7 @@ client_rules:
 - This configuration is required only for `Multi-Format` and `Multi-Format BookRAG`.
 - For local debugging, copy `app/config/local_dev.example.json` to `app/config/local_dev.json` and fill in `unstructured`.
 - `app/config/local_dev.json` is ignored by Git and must not be committed.
-- Users can override Unstructured IO settings for their active session from the Admin Rules page.
+- Administrators can override Unstructured IO settings for their active session from the **System Configuration** page.
 - Multi Format and Multi-Format BookRAG use session Unstructured IO settings first, then fall back to `app/config/local_dev.json`.
 - Supported API key fields: `api_key`, `key_id`, `UNSTRUCTURED_API_KEY`, `UNSTRUCTURED_API_KEY_AUTH`
 - Supported API URL fields: `api_url`, `UNSTRUCTURED_API_URL`, `UNSTRUCTURED_PLATFORM_URL`
@@ -797,6 +791,8 @@ curl -H "Authorization: Bearer $EVSUI_API_TOKEN" \
 
 - `EVSUI_DATABASE_PATH` changes the SQLite path from the default `data/evsui.db`.
 - `EVSUI_BOOTSTRAP_ADMIN` and `EVSUI_BOOTSTRAP_PASSWORD` create the first administrator only while the user table is empty.
+- `EVSUI_CREDENTIAL_KEY` can supply the Fernet key used to encrypt database passwords and PAT tokens. If it is unset, EVSUI creates a local key beside the SQLite database.
+- `EVSUI_CREDENTIAL_KEY_FILE` changes the generated/read credential-key file path. Back up this key with the database; encrypted passwords, PAT tokens, and PEM contents cannot be recovered without it.
 - `EVSUI_LOCAL_CONFIG` can point to a local config file other than `app/config/local_dev.json`.
 - `app/config/auth_users.json` remains supported only as a first-run legacy import source and is ignored by Git. Its format is `{"users":{"alice":"alice-pass","bob":"bob-pass"}}`.
 - `POC_AUTH_FILE` can point to a different auth-user JSON file.
@@ -813,9 +809,7 @@ Only an `admin` can open `GET /admin/users`. The page supports:
 
 - creating users with `admin`, `operator`, or `viewer` roles;
 - enabling and disabling accounts;
-- resetting a password and revoking that user's existing sessions;
-- exporting a versioned JSON bundle whose passwords remain Argon2 hashes;
-- importing the same bundle to migrate users between EVSUI installations.
+- resetting a password and revoking that user's existing sessions.
 
 Do not edit `evsui.db` while EVSUI is running. For backup, stop the process or use SQLite's online backup tooling and keep the database together with its `-wal` and `-shm` files. SQLite is appropriate for one EVSUI application instance. Move authentication storage to PostgreSQL or another shared database before running multiple application replicas.
 
@@ -861,7 +855,7 @@ sequenceDiagram
 
 - `GET /` Home
 - `GET /login`, `POST /login`, `POST /logout`
-- `GET /admin/users`, `POST /admin/users/create`
+- `GET /admin/users`, `POST /admin/connection`, `POST /admin/connections/{id}/delete`, `POST /admin/users/create`
 - `POST /admin/users/{username}/toggle`, `/role`, `/password`
 - `GET /admin/users/export`, `POST /admin/users/import`
 - `POST /ui/evs/connect`, `POST /ui/evs/reset`
@@ -871,7 +865,7 @@ sequenceDiagram
 - `POST /ui/evs/select`, `POST /ui/evs/destroy`
 - `POST /ui/create/upload-documents`, `POST /ui/create/upload`
 - `POST /ui/chat`, `POST /ui/chat/reset`
-- `POST /ui/admin/unstructured-config`
+- `POST /admin/unstructured-config`
 - `GET /ui/admin/document-relations`
 - `POST /ui/admin/document-relations/initialize`, `/save`, `/delete`, `/import`
 - `GET /ui/admin/document-relations/export`

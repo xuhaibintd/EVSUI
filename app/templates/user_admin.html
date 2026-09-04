@@ -5,64 +5,192 @@
   <article class="panel user-admin-panel">
     <header class="user-admin-header">
       <div>
-        <p class="eyebrow">Access administration</p>
-        <h1>User Management</h1>
-        <p class="muted">Accounts are stored in SQLite. Exported passwords remain Argon2 hashes.</p>
+        <p class="eyebrow">Platform administration</p>
+        <h1>System Configuration</h1>
+        <p class="muted">Manage system connections, external service credentials, and user access.</p>
       </div>
-      <a class="chip-btn" href="/">Back to EVSUI</a>
+      <a class="chip-btn" href="/">Back to Teradata Vector Store</a>
     </header>
 
     {% if status %}
     <div class="admin-rule-status {{ status.kind }}" role="status">{{ status.detail }}</div>
     {% endif %}
 
-    <section class="user-admin-actions">
-      <form class="user-create-form" method="post" action="/admin/users/create">
-        <label class="field"><span>Username</span><input name="username" required maxlength="128" autocomplete="off" /></label>
-        <label class="field"><span>Display name</span><input name="display_name" maxlength="128" autocomplete="off" /></label>
-        <label class="field"><span>Initial password</span><input type="password" name="password" required minlength="8" autocomplete="new-password" /></label>
-        <label class="field"><span>Role</span><select name="role">{% for role in roles %}<option value="{{ role }}">{{ role }}</option>{% endfor %}</select></label>
-        <button type="submit">Create user</button>
-      </form>
+    <div class="system-config-tab-shell">
+      <input class="system-config-tab-input" type="radio" name="system-config-tab" id="system-config-tab-connection" {% if active_tab == 'connection' %}checked{% endif %} />
+      <input class="system-config-tab-input" type="radio" name="system-config-tab" id="system-config-tab-unstructured" {% if active_tab == 'unstructured' %}checked{% endif %} />
+      <input class="system-config-tab-input" type="radio" name="system-config-tab" id="system-config-tab-users" {% if active_tab == 'users' %}checked{% endif %} />
 
-      <div class="user-transfer-actions">
-        <a class="chip-btn" href="/admin/users/export">Export users</a>
-        <form method="post" action="/admin/users/import" enctype="multipart/form-data">
-          <label class="field"><span>Import users JSON</span><input type="file" name="users_file" accept="application/json,.json" required /></label>
-          <button type="submit">Import and update</button>
-        </form>
+      <nav class="system-config-tab-nav" aria-label="System Configuration">
+        <label for="system-config-tab-connection">System Connection</label>
+        <label for="system-config-tab-unstructured">Unstructured IO</label>
+        <label for="system-config-tab-users">User Management</label>
+      </nav>
+
+    <section id="connection-configuration" class="system-connection-section system-config-tab-panel system-config-panel-connection" aria-labelledby="connection-configuration-title">
+      <div class="user-section-heading">
+        <div>
+          <h2 id="connection-configuration-title">Database connections</h2>
+          <p class="muted">Create reusable connections for users to select on the home page. Password, PAT, and PEM contents are encrypted in SQLite.</p>
+        </div>
+      </div>
+
+      <div class="connection-profile-workspace">
+        <aside class="connection-profile-sidebar" aria-label="Saved database connections">
+          <div class="connection-profile-sidebar-head">
+            <div>
+              <h3>Connections</h3>
+              <span class="connection-profile-count">{{ connection_profiles|length }}</span>
+            </div>
+            <a class="chip-btn connection-profile-add" href="/admin/users?new_connection=true#connection-configuration">Add</a>
+          </div>
+
+          <div class="connection-profile-list">
+            {% for profile in connection_profiles %}
+            <a class="connection-profile-item {% if connection_config.id == profile.id %}is-selected{% endif %}" href="/admin/users?connection_id={{ profile.id }}#connection-configuration" {% if connection_config.id == profile.id %}aria-current="true"{% endif %}>
+              <span class="connection-profile-item-copy">
+                <strong>{{ profile.name }}</strong>
+                <small>{{ profile.host }}</small>
+                <small>{{ profile.username }}</small>
+              </span>
+              {% if profile.is_default %}<span class="connection-config-state is-configured">Default</span>{% endif %}
+            </a>
+            {% else %}
+            <p class="connection-profile-empty muted">No database connections defined. Add one to get started.</p>
+            {% endfor %}
+          </div>
+        </aside>
+
+        <div class="connection-profile-editor">
+          <header class="connection-profile-editor-head">
+            <div>
+              <p class="eyebrow">{% if connection_config.id %}Selected connection{% else %}New connection{% endif %}</p>
+              <h3>{% if connection_config.id %}Edit {{ connection_config.name }}{% else %}Create database connection{% endif %}</h3>
+            </div>
+            {% if connection_config.id %}<span class="connection-editor-status">ID {{ connection_config.id }}</span>{% endif %}
+          </header>
+
+          <form class="system-connection-form" method="post" action="/admin/connection" enctype="multipart/form-data">
+            {% if connection_config.id %}<input type="hidden" name="connection_id" value="{{ connection_config.id }}" />{% endif %}
+
+            <div class="system-connection-fields system-connection-identity-fields">
+              <label class="field"><span>Connection name</span><input type="text" name="connection_name" value="{{ connection_config.name|default('') }}" required maxlength="128" autocomplete="off" /></label>
+              <label class="field"><span>Host</span><input type="text" name="host" value="{{ connection_config.host|default('') }}" required maxlength="512" autocomplete="off" /></label>
+              <label class="field"><span>Username</span><input type="text" name="username" value="{{ connection_config.username|default('') }}" required maxlength="128" autocomplete="off" /></label>
+            </div>
+
+            <div class="system-connection-fields system-connection-secret-fields">
+              <label class="field"><span>Database password</span><input type="password" name="password" maxlength="8192" autocomplete="new-password" placeholder="{% if connection_password_configured %}Saved — leave blank to keep{% else %}Required{% endif %}" {% if not connection_password_configured %}required{% endif %} /></label>
+              <label class="field"><span>PAT Token</span><input type="password" name="pat_token" maxlength="8192" autocomplete="new-password" placeholder="{% if connection_pat_configured %}Saved — leave blank to keep{% else %}Required{% endif %}" {% if not connection_pat_configured %}required{% endif %} /></label>
+              <label class="field system-connection-pem">
+                <span>{% if connection_config.pem_filename %}Replace PEM File{% else %}PEM File{% endif %}</span>
+                <input type="file" name="pem_file" accept=".pem,.key,.crt" />
+                <small class="muted">{% if connection_config.pem_in_database %}Stored encrypted in SQLite: {{ connection_config.pem_filename }}{% elif connection_config.pem_filename %}Legacy file: {{ connection_config.pem_filename }}{% else %}No file configured{% endif %}</small>
+              </label>
+            </div>
+
+            <label class="field system-connection-wide"><span>UES URL</span><input type="url" name="ues_url" value="{{ connection_config.ues_url|default('') }}" required maxlength="2048" autocomplete="off" /></label>
+
+            <footer class="connection-profile-editor-actions">
+              <label class="system-connection-default"><input type="checkbox" name="is_default" value="true" {% if connection_config.is_default %}checked{% endif %} /> <span>Use as default connection</span></label>
+              <div class="connection-profile-editor-buttons">
+                {% if connection_config.id %}
+                <button type="submit" class="ghost connection-delete-button" formaction="/admin/connections/{{ connection_config.id }}/delete" formnovalidate onclick="return confirm('Delete this connection?');">Delete</button>
+                {% endif %}
+                <button type="submit">{% if connection_config.id %}Save changes{% else %}Create connection{% endif %}</button>
+              </div>
+            </footer>
+          </form>
+        </div>
       </div>
     </section>
 
-    <div class="user-table-wrap">
+    <section id="unstructured-configuration" class="system-connection-section system-config-tab-panel system-config-panel-unstructured" aria-labelledby="unstructured-configuration-title">
+      <div class="user-section-heading">
+        <div>
+          <h2 id="unstructured-configuration-title">Unstructured IO</h2>
+          <p class="muted">Used by Multi Format and Multi-Format BookRAG for the current signed-in session.</p>
+        </div>
+        <span class="connection-config-state {% if evs.params.unstructured_api_url and evs.params.unstructured_api_key %}is-configured{% endif %}">{% if evs.params.unstructured_api_url and evs.params.unstructured_api_key %}Configured{% else %}Not configured{% endif %}</span>
+      </div>
+      <form class="unstructured-connection-form" method="post" action="/admin/unstructured-config">
+        <label class="field">
+          <span>API URL</span>
+          <input type="url" name="unstructured_api_url" value="{{ evs.params.unstructured_api_url }}" placeholder="https://platform.unstructuredapp.io/api/v1" />
+        </label>
+        <label class="field">
+          <span>API Key</span>
+          <input type="password" name="unstructured_api_key" value="{{ evs.params.unstructured_api_key }}" placeholder="Unstructured API key" autocomplete="off" />
+        </label>
+        <div class="system-connection-actions">
+          <button type="submit">Save Unstructured IO</button>
+        </div>
+      </form>
+    </section>
+
+    <div class="system-config-tab-panel system-config-panel-users">
+    <section class="user-create-section" aria-labelledby="create-user-title">
+      <div class="user-section-heading">
+        <h2 id="create-user-title">Create user</h2>
+        <p class="muted">New accounts are enabled immediately.</p>
+      </div>
+      <form class="user-create-form" method="post" action="/admin/users/create">
+        <label class="field"><span>Username</span><input type="text" name="username" required maxlength="128" autocomplete="off" /></label>
+        <label class="field"><span>Display name</span><input type="text" name="display_name" maxlength="128" autocomplete="off" /></label>
+        <label class="field"><span>Initial password</span><input type="password" name="password" required minlength="8" autocomplete="new-password" /></label>
+        <label class="field"><span>Role</span><select name="role">{% for role in roles %}<option value="{{ role }}" {% if role == 'viewer' %}selected{% endif %}>{{ role }}</option>{% endfor %}</select></label>
+        <button type="submit">Create user</button>
+      </form>
+    </section>
+
+    <section class="user-list-section" aria-labelledby="user-list-title">
+      <div class="user-section-heading user-list-heading">
+        <div>
+          <h2 id="user-list-title">User Management</h2>
+          <p class="muted">Change roles, disable access, or assign a new password.</p>
+        </div>
+        <span class="user-count">{{ users|length }} account{% if users|length != 1 %}s{% endif %}</span>
+      </div>
+      <div class="user-table-wrap">
       <table class="data-table user-table">
-        <thead><tr><th>User</th><th>Display name</th><th>Role</th><th>Status</th><th>Last login</th><th>Actions</th></tr></thead>
+        <colgroup>
+          <col class="user-col-identity" />
+          <col class="user-col-role" />
+          <col class="user-col-status" />
+          <col class="user-col-login" />
+          <col class="user-col-actions" />
+        </colgroup>
+        <thead><tr><th>User</th><th>Role</th><th>Status</th><th>Last login</th><th>Actions</th></tr></thead>
         <tbody>
           {% for user in users %}
           <tr>
-            <td>{{ user.username }}</td>
-            <td>{{ user.display_name or '—' }}</td>
-            <td>{{ user.role }}</td>
-            <td>{% if user.enabled %}Enabled{% else %}Disabled{% endif %}</td>
-            <td>{{ user.last_login_display or '—' }}</td>
+            <td class="user-identity"><strong>{{ user.username }}</strong><span>{{ user.display_name or 'No display name' }}</span></td>
+            <td><span class="user-role-badge">{{ user.role }}</span></td>
+            <td><span class="user-status-badge {% if user.enabled %}is-enabled{% else %}is-disabled{% endif %}">{% if user.enabled %}Enabled{% else %}Disabled{% endif %}</span></td>
+            <td class="user-last-login">{{ user.last_login_display or 'Never' }}</td>
             <td class="user-row-actions">
-              <form method="post" action="/admin/users/{{ user.username }}/role">
+              <form class="user-role-form" method="post" action="/admin/users/{{ user.username }}/role">
                 <select name="role" aria-label="Role for {{ user.username }}">{% for role in roles %}<option value="{{ role }}" {% if role == user.role %}selected{% endif %}>{{ role }}</option>{% endfor %}</select>
                 <button class="ghost" type="submit">Set role</button>
               </form>
-              <form method="post" action="/admin/users/{{ user.username }}/toggle">
+              <form class="user-toggle-form" method="post" action="/admin/users/{{ user.username }}/toggle">
                 <input type="hidden" name="enabled" value="{% if user.enabled %}false{% else %}true{% endif %}" />
                 <button class="ghost" type="submit">{% if user.enabled %}Disable{% else %}Enable{% endif %}</button>
               </form>
-              <form method="post" action="/admin/users/{{ user.username }}/password">
+              <form class="user-password-form" method="post" action="/admin/users/{{ user.username }}/password">
                 <input type="password" name="password" minlength="8" placeholder="New password" required autocomplete="new-password" />
                 <button class="ghost" type="submit">Reset</button>
               </form>
             </td>
           </tr>
+          {% else %}
+          <tr><td class="user-empty-state" colspan="5">No users found.</td></tr>
           {% endfor %}
         </tbody>
       </table>
+      </div>
+    </section>
+    </div>
     </div>
   </article>
 </section>

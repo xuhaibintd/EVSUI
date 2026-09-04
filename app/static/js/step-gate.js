@@ -5,7 +5,7 @@
     const connectSectionId = options.connectSectionId || "section-connect";
     const connectContentId = options.connectContentId || "section-connect-content";
     const lockedSections =
-      options.lockedSections || ["section-create", "section-chat", "section-eval", "section-admin"];
+      options.lockedSections || ["section-create", "section-chat", "section-admin"];
     const menuHintId = options.menuHintId || "menu-hint";
     const wizardNoteSelector = options.wizardNoteSelector || "#section-connect .wizard-note";
     const noteConnectedText = options.noteConnectedText || "Step 1 completed. Continue to Step 2.";

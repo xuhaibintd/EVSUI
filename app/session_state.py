@@ -134,6 +134,8 @@ def default_evs_state(load_defaults: Callable[[], dict[str, str]]) -> dict[str, 
         "destroy_status": "neutral",
         "actual_params": {},
         "connect_steps": [],
+        "selected_connection_id": None,
+        "selected_connection_name": "",
         "params": connect_defaults,
     }
 
@@ -172,6 +174,23 @@ def new_session_scope(username: str, default_evs_state_fn: Callable[[], dict], d
     }
 
 
+def apply_saved_connection_config(scope: dict[str, Any], auth_store, principal) -> bool:
+    if auth_store is None or principal is None:
+        return False
+    try:
+        saved = auth_store.get_connection_profile()
+    except Exception as ex:
+        scope.setdefault("evs_state", {})["last_error"] = f"Saved connection configuration could not be loaded: {ex}"
+        return False
+    if not saved:
+        return False
+    params = scope.setdefault("evs_state", {}).setdefault("params", {})
+    params.update(saved)
+    scope["evs_state"]["selected_connection_id"] = saved.get("id")
+    scope["evs_state"]["selected_connection_name"] = saved.get("name", "")
+    return True
+
+
 def session_id_from_request(request: Request, session_cookie_name: str) -> str:
     return str(request.cookies.get(session_cookie_name, "")).strip()
 
@@ -205,6 +224,7 @@ def activate_session_state(
         )
         if principal is not None:
             scope["role"] = principal.role
+            apply_saved_connection_config(scope, auth_store, principal)
         if sid:
             sessions[sid] = scope
 
@@ -271,16 +291,6 @@ def load_auth_users(auth_users_file_default: Path, logger: logging.Logger) -> di
         except Exception as ex:
             logger.warning("Failed to parse auth users file '%s': %s", path, ex)
     return users
-
-
-def user_initials(username: str) -> str:
-    value = username.strip().upper()
-    if not value:
-        return "??"
-    parts = value.split()
-    if len(parts) >= 2:
-        return (parts[0][:1] + parts[1][:1])[:2]
-    return value[:2]
 
 
 def is_logged_in(request: Request, app, session_cookie_name: str) -> bool:

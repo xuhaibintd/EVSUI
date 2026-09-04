@@ -47,6 +47,61 @@
   overflow: visible;
 }
 
+.connection-config-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.connection-config-summary > div {
+  display: grid;
+  gap: 0.18rem;
+  min-width: 0;
+  padding: 0.58rem 0.65rem;
+  border: 1px solid #294979;
+  border-radius: 9px;
+  background: rgba(10, 28, 59, 0.86);
+}
+
+.connection-config-summary span,
+.connection-config-empty span {
+  color: #8ea9d1;
+  font-size: 0.72rem;
+}
+
+.connection-config-summary strong {
+  color: #e4edfb;
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.connection-config-summary-wide {
+  grid-column: 1 / -1;
+}
+
+.connection-config-empty {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.8rem;
+  border: 1px dashed #3b5e91;
+  border-radius: 10px;
+  color: #e4edfb;
+}
+
+.connection-config-empty .chip-btn {
+  width: max-content;
+}
+
+@media (max-width: 640px) {
+  .connection-config-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .connection-config-summary-wide {
+    grid-column: auto;
+  }
+}
+
 .connect-fields {
   display: grid;
   gap: 0.55rem;

@@ -1,4 +1,4 @@
-import "./step-gate.js?v=20260518-1";
+import "./step-gate.js?v=20260905-1";
 import "./modules/core.js?v=20260827-1";
 import "./modules/create-uploads.js?v=20260827-1";
 import "./modules/create-params.js?v=20260416-1";

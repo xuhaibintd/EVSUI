@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 import tempfile
+import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from app.auth_store import AuthStore
@@ -57,6 +60,236 @@ class AuthStoreTests(unittest.TestCase):
                 store.set_enabled("admin", False)
             with self.assertRaisesRegex(ValueError, "last enabled administrator"):
                 store.set_role("admin", "viewer")
+
+    def test_five_failed_logins_lock_account(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._store(tmpdir)
+            store.create_user(username="admin", password="strong-password", role="admin")
+
+            for _ in range(5):
+                self.assertIsNone(store.authenticate("admin", "wrong-password"))
+
+            self.assertIsNone(store.authenticate("admin", "strong-password"))
+            user = store.list_users()[0]
+            self.assertEqual(user["failed_login_count"], 0)
+            self.assertGreater(int(user["locked_until"]), int(time.time()))
+
+    def test_concurrent_failed_logins_cannot_bypass_account_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._store(tmpdir)
+            store.create_user(username="admin", password="strong-password", role="admin")
+
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                results = list(
+                    executor.map(
+                        lambda _: store.authenticate("admin", "wrong-password"),
+                        range(20),
+                    )
+                )
+
+            self.assertEqual(results, [None] * 20)
+            self.assertIsNone(store.authenticate("admin", "strong-password"))
+            user = store.list_users()[0]
+            self.assertGreater(int(user["locked_until"]), int(time.time()))
+
+    def test_disabling_user_and_resetting_password_revoke_sessions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._store(tmpdir)
+            store.create_user(username="admin", password="admin-password", role="admin")
+            reader = store.create_user(username="reader", password="reader-password", role="viewer")
+
+            disabled_session = store.create_session(reader)
+            store.set_enabled("reader", False)
+            self.assertIsNone(store.get_session(disabled_session))
+            self.assertIsNone(store.authenticate("reader", "reader-password"))
+
+            store.set_enabled("reader", True)
+            reset_session = store.create_session(reader)
+            store.reset_password("reader", "replacement-password")
+            self.assertIsNone(store.get_session(reset_session))
+            self.assertIsNone(store.authenticate("reader", "reader-password"))
+            self.assertIsNotNone(store.authenticate("reader", "replacement-password"))
+
+    def test_system_connection_config_is_encrypted_and_admin_managed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._store(tmpdir)
+            admin = store.create_user(username="admin", password="admin-password", role="admin")
+            reader = store.create_user(username="reader", password="reader-password", role="viewer")
+            pem_payload = b"-----BEGIN CERTIFICATE-----\ntest-certificate\n-----END CERTIFICATE-----\n"
+            admin_values = {
+                "host": "db.example.com",
+                "username": "db_admin",
+                "password": "database-password",
+                "ues_url": "https://example.com/open-analytics",
+                "pat_token": "private-pat-token",
+                "pem_file": "",
+                "pem_filename": "admin.pem",
+                "pem_content": pem_payload,
+            }
+
+            store.save_system_connection_config(admin.user_id, admin_values)
+
+            saved = store.get_system_connection_config()
+            self.assertEqual(saved["host"], "db.example.com")
+            self.assertEqual(saved["pem_filename"], "admin.pem")
+            self.assertTrue(saved["pem_in_database"])
+            self.assertEqual(Path(saved["pem_file"]).name, "admin.pem")
+            self.assertEqual(Path(saved["pem_file"]).read_bytes(), pem_payload)
+            with self.assertRaises(PermissionError):
+                store.save_system_connection_config(
+                    reader.user_id,
+                    admin_values | {"username": "db_reader"},
+                )
+
+            connection = sqlite3.connect(store.database_path)
+            try:
+                rows = connection.execute(
+                    "SELECT password_ciphertext, pat_token_ciphertext, pem_ciphertext FROM system_connection_config"
+                ).fetchall()
+            finally:
+                connection.close()
+            raw_payload = str(rows)
+            self.assertNotIn("database-password", raw_payload)
+            self.assertNotIn("private-pat-token", raw_payload)
+            self.assertNotIn("test-certificate", raw_payload)
+            self.assertTrue(store.database_path.with_suffix(".credentials.key").exists())
+
+    def test_legacy_pem_path_is_migrated_into_encrypted_database_storage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            source = project_root / "uploads" / "pem" / "legacy.pem"
+            source.parent.mkdir(parents=True)
+            payload = b"-----BEGIN CERTIFICATE-----\nlegacy-certificate\n-----END CERTIFICATE-----\n"
+            source.write_bytes(payload)
+            store = AuthStore(
+                project_root / "data" / "auth.db",
+                session_ttl_seconds=600,
+                pem_runtime_dir=project_root / "pem_runtime",
+                legacy_file_root=project_root,
+            )
+            store.initialize()
+            admin = store.create_user(username="admin", password="admin-password", role="admin")
+            store.save_system_connection_config(
+                admin.user_id,
+                {
+                    "host": "db.example.com",
+                    "username": "db_admin",
+                    "password": "database-password",
+                    "ues_url": "https://example.com/open-analytics",
+                    "pat_token": "private-pat-token",
+                    "pem_file": "uploads/pem/legacy.pem",
+                },
+            )
+
+            self.assertTrue(store.migrate_legacy_system_pem())
+            saved = store.get_system_connection_config()
+            self.assertTrue(saved["pem_in_database"])
+            self.assertEqual(saved["pem_filename"], "legacy.pem")
+            self.assertEqual(Path(saved["pem_file"]).name, "legacy.pem")
+            self.assertEqual(Path(saved["pem_file"]).read_bytes(), payload)
+            connection = sqlite3.connect(store.database_path)
+            try:
+                row = connection.execute(
+                    "SELECT pem_file, pem_ciphertext FROM system_connection_config WHERE config_id=1"
+                ).fetchone()
+            finally:
+                connection.close()
+            self.assertEqual(row[0], "")
+            self.assertNotIn("legacy-certificate", row[1])
+
+    def test_legacy_connection_config_bootstraps_first_admin_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._store(tmpdir)
+            admin = store.create_user(username="admin", password="admin-password", role="admin")
+            values = {"host": "legacy-host", "username": "legacy-user", "password": "legacy-password"}
+
+            self.assertEqual(store.bootstrap_connection_config(values), 1)
+            self.assertEqual(store.bootstrap_connection_config({"host": "replacement"}), 0)
+            self.assertEqual(store.get_system_connection_config()["host"], "legacy-host")
+
+    def test_connection_profiles_support_crud_and_default_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._store(tmpdir)
+            admin = store.create_user(username="admin", password="admin-password", role="admin")
+            first = store.save_connection_profile(
+                admin.user_id,
+                {
+                    "name": "Japan Lake",
+                    "host": "japan.example.com",
+                    "username": "japan_user",
+                    "password": "japan-password",
+                    "ues_url": "https://japan.example.com/open-analytics",
+                    "pat_token": "japan-token",
+                    "is_default": True,
+                },
+            )
+            second = store.save_connection_profile(
+                admin.user_id,
+                {
+                    "name": "US Lake",
+                    "host": "us.example.com",
+                    "username": "us_user",
+                    "password": "us-password",
+                    "ues_url": "https://us.example.com/open-analytics",
+                    "pat_token": "us-token",
+                    "pem_filename": "us-key.pem",
+                    "pem_content": b"-----BEGIN PRIVATE KEY-----\nus-key\n-----END PRIVATE KEY-----\n",
+                    "is_default": True,
+                },
+            )
+            second_runtime_pem = Path(second["pem_file"])
+            self.assertTrue(second_runtime_pem.is_file())
+
+            self.assertEqual(len(store.list_connection_profiles()), 2)
+            self.assertEqual(store.get_connection_profile()["id"], second["id"])
+            updated = store.save_connection_profile(
+                admin.user_id,
+                {
+                    "name": "US Lake Updated",
+                    "host": "us2.example.com",
+                    "username": "us_user",
+                    "password": "",
+                    "ues_url": "https://us.example.com/open-analytics",
+                    "pat_token": "",
+                },
+                profile_id=second["id"],
+            )
+            self.assertEqual(updated["host"], "us2.example.com")
+            self.assertEqual(updated["password"], "us-password")
+            store.delete_connection_profile(admin.user_id, second["id"])
+            self.assertFalse(second_runtime_pem.exists())
+            self.assertEqual(store.get_connection_profile()["id"], first["id"])
+            self.assertTrue(store.get_connection_profile()["is_default"])
+
+    def test_previous_per_user_connection_is_migrated_to_system_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._store(tmpdir)
+            admin = store.create_user(username="admin", password="admin-password", role="admin")
+            now = 1
+            with store._connect() as connection:
+                connection.execute(
+                    """INSERT INTO connection_configs(
+                           user_id, host, username, password_ciphertext, ues_url,
+                           pat_token_ciphertext, pem_file, created_at, updated_at
+                       ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        admin.user_id,
+                        "old-host",
+                        "old-user",
+                        store._encrypt_credential("old-password"),
+                        "https://old.example.com/open-analytics",
+                        store._encrypt_credential("old-pat"),
+                        "uploads/pem/old.pem",
+                        now,
+                        now,
+                    ),
+                )
+
+            self.assertEqual(store.bootstrap_connection_config({"host": "local-host"}), 1)
+            self.assertEqual(store.get_system_connection_config()["host"], "old-host")
+            with store._connect() as connection:
+                legacy_count = connection.execute("SELECT COUNT(*) FROM connection_configs").fetchone()[0]
+            self.assertEqual(legacy_count, 0)
 
 
 class SessionAwareStateTests(unittest.IsolatedAsyncioTestCase):

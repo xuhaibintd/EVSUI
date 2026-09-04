@@ -9,17 +9,7 @@ from pathlib import Path
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
-from app.runtime import (
-    DEBUG_UPLOAD_DIR,
-    DOCUMENT_UPLOAD_DIR,
-    SESSION_COOKIE_NAME,
-)
-from app.services.precision_eval import (
-    build_precision_eval_panel_context,
-    build_precision_eval_prototype_context,
-    build_precision_eval_report,
-    resolve_precision_eval_path,
-)
+from app.runtime import SESSION_COOKIE_NAME
 from app.services.bookrag_section_rules import (
     BOOKRAG_SECTION_RULES_PATH,
     save_bookrag_section_rules,
@@ -67,6 +57,7 @@ from app.teradata_runtime import (
 )
 from app.web_support import (
     _activate_session_state,
+    _apply_saved_connection_config,
     _append_connect_step,
     _apply_chat_list_output_to_state,
     _apply_list_output_to_state,
@@ -98,7 +89,6 @@ from app.web_support import (
     _render_connect_panel,
     _resolve_path_hint,
     _save_document_uploads,
-    _save_pem_upload,
     _session_id_from_request,
     _table_from_result,
     _verify_vectorstore_exists,
@@ -117,11 +107,39 @@ def _admin_principal(request: Request):
     return principal
 
 
-def _render_user_admin(request: Request, *, status: dict[str, str] | None = None, status_code: int = 200):
+def _session_principal(request: Request):
+    auth_store = getattr(request.app.state, "auth_store", None)
+    if auth_store is None:
+        return None
+    return auth_store.get_session(_session_id_from_request(request))
+
+
+def _render_user_admin(
+    request: Request,
+    *,
+    status: dict[str, str] | None = None,
+    status_code: int = 200,
+    active_tab: str = "connection",
+    selected_connection_id: int | None = None,
+    new_connection: bool = False,
+):
     principal = _admin_principal(request)
     if principal is None:
         return HTMLResponse("Forbidden", status_code=403)
     _activate_session_state(request, request.app)
+    connection_profiles = []
+    try:
+        connection_profiles = request.app.state.auth_store.list_connection_profiles()
+        connection_config = (
+            {}
+            if new_connection
+            else request.app.state.auth_store.get_connection_profile(selected_connection_id) or {}
+        )
+    except Exception as ex:
+        connection_config = {}
+        if status is None:
+            status = {"kind": "error", "detail": f"System connection configuration could not be loaded: {ex}"}
+            status_code = 500
     return request.app.state.templates.TemplateResponse(
         request,
         "user_admin.html",
@@ -129,11 +147,15 @@ def _render_user_admin(request: Request, *, status: dict[str, str] | None = None
             "logged_in": True,
             "username": principal.username,
             "user_role": principal.role,
-            "user_initials": principal.username[:2].upper(),
             "evs": request.app.state.evs_state,
             "users": request.app.state.auth_store.list_users(),
             "roles": ("admin", "operator", "viewer"),
+            "connection_config": connection_config,
+            "connection_profiles": connection_profiles,
+            "connection_password_configured": bool(connection_config.get("password")),
+            "connection_pat_configured": bool(connection_config.get("pat_token")),
             "status": status,
+            "active_tab": active_tab if active_tab in {"connection", "unstructured", "users"} else "connection",
         },
         status_code=status_code,
     )
@@ -158,15 +180,6 @@ def _build_bookrag_admin_context(rules_payload: dict, status: dict | None = None
         "bookrag_section_rules": rules_payload,
         "bookrag_section_rules_path": str(BOOKRAG_SECTION_RULES_PATH),
         "bookrag_section_rules_status": status,
-        "unstructured_status": None,
-        "json_inspector": build_unstructured_json_inspector_context(),
-    }
-
-
-def _build_unstructured_admin_context(app, status: dict | None = None) -> dict:
-    return {
-        "evs": app.state.evs_state,
-        "unstructured_status": status,
         "json_inspector": build_unstructured_json_inspector_context(),
     }
 
@@ -357,7 +370,6 @@ async def login_page(request: Request):
             "logged_in": False,
             "username": "",
             "password": "",
-            "user_initials": "",
         },
     )
 
@@ -370,6 +382,7 @@ async def login_submit(request: Request, username: str = Form(default=""), passw
         sid = request.app.state.auth_store.create_session(principal)
         scope = _new_session_scope(username=principal.username)
         scope["role"] = principal.role
+        _apply_saved_connection_config(scope, request.app, principal)
         request.app.state.user_sessions[sid] = scope
         secure_cookie = request.url.scheme == "https"
         response = RedirectResponse(url="/", status_code=303)
@@ -397,7 +410,6 @@ async def login_submit(request: Request, username: str = Form(default=""), passw
             "logged_in": False,
             "username": clean_username,
             "password": "",
-            "user_initials": "",
         },
     )
 
@@ -414,8 +426,141 @@ async def logout(request: Request):
 
 
 @router.get("/admin/users", response_class=HTMLResponse)
-async def user_admin_page(request: Request):
-    return _render_user_admin(request)
+async def user_admin_page(
+    request: Request,
+    connection_id: int | None = None,
+    new_connection: bool = False,
+):
+    return _render_user_admin(
+        request,
+        selected_connection_id=connection_id,
+        new_connection=new_connection,
+    )
+
+
+@router.post("/admin/connection", response_class=HTMLResponse)
+async def system_connection_config_save(
+    request: Request,
+    connection_id: int | None = Form(default=None),
+    connection_name: str = Form(default=""),
+    is_default: str = Form(default="false"),
+    host: str = Form(default=""),
+    username: str = Form(default=""),
+    password: str = Form(default=""),
+    ues_url: str = Form(default=""),
+    pat_token: str = Form(default=""),
+    pem_file: UploadFile = File(default=None),
+):
+    principal = _admin_principal(request)
+    if principal is None:
+        return HTMLResponse("Forbidden", status_code=403)
+    try:
+        existing = request.app.state.auth_store.get_connection_profile(connection_id) or {}
+        pem_payload = None
+        pem_filename = str(existing.get("pem_filename") or "").strip()
+        if pem_file is not None and pem_file.filename:
+            suffix = Path(pem_file.filename).suffix.lower()
+            if suffix not in {".pem", ".key", ".crt"}:
+                raise ValueError("Only .pem, .key, and .crt files are allowed.")
+            pem_payload = await pem_file.read()
+            pem_filename = Path(pem_file.filename).name
+        values = {
+            "name": connection_name.strip(),
+            "host": host.strip(),
+            "username": username.strip(),
+            "password": password or existing.get("password", ""),
+            "ues_url": ues_url.strip(),
+            "pat_token": (pat_token or "").strip() or existing.get("pat_token", ""),
+            "pem_file": "" if existing.get("pem_in_database") else str(existing.get("pem_file") or ""),
+            "pem_filename": pem_filename,
+            "pem_content": pem_payload,
+            "is_default": is_default.strip().lower() in {"1", "true", "yes", "on"},
+        }
+        missing = [key for key in ("host", "username", "password", "ues_url", "pat_token") if not values[key]]
+        if pem_payload is None and not existing.get("pem_in_database"):
+            missing.append("pem_file")
+        if missing:
+            raise ValueError(f"Missing required fields: {', '.join(missing)}")
+        saved = request.app.state.auth_store.save_connection_profile(
+            principal.user_id,
+            values,
+            profile_id=connection_id,
+        )
+        for scope in request.app.state.user_sessions.values():
+            evs_state = scope.get("evs_state", {})
+            if not evs_state.get("connected") and (
+                evs_state.get("selected_connection_id") == saved.get("id")
+                or (saved.get("is_default") and not evs_state.get("selected_connection_id"))
+            ):
+                evs_state.setdefault("params", {}).update(saved)
+                evs_state["selected_connection_id"] = saved.get("id")
+                evs_state["selected_connection_name"] = saved.get("name", "")
+        return _render_user_admin(
+            request,
+            status={"kind": "ok", "detail": f"Connection '{saved.get('name', '')}' saved."},
+            active_tab="connection",
+            selected_connection_id=saved.get("id"),
+        )
+    except Exception as ex:
+        return _render_user_admin(
+            request,
+            status={"kind": "error", "detail": str(ex)},
+            status_code=400,
+            active_tab="connection",
+            selected_connection_id=connection_id,
+            new_connection=connection_id is None,
+        )
+
+
+@router.post("/admin/connections/{connection_id}/delete", response_class=HTMLResponse)
+async def system_connection_config_delete(request: Request, connection_id: int):
+    principal = _admin_principal(request)
+    if principal is None:
+        return HTMLResponse("Forbidden", status_code=403)
+    try:
+        existing = request.app.state.auth_store.get_connection_profile(connection_id)
+        request.app.state.auth_store.delete_connection_profile(principal.user_id, connection_id)
+        for scope in request.app.state.user_sessions.values():
+            state = scope.get("evs_state", {})
+            if not state.get("connected") and state.get("selected_connection_id") == connection_id:
+                replacement = request.app.state.auth_store.get_connection_profile()
+                state["selected_connection_id"] = replacement.get("id") if replacement else None
+                state["selected_connection_name"] = replacement.get("name", "") if replacement else ""
+                state["params"] = dict(replacement or {})
+        return _render_user_admin(
+            request,
+            status={"kind": "ok", "detail": f"Connection '{(existing or {}).get('name', '')}' deleted."},
+            active_tab="connection",
+        )
+    except Exception as ex:
+        return _render_user_admin(
+            request,
+            status={"kind": "error", "detail": str(ex)},
+            status_code=400,
+            active_tab="connection",
+            selected_connection_id=connection_id,
+        )
+
+
+@router.post("/admin/unstructured-config", response_class=HTMLResponse)
+async def system_unstructured_config_save(
+    request: Request,
+    unstructured_api_url: str = Form(default=""),
+    unstructured_api_key: str = Form(default=""),
+):
+    if _admin_principal(request) is None:
+        return HTMLResponse("Forbidden", status_code=403)
+    _activate_session_state(request, request.app)
+    state = request.app.state.evs_state
+    params = state.setdefault("params", {})
+    params["unstructured_api_url"] = unstructured_api_url.strip()
+    params["unstructured_api_key"] = (unstructured_api_key or "").strip()
+    _persist_active_session_state(request, request.app)
+    return _render_user_admin(
+        request,
+        status={"kind": "ok", "detail": "Unstructured IO configuration saved for the current session."},
+        active_tab="unstructured",
+    )
 
 
 @router.post("/admin/users/create", response_class=HTMLResponse)
@@ -436,12 +581,13 @@ async def user_admin_create(
             role=role,
         )
         status = {"kind": "ok", "detail": f"User '{username.strip()}' created."}
-        return _render_user_admin(request, status=status)
+        return _render_user_admin(request, status=status, active_tab="users")
     except Exception as ex:
         return _render_user_admin(
             request,
             status={"kind": "error", "detail": str(ex)},
             status_code=400,
+            active_tab="users",
         )
 
 
@@ -462,12 +608,14 @@ async def user_admin_toggle(request: Request, username: str, enabled: str = Form
         return _render_user_admin(
             request,
             status={"kind": "ok", "detail": f"User '{username}' {action}."},
+            active_tab="users",
         )
     except Exception as ex:
         return _render_user_admin(
             request,
             status={"kind": "error", "detail": str(ex)},
             status_code=400,
+            active_tab="users",
         )
 
 
@@ -490,12 +638,14 @@ async def user_admin_password(request: Request, username: str, password: str = F
         return _render_user_admin(
             request,
             status={"kind": "ok", "detail": f"Password for '{username}' reset; existing sessions revoked."},
+            active_tab="users",
         )
     except Exception as ex:
         return _render_user_admin(
             request,
             status={"kind": "error", "detail": str(ex)},
             status_code=400,
+            active_tab="users",
         )
 
 
@@ -511,12 +661,14 @@ async def user_admin_role(request: Request, username: str, role: str = Form(defa
         return _render_user_admin(
             request,
             status={"kind": "ok", "detail": f"Role for '{username}' changed to '{role}'."},
+            active_tab="users",
         )
     except Exception as ex:
         return _render_user_admin(
             request,
             status={"kind": "error", "detail": str(ex)},
             status_code=400,
+            active_tab="users",
         )
 
 
@@ -547,74 +699,64 @@ async def user_admin_import(request: Request, users_file: UploadFile = File(...)
         return _render_user_admin(
             request,
             status={"kind": "ok", "detail": f"Imported {imported} user(s)."},
+            active_tab="users",
         )
     except Exception as ex:
         return _render_user_admin(
             request,
             status={"kind": "error", "detail": str(ex)},
             status_code=400,
+            active_tab="users",
         )
 
 
 @router.post("/ui/evs/connect", response_class=HTMLResponse)
-async def evs_connect(
-    request: Request,
-    host: str = Form(default=""),
-    username: str = Form(default=""),
-    password: str = Form(default=""),
-    ues_url: str = Form(default=""),
-    pat_token: str = Form(default=""),
-    current_pem_file: str = Form(default=""),
-    pem_file: UploadFile = File(default=None),
-):
+async def evs_connect(request: Request, connection_id: int | None = Form(default=None)):
     if not _is_logged_in(request, request.app):
         return HTMLResponse("Unauthorized", status_code=401)
     _activate_session_state(request, request.app)
     state = request.app.state.evs_state
     steps: list[dict[str, str]] = []
     actual_params: dict = {}
-    resolved_pem_path = current_pem_file.strip()
-    if pem_file is not None and pem_file.filename:
-        suffix = Path(pem_file.filename).suffix.lower()
-        if suffix in {".pem", ".key", ".crt"}:
-            resolved_pem_path = _save_pem_upload(pem_file)
-            steps.append(_new_connect_step("PEM File", "ok", f"Uploaded PEM saved as: {resolved_pem_path}"))
-    elif resolved_pem_path:
+    try:
+        saved_config = request.app.state.auth_store.get_connection_profile(connection_id)
+        if saved_config is None:
+            raise ValueError("Select a valid database connection.")
+    except Exception as ex:
+        state["connected"] = False
+        state["last_success"] = ""
+        state["last_error"] = f"System connection configuration could not be loaded: {ex}"
+        state["connect_steps"] = [_new_connect_step("Load System Configuration", "error", str(ex))]
+        return _render_connect_panel(request, request.app)
+
+    resolved_pem_path = str(saved_config.get("pem_file") or "").strip()
+    if resolved_pem_path:
         resolved_existing_pem = _resolve_path_hint(resolved_pem_path)
-        if resolved_existing_pem == resolved_pem_path:
-            fallback_pem = str((_default_evs_state().get("params") or {}).get("pem_file") or "").strip()
-            if fallback_pem and fallback_pem != resolved_pem_path:
-                steps.append(
-                    _new_connect_step(
-                        "PEM File",
-                        "warn",
-                        f"Existing PEM path not found: {resolved_pem_path}. Using fallback: {fallback_pem}",
-                    )
-                )
-                resolved_pem_path = fallback_pem
-            else:
-                steps.append(_new_connect_step("PEM File", "warn", f"PEM path not found: {resolved_pem_path}"))
+        if Path(resolved_existing_pem).is_file():
+            steps.append(_new_connect_step("PEM File", "ok", f"Using configured PEM path: {resolved_pem_path}"))
         else:
-            steps.append(_new_connect_step("PEM File", "ok", f"Using existing PEM path: {resolved_pem_path}"))
+            steps.append(_new_connect_step("PEM File", "warn", f"Configured PEM path not found: {resolved_pem_path}"))
     else:
-        steps.append(_new_connect_step("PEM File", "warn", "No PEM file provided."))
+        steps.append(_new_connect_step("PEM File", "warn", "No PEM file is configured."))
 
     params = {
-        "host": host.strip(),
-        "username": username.strip(),
-        "password": password,
-        "ues_url": ues_url.strip(),
-        "pat_token": (pat_token or "").strip(),
+        "host": str(saved_config.get("host") or "").strip(),
+        "username": str(saved_config.get("username") or "").strip(),
+        "password": str(saved_config.get("password") or ""),
+        "ues_url": str(saved_config.get("ues_url") or "").strip(),
+        "pat_token": str(saved_config.get("pat_token") or "").strip(),
         "pem_file": resolved_pem_path,
     }
     previous_params = state.get("params") or {}
     params["unstructured_api_url"] = str(previous_params.get("unstructured_api_url") or "").strip()
     params["unstructured_api_key"] = str(previous_params.get("unstructured_api_key") or "").strip()
     if params["pat_token"]:
-        steps.append(_new_connect_step("PAT Token", "ok", f"Using submitted token: {_mask_token(params['pat_token'])}"))
+        steps.append(_new_connect_step("PAT Token", "ok", f"Using configured token: {_mask_token(params['pat_token'])}"))
     else:
-        steps.append(_new_connect_step("PAT Token", "warn", "PAT token is empty. User must input it manually."))
+        steps.append(_new_connect_step("PAT Token", "warn", "PAT token is not configured. An administrator must save it."))
     state["params"] = params
+    state["selected_connection_id"] = saved_config.get("id")
+    state["selected_connection_name"] = saved_config.get("name", "")
     steps.append(
         _new_connect_step(
             "Input Capture",
@@ -634,6 +776,8 @@ async def evs_connect(
         missing.append("pat_token")
     if not params["ues_url"]:
         missing.append("ues_url")
+    if not params["pem_file"]:
+        missing.append("pem_file")
 
     if missing:
         steps.append(_new_connect_step("Validate Required Fields", "error", f"Missing required fields: {', '.join(missing)}"))
@@ -679,7 +823,7 @@ async def evs_connect(
         normalized_pem_for_auth = _normalize_pem_filename_for_auth(resolved_pem_for_auth) if resolved_pem_for_auth else ""
         pem_meta = _build_file_meta(params["pem_file"])
         warnings: list[str] = []
-        if params["pem_file"] and resolved_pem_for_auth == params["pem_file"]:
+        if params["pem_file"] and not Path(resolved_pem_for_auth).is_file():
             warnings.append("PEM path not found on disk; authentication will use provided raw value.")
             steps.append(
                 _new_connect_step(
@@ -780,47 +924,23 @@ async def evs_connect(
     return _render_connect_panel(request, request.app)
 
 
-@router.post("/ui/evs/upload-pem", response_class=HTMLResponse)
-async def upload_pem_file(
-    request: Request,
-    current_pem_file: str = Form(default=""),
-    pem_file: UploadFile = File(default=None),
-):
-    if not _is_logged_in(request, request.app):
-        return HTMLResponse("Unauthorized", status_code=401)
-    _activate_session_state(request, request.app)
-
-    pem_file_path = current_pem_file.strip() or request.app.state.evs_state["params"].get("pem_file", "")
-    pem_upload_error = ""
-
-    if pem_file is None or not pem_file.filename:
-        pem_upload_error = "No PEM file selected."
-    else:
-        suffix = Path(pem_file.filename).suffix.lower()
-        if suffix not in {".pem", ".key", ".crt"}:
-            pem_upload_error = "Only .pem, .key, .crt files are allowed."
-        else:
-            pem_file_path = _save_pem_upload(pem_file)
-            request.app.state.evs_state["params"]["pem_file"] = pem_file_path
-
-    _persist_active_session_state(request, request.app)
-    return request.app.state.templates.TemplateResponse(
-        request,
-        "partials/pem_upload_status.html",
-        {
-            "pem_file_path": pem_file_path,
-            "pem_upload_error": pem_upload_error,
-        },
-    )
-
-
 @router.post("/ui/evs/reset", response_class=HTMLResponse)
 async def evs_reset(request: Request):
     if not _is_logged_in(request, request.app):
         return HTMLResponse("Unauthorized", status_code=401)
     _activate_session_state(request, request.app)
+    selected_connection_id = request.app.state.evs_state.get("selected_connection_id")
     cleanup_result = _cleanup_context()
     reset_state = _default_evs_state()
+    principal = _session_principal(request)
+    if principal is not None:
+        saved = request.app.state.auth_store.get_connection_profile(selected_connection_id)
+        if saved is None:
+            saved = request.app.state.auth_store.get_connection_profile()
+        if saved:
+            reset_state["params"].update(saved)
+            reset_state["selected_connection_id"] = saved.get("id")
+            reset_state["selected_connection_name"] = saved.get("name", "")
     reset_state["last_success"] = "Disconnected and reset completed."
     reset_state["connect_steps"] = [
         _new_connect_step(
@@ -1405,65 +1525,6 @@ async def chat_reset(request: Request):
     response = await handle_chat_reset(request, request.app, request.app.state.templates)
     _persist_active_session_state(request, request.app)
     return response
-
-
-@router.get("/ui/eval/panel", response_class=HTMLResponse)
-async def precision_eval_panel(
-    request: Request,
-    pdf_path: str = "",
-    json_path: str = "",
-):
-    if not _is_logged_in(request, request.app):
-        return HTMLResponse("Unauthorized", status_code=401)
-    _activate_session_state(request, request.app)
-    return request.app.state.templates.TemplateResponse(
-        request,
-        "partials/precision_eval_panel.html",
-        {
-            "eval_panel": build_precision_eval_panel_context(document_root=DOCUMENT_UPLOAD_DIR, debug_root=DEBUG_UPLOAD_DIR, selected_pdf_path=pdf_path, selected_json_path=json_path),
-            "precision_eval_prototype": build_precision_eval_prototype_context(),
-            "precision_eval_result": None,
-        },
-    )
-
-
-@router.post("/ui/eval/run", response_class=HTMLResponse)
-async def run_precision_eval(
-    request: Request,
-    pdf_path: str = Form(default=""),
-    json_path: str = Form(default=""),
-):
-    if not _is_logged_in(request, request.app):
-        return HTMLResponse("Unauthorized", status_code=401)
-    _activate_session_state(request, request.app)
-
-    try:
-        resolved_pdf_path = resolve_precision_eval_path(
-            pdf_path,
-            allowed_root=DOCUMENT_UPLOAD_DIR,
-            expected_suffixes={".pdf"},
-        )
-        resolved_json_path = resolve_precision_eval_path(
-            json_path,
-            allowed_root=DEBUG_UPLOAD_DIR,
-            expected_suffixes={".json"},
-        )
-        precision_eval_result = build_precision_eval_report(
-            pdf_path=resolved_pdf_path,
-            json_path=resolved_json_path,
-        )
-    except Exception as ex:
-        precision_eval_result = {
-            "error": str(ex),
-            "pdf_path": str(pdf_path or "").strip(),
-            "json_path": str(json_path or "").strip(),
-        }
-
-    return request.app.state.templates.TemplateResponse(
-        request,
-        "partials/precision_eval_result.html",
-        {"precision_eval_result": precision_eval_result},
-    )
 
 
 @router.post("/ui/admin/bookrag-section-rules", response_class=HTMLResponse)
@@ -2068,31 +2129,4 @@ async def inspect_unstructured_json_file(
         request,
         "partials/unstructured_json_inspector_result.html",
         {"json_inspector": build_unstructured_json_inspector_context(json_file.strip())},
-    )
-
-@router.post("/ui/admin/unstructured-config", response_class=HTMLResponse)
-async def update_unstructured_config_panel(
-    request: Request,
-    unstructured_api_url: str = Form(default=""),
-    unstructured_api_key: str = Form(default=""),
-):
-    if not _is_logged_in(request, request.app):
-        return HTMLResponse("Unauthorized", status_code=401)
-    _activate_session_state(request, request.app)
-
-    state = request.app.state.evs_state
-    params = state.setdefault("params", {})
-    params["unstructured_api_url"] = unstructured_api_url.strip()
-    params["unstructured_api_key"] = (unstructured_api_key or "").strip()
-    _persist_active_session_state(request, request.app)
-
-    status = {
-        "kind": "ok",
-        "title": "Saved",
-        "detail": "Unstructured IO account saved for the current session.",
-    }
-    return request.app.state.templates.TemplateResponse(
-        request,
-        "partials/bookrag_admin_panel.html",
-        _build_unstructured_admin_context(request.app, status=status),
     )

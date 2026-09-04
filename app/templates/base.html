@@ -4,17 +4,21 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Teradata Vector Store</title>
-  <link rel="stylesheet" href="{{ url_for('static', path='css/app.css') }}?v=20260827-1" />
+  <link rel="stylesheet" href="{{ url_for('static', path='css/app.css') }}?v=20260905-5" />
+  {% if load_app_scripts|default(false) %}
   <script src="https://unpkg.com/htmx.org@2.0.10/dist/htmx.min.js"></script>
-  <script type="module" src="{{ url_for('static', path='js/app.js') }}?v=20260827-1"></script>
+  <script type="module" src="{{ url_for('static', path='js/app.js') }}?v=20260905-1"></script>
+  {% endif %}
 </head>
 <body>
   <header class="topbar">
     <div class="brand-block">
-      <div class="brand-name" aria-label="teradata logo">
-        <img class="brand-logo-img" src="{{ url_for('static', path='img/teradata-logo-2024.png') }}" alt="Teradata" />
-      </div>
-      <p class="brand-sub">Enterprise AI Platform</p>
+      <a class="brand-home-link" href="/" aria-label="Go to Teradata Vector Store home">
+        <div class="brand-name">
+          <img class="brand-logo-img" src="{{ url_for('static', path='img/teradata-logo-2024.png') }}" alt="Teradata" />
+        </div>
+        <p class="brand-sub">Enterprise AI Platform</p>
+      </a>
     </div>
     <div class="title-block">
       {% if logged_in %}
@@ -26,13 +30,12 @@
     <div class="top-actions">
       {% if logged_in %}
       {% if user_role|default('viewer') == 'admin' %}
-      <a class="chip-btn" href="/admin/users">Users</a>
+      <a class="chip-btn" href="/admin/users">System Configuration</a>
       {% endif %}
       <form method="post" action="/logout">
         <button type="submit" class="chip-btn">Log Out</button>
       </form>
       <span class="user-name">{{ username }}</span>
-      <span class="avatar">{{ user_initials }}</span>
       {% endif %}
     </div>
   </header>

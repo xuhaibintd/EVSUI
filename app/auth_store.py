@@ -13,11 +13,21 @@ from typing import Any
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerifyMismatchError
+from cryptography.fernet import Fernet, InvalidToken
 
 
 AUTH_ROLES = ("admin", "operator", "viewer")
 PASSWORD_HASHER = PasswordHasher()
 SESSION_TTL_SECONDS_DEFAULT = 8 * 60 * 60
+CONNECTION_CONFIG_TEXT_LIMITS = {
+    "host": 512,
+    "username": 128,
+    "password": 8192,
+    "ues_url": 2048,
+    "pat_token": 8192,
+    "pem_file": 2048,
+}
+PEM_CONTENT_MAX_BYTES = 1024 * 1024
 
 
 class _ClosingConnection(sqlite3.Connection):
@@ -84,9 +94,18 @@ class AuthStore:
     audit writes predictable.
     """
 
-    def __init__(self, database_path: Path, *, session_ttl_seconds: int = SESSION_TTL_SECONDS_DEFAULT) -> None:
+    def __init__(
+        self,
+        database_path: Path,
+        *,
+        session_ttl_seconds: int = SESSION_TTL_SECONDS_DEFAULT,
+        pem_runtime_dir: Path | None = None,
+        legacy_file_root: Path | None = None,
+    ) -> None:
         self.database_path = Path(database_path).expanduser().resolve()
         self.session_ttl_seconds = max(300, int(session_ttl_seconds))
+        self.pem_runtime_dir = Path(pem_runtime_dir or (self.database_path.parent / "pem_runtime")).expanduser().resolve()
+        self.legacy_file_root = Path(legacy_file_root or self.database_path.parent).expanduser().resolve()
 
     def _connect(self) -> sqlite3.Connection:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -151,10 +170,78 @@ class AuthStore:
                     detail TEXT NOT NULL DEFAULT '',
                     created_at INTEGER NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS connection_configs (
+                    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                    host TEXT NOT NULL DEFAULT '',
+                    username TEXT NOT NULL DEFAULT '',
+                    password_ciphertext TEXT NOT NULL DEFAULT '',
+                    ues_url TEXT NOT NULL DEFAULT '',
+                    pat_token_ciphertext TEXT NOT NULL DEFAULT '',
+                    pem_file TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS system_connection_config (
+                    config_id INTEGER PRIMARY KEY CHECK (config_id = 1),
+                    host TEXT NOT NULL DEFAULT '',
+                    username TEXT NOT NULL DEFAULT '',
+                    password_ciphertext TEXT NOT NULL DEFAULT '',
+                    ues_url TEXT NOT NULL DEFAULT '',
+                    pat_token_ciphertext TEXT NOT NULL DEFAULT '',
+                    pem_file TEXT NOT NULL DEFAULT '',
+                    pem_filename TEXT NOT NULL DEFAULT '',
+                    pem_ciphertext TEXT NOT NULL DEFAULT '',
+                    updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS system_connection_profiles (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                    host TEXT NOT NULL DEFAULT '',
+                    username TEXT NOT NULL DEFAULT '',
+                    password_ciphertext TEXT NOT NULL DEFAULT '',
+                    ues_url TEXT NOT NULL DEFAULT '',
+                    pat_token_ciphertext TEXT NOT NULL DEFAULT '',
+                    pem_filename TEXT NOT NULL DEFAULT '',
+                    pem_ciphertext TEXT NOT NULL DEFAULT '',
+                    is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
+                    updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
                 """
             )
+            system_config_columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(system_connection_config)").fetchall()
+            }
+            if "pem_filename" not in system_config_columns:
+                connection.execute(
+                    "ALTER TABLE system_connection_config ADD COLUMN pem_filename TEXT NOT NULL DEFAULT ''"
+                )
+            if "pem_ciphertext" not in system_config_columns:
+                connection.execute(
+                    "ALTER TABLE system_connection_config ADD COLUMN pem_ciphertext TEXT NOT NULL DEFAULT ''"
+                )
             connection.execute(
                 "INSERT OR IGNORE INTO schema_versions(version, applied_at) VALUES(1, ?)",
+                (int(time.time()),),
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_versions(version, applied_at) VALUES(2, ?)",
+                (int(time.time()),),
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_versions(version, applied_at) VALUES(3, ?)",
+                (int(time.time()),),
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_versions(version, applied_at) VALUES(4, ?)",
+                (int(time.time()),),
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_versions(version, applied_at) VALUES(5, ?)",
                 (int(time.time()),),
             )
 
@@ -275,11 +362,23 @@ class AuthStore:
                 )
                 return None
             if not verify_password(str(row["password_hash"]), password):
-                failures = int(row["failed_login_count"] or 0) + 1
-                lock_until = now + 300 if failures >= 5 else None
+                # Increment and lock in one statement.  Computing the next value
+                # from the previously selected row lets concurrent failures
+                # overwrite each other and can even clear a lock written by a
+                # different request.
                 connection.execute(
-                    "UPDATE users SET failed_login_count=?, locked_until=?, updated_at=? WHERE id=?",
-                    (0 if lock_until else failures, lock_until, now, row["id"]),
+                    """UPDATE users
+                       SET failed_login_count=CASE
+                               WHEN failed_login_count >= 4 THEN 0
+                               ELSE failed_login_count + 1
+                           END,
+                           locked_until=CASE
+                               WHEN failed_login_count >= 4 THEN ?
+                               ELSE locked_until
+                           END,
+                           updated_at=?
+                       WHERE id=? AND (locked_until IS NULL OR locked_until<=?)""",
+                    (now + 300, now, row["id"], now),
                 )
                 self._audit_with_connection(
                     connection,
@@ -344,6 +443,477 @@ class AuthStore:
                 "UPDATE sessions SET revoked_at=? WHERE session_id_hash=?",
                 (int(time.time()), _session_hash(session_id)),
             )
+
+    def get_system_connection_config(self) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT host, username, password_ciphertext, ues_url,
+                          pat_token_ciphertext, pem_file, pem_filename, pem_ciphertext
+                   FROM system_connection_config WHERE config_id=1""",
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            password = self._decrypt_credential(str(row["password_ciphertext"] or ""))
+            pat_token = self._decrypt_credential(str(row["pat_token_ciphertext"] or ""))
+            pem_payload = self._decrypt_bytes(str(row["pem_ciphertext"] or ""))
+        except InvalidToken as ex:
+            raise RuntimeError("Stored connection credentials cannot be decrypted with the configured key.") from ex
+        legacy_pem_file = str(row["pem_file"] or "")
+        pem_filename = str(row["pem_filename"] or "").strip()
+        runtime_pem_file = (
+            self._materialize_system_pem(pem_payload, pem_filename)
+            if pem_payload
+            else legacy_pem_file
+        )
+        return {
+            "host": str(row["host"] or ""),
+            "username": str(row["username"] or ""),
+            "password": password,
+            "ues_url": str(row["ues_url"] or ""),
+            "pat_token": pat_token,
+            "pem_file": runtime_pem_file,
+            "pem_filename": pem_filename or (Path(legacy_pem_file).name if legacy_pem_file else ""),
+            "pem_in_database": bool(pem_payload),
+        }
+
+    def save_system_connection_config(self, actor_user_id: int, values: dict[str, Any]) -> dict[str, Any]:
+        normalized = self._normalize_connection_config(values)
+        now = int(time.time())
+        with self._connect() as connection:
+            user = connection.execute(
+                "SELECT username FROM users WHERE id=? AND enabled=1 AND role='admin'",
+                (int(actor_user_id),),
+            ).fetchone()
+            if user is None:
+                raise PermissionError("System connection configuration requires an enabled administrator.")
+            existing = connection.execute(
+                "SELECT pem_filename, pem_ciphertext FROM system_connection_config WHERE config_id=1"
+            ).fetchone()
+            pem_payload = values.get("pem_content")
+            if pem_payload is None:
+                pem_filename = str(existing["pem_filename"] or "") if existing is not None else ""
+                pem_ciphertext = str(existing["pem_ciphertext"] or "") if existing is not None else ""
+            else:
+                if not isinstance(pem_payload, bytes):
+                    raise ValueError("PEM content must be uploaded as bytes.")
+                if not pem_payload:
+                    raise ValueError("PEM file is empty.")
+                if len(pem_payload) > PEM_CONTENT_MAX_BYTES:
+                    raise ValueError("PEM file exceeds 1 MiB.")
+                pem_filename = Path(str(values.get("pem_filename") or "uploaded.pem")).name
+                if Path(pem_filename).suffix.lower() not in {".pem", ".key", ".crt"}:
+                    raise ValueError("Only .pem, .key, and .crt files are allowed.")
+                pem_ciphertext = self._encrypt_bytes(pem_payload)
+                normalized["pem_file"] = ""
+            password_ciphertext = self._encrypt_credential(normalized["password"])
+            pat_token_ciphertext = self._encrypt_credential(normalized["pat_token"])
+            connection.execute(
+                """INSERT INTO system_connection_config(
+                       config_id, host, username, password_ciphertext, ues_url,
+                       pat_token_ciphertext, pem_file, pem_filename, pem_ciphertext,
+                       updated_by, created_at, updated_at
+                   ) VALUES(1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(config_id) DO UPDATE SET
+                       host=excluded.host,
+                       username=excluded.username,
+                       password_ciphertext=excluded.password_ciphertext,
+                       ues_url=excluded.ues_url,
+                       pat_token_ciphertext=excluded.pat_token_ciphertext,
+                       pem_file=excluded.pem_file,
+                       pem_filename=excluded.pem_filename,
+                       pem_ciphertext=excluded.pem_ciphertext,
+                       updated_by=excluded.updated_by,
+                       updated_at=excluded.updated_at""",
+                (
+                    normalized["host"],
+                    normalized["username"],
+                    password_ciphertext,
+                    normalized["ues_url"],
+                    pat_token_ciphertext,
+                    normalized["pem_file"],
+                    pem_filename,
+                    pem_ciphertext,
+                    int(actor_user_id),
+                    now,
+                    now,
+                ),
+            )
+            self._audit_with_connection(
+                connection,
+                user_id=int(actor_user_id),
+                username=str(user["username"]),
+                action="system_connection_config.save",
+                resource="default",
+                result="ok",
+            )
+        return self.get_system_connection_config() or normalized
+
+    def migrate_legacy_system_pem(self) -> bool:
+        """Move a path-backed PEM into encrypted database storage once."""
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT pem_file, pem_ciphertext
+                   FROM system_connection_config WHERE config_id=1"""
+            ).fetchone()
+            if row is None or str(row["pem_ciphertext"] or "").strip():
+                return False
+            legacy_hint = str(row["pem_file"] or "").strip()
+            if not legacy_hint:
+                return False
+            legacy_path = Path(legacy_hint)
+            candidates = [legacy_path] if legacy_path.is_absolute() else [
+                self.legacy_file_root / legacy_path,
+                self.database_path.parent / legacy_path,
+            ]
+            source = next((candidate for candidate in candidates if candidate.is_file()), None)
+            if source is None:
+                return False
+            payload = source.read_bytes()
+            if not payload or len(payload) > PEM_CONTENT_MAX_BYTES:
+                return False
+            connection.execute(
+                """UPDATE system_connection_config
+                   SET pem_file='', pem_filename=?, pem_ciphertext=?, updated_at=?
+                   WHERE config_id=1""",
+                (source.name, self._encrypt_bytes(payload), int(time.time())),
+            )
+        self._materialize_system_pem(payload, source.name)
+        return True
+
+    def migrate_singleton_connection_profile(self) -> bool:
+        """Copy the former singleton connection into the profile table once."""
+        with self._connect() as connection:
+            if connection.execute("SELECT 1 FROM system_connection_profiles LIMIT 1").fetchone():
+                return False
+            row = connection.execute(
+                """SELECT host, username, password_ciphertext, ues_url, pat_token_ciphertext,
+                          pem_filename, pem_ciphertext, updated_by, created_at, updated_at
+                   FROM system_connection_config WHERE config_id=1"""
+            ).fetchone()
+            if row is None:
+                return False
+            base_name = str(row["username"] or "Default Connection").strip() or "Default Connection"
+            connection.execute(
+                """INSERT INTO system_connection_profiles(
+                       name, host, username, password_ciphertext, ues_url, pat_token_ciphertext,
+                       pem_filename, pem_ciphertext, is_default, updated_by, created_at, updated_at
+                   ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)""",
+                (
+                    base_name,
+                    row["host"],
+                    row["username"],
+                    row["password_ciphertext"],
+                    row["ues_url"],
+                    row["pat_token_ciphertext"],
+                    row["pem_filename"],
+                    row["pem_ciphertext"],
+                    row["updated_by"],
+                    row["created_at"],
+                    row["updated_at"],
+                ),
+            )
+        return True
+
+    def list_connection_profiles(self) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT id, name, host, username, ues_url, pem_filename, is_default,
+                          password_ciphertext, pat_token_ciphertext
+                   FROM system_connection_profiles
+                   ORDER BY is_default DESC, name COLLATE NOCASE"""
+            ).fetchall()
+        return [
+            {
+                "id": int(row["id"]),
+                "name": str(row["name"]),
+                "host": str(row["host"]),
+                "username": str(row["username"]),
+                "ues_url": str(row["ues_url"]),
+                "pem_filename": str(row["pem_filename"] or ""),
+                "is_default": bool(row["is_default"]),
+                "password_configured": bool(row["password_ciphertext"]),
+                "pat_token_configured": bool(row["pat_token_ciphertext"]),
+            }
+            for row in rows
+        ]
+
+    def get_connection_profile(self, profile_id: int | None = None) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            if profile_id is None:
+                row = connection.execute(
+                    """SELECT * FROM system_connection_profiles
+                       ORDER BY is_default DESC, id LIMIT 1"""
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    "SELECT * FROM system_connection_profiles WHERE id=?",
+                    (int(profile_id),),
+                ).fetchone()
+        if row is None:
+            return None
+        try:
+            password = self._decrypt_credential(str(row["password_ciphertext"] or ""))
+            pat_token = self._decrypt_credential(str(row["pat_token_ciphertext"] or ""))
+            pem_payload = self._decrypt_bytes(str(row["pem_ciphertext"] or ""))
+        except InvalidToken as ex:
+            raise RuntimeError("Stored connection credentials cannot be decrypted with the configured key.") from ex
+        filename = str(row["pem_filename"] or "")
+        pem_file = self._materialize_system_pem(pem_payload, filename, int(row["id"])) if pem_payload else ""
+        return {
+            "id": int(row["id"]),
+            "name": str(row["name"]),
+            "host": str(row["host"]),
+            "username": str(row["username"]),
+            "password": password,
+            "ues_url": str(row["ues_url"]),
+            "pat_token": pat_token,
+            "pem_file": pem_file,
+            "pem_filename": filename,
+            "pem_in_database": bool(pem_payload),
+            "is_default": bool(row["is_default"]),
+        }
+
+    def save_connection_profile(
+        self,
+        actor_user_id: int,
+        values: dict[str, Any],
+        profile_id: int | None = None,
+    ) -> dict[str, Any]:
+        normalized = self._normalize_connection_config(values)
+        name = str(values.get("name") or "").strip()
+        if not name or len(name) > 128:
+            raise ValueError("Connection name must contain 1 to 128 characters.")
+        now = int(time.time())
+        previous_pem_filename = ""
+        with self._connect() as connection:
+            user = connection.execute(
+                "SELECT username FROM users WHERE id=? AND enabled=1 AND role='admin'",
+                (int(actor_user_id),),
+            ).fetchone()
+            if user is None:
+                raise PermissionError("Connection profiles require an enabled administrator.")
+            existing = None
+            if profile_id is not None:
+                existing = connection.execute(
+                    "SELECT * FROM system_connection_profiles WHERE id=?", (int(profile_id),)
+                ).fetchone()
+                if existing is None:
+                    raise ValueError("Connection profile not found.")
+                previous_pem_filename = str(existing["pem_filename"] or "")
+            password = normalized["password"] or (self._decrypt_credential(existing["password_ciphertext"]) if existing else "")
+            pat_token = normalized["pat_token"] or (self._decrypt_credential(existing["pat_token_ciphertext"]) if existing else "")
+            pem_payload = values.get("pem_content")
+            if pem_payload is None:
+                pem_filename = str(existing["pem_filename"] or "") if existing else ""
+                pem_ciphertext = str(existing["pem_ciphertext"] or "") if existing else ""
+            else:
+                if not isinstance(pem_payload, bytes) or not pem_payload:
+                    raise ValueError("PEM file is empty.")
+                if len(pem_payload) > PEM_CONTENT_MAX_BYTES:
+                    raise ValueError("PEM file exceeds 1 MiB.")
+                pem_filename = Path(str(values.get("pem_filename") or "uploaded.pem")).name
+                if Path(pem_filename).suffix.lower() not in {".pem", ".key", ".crt"}:
+                    raise ValueError("Only .pem, .key, and .crt files are allowed.")
+                pem_ciphertext = self._encrypt_bytes(pem_payload)
+            make_default = bool(values.get("is_default")) or not connection.execute(
+                "SELECT 1 FROM system_connection_profiles LIMIT 1"
+            ).fetchone()
+            if make_default:
+                connection.execute("UPDATE system_connection_profiles SET is_default=0")
+            encrypted_password = self._encrypt_credential(password)
+            encrypted_pat = self._encrypt_credential(pat_token)
+            try:
+                if existing is None:
+                    cursor = connection.execute(
+                        """INSERT INTO system_connection_profiles(
+                               name, host, username, password_ciphertext, ues_url, pat_token_ciphertext,
+                               pem_filename, pem_ciphertext, is_default, updated_by, created_at, updated_at
+                           ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (name, normalized["host"], normalized["username"], encrypted_password,
+                         normalized["ues_url"], encrypted_pat, pem_filename, pem_ciphertext,
+                         int(make_default), int(actor_user_id), now, now),
+                    )
+                    saved_id = int(cursor.lastrowid)
+                else:
+                    saved_id = int(existing["id"])
+                    connection.execute(
+                        """UPDATE system_connection_profiles SET
+                               name=?, host=?, username=?, password_ciphertext=?, ues_url=?,
+                               pat_token_ciphertext=?, pem_filename=?, pem_ciphertext=?, is_default=?,
+                               updated_by=?, updated_at=? WHERE id=?""",
+                        (name, normalized["host"], normalized["username"], encrypted_password,
+                         normalized["ues_url"], encrypted_pat, pem_filename, pem_ciphertext,
+                         int(make_default or bool(existing["is_default"])), int(actor_user_id), now, saved_id),
+                    )
+            except sqlite3.IntegrityError as ex:
+                raise ValueError(f"Connection name '{name}' already exists.") from ex
+            self._audit_with_connection(
+                connection, user_id=int(actor_user_id), username=str(user["username"]),
+                action="connection_profile.save", resource=name, result="ok",
+            )
+        if previous_pem_filename and previous_pem_filename != pem_filename:
+            self._remove_materialized_profile_pem(saved_id, previous_pem_filename)
+        return self.get_connection_profile(saved_id) or {}
+
+    def delete_connection_profile(self, actor_user_id: int, profile_id: int) -> None:
+        with self._connect() as connection:
+            user = connection.execute(
+                "SELECT username FROM users WHERE id=? AND enabled=1 AND role='admin'",
+                (int(actor_user_id),),
+            ).fetchone()
+            if user is None:
+                raise PermissionError("Connection profiles require an enabled administrator.")
+            row = connection.execute(
+                "SELECT name, is_default, pem_filename FROM system_connection_profiles WHERE id=?", (int(profile_id),)
+            ).fetchone()
+            if row is None:
+                raise ValueError("Connection profile not found.")
+            connection.execute("DELETE FROM system_connection_profiles WHERE id=?", (int(profile_id),))
+            if bool(row["is_default"]):
+                replacement = connection.execute(
+                    "SELECT id FROM system_connection_profiles ORDER BY id LIMIT 1"
+                ).fetchone()
+                if replacement:
+                    connection.execute(
+                        "UPDATE system_connection_profiles SET is_default=1 WHERE id=?",
+                        (int(replacement["id"]),),
+                    )
+            self._audit_with_connection(
+                connection, user_id=int(actor_user_id), username=str(user["username"]),
+                action="connection_profile.delete", resource=str(row["name"]), result="ok",
+            )
+        self._remove_materialized_profile_pem(int(profile_id), str(row["pem_filename"] or ""))
+
+    def bootstrap_connection_config(self, values: dict[str, Any] | None) -> int:
+        if self.get_system_connection_config() is not None:
+            with self._connect() as connection:
+                connection.execute("DELETE FROM connection_configs")
+            return 0
+        with self._connect() as connection:
+            admin = connection.execute(
+                "SELECT id FROM users WHERE role='admin' AND enabled=1 ORDER BY id LIMIT 1"
+            ).fetchone()
+            legacy = connection.execute(
+                """SELECT c.host, c.username, c.password_ciphertext, c.ues_url,
+                          c.pat_token_ciphertext, c.pem_file
+                   FROM connection_configs c
+                   JOIN users u ON u.id=c.user_id
+                   ORDER BY CASE WHEN u.role='admin' AND u.enabled=1 THEN 0 ELSE 1 END,
+                            c.user_id
+                   LIMIT 1"""
+            ).fetchone()
+        if admin is None:
+            return 0
+        if legacy is not None:
+            try:
+                normalized = self._normalize_connection_config(
+                    {
+                        "host": legacy["host"],
+                        "username": legacy["username"],
+                        "password": self._decrypt_credential(str(legacy["password_ciphertext"] or "")),
+                        "ues_url": legacy["ues_url"],
+                        "pat_token": self._decrypt_credential(str(legacy["pat_token_ciphertext"] or "")),
+                        "pem_file": legacy["pem_file"],
+                    }
+                )
+            except InvalidToken as ex:
+                raise RuntimeError("Legacy connection credentials cannot be migrated with the configured key.") from ex
+        else:
+            normalized = self._normalize_connection_config(values or {})
+        if not any(normalized.values()):
+            return 0
+        self.save_system_connection_config(int(admin["id"]), normalized)
+        with self._connect() as connection:
+            connection.execute("DELETE FROM connection_configs")
+        return 1
+
+    def _normalize_connection_config(self, values: dict[str, Any]) -> dict[str, str]:
+        normalized: dict[str, str] = {}
+        for key, limit in CONNECTION_CONFIG_TEXT_LIMITS.items():
+            raw = str((values or {}).get(key) or "")
+            value = raw if key == "password" else raw.strip()
+            if len(value) > limit:
+                raise ValueError(f"Connection configuration field '{key}' exceeds {limit} characters.")
+            normalized[key] = value
+        return normalized
+
+    def _credential_key_path(self) -> Path:
+        configured = str(os.getenv("EVSUI_CREDENTIAL_KEY_FILE", "")).strip()
+        return Path(configured).expanduser().resolve() if configured else self.database_path.with_suffix(".credentials.key")
+
+    def _credential_cipher(self) -> Fernet:
+        configured = str(os.getenv("EVSUI_CREDENTIAL_KEY", "")).strip()
+        if configured:
+            return Fernet(configured.encode("ascii"))
+
+        key_path = self._credential_key_path()
+        key_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            key = key_path.read_bytes().strip()
+        except FileNotFoundError:
+            generated = Fernet.generate_key()
+            try:
+                with key_path.open("xb") as handle:
+                    handle.write(generated)
+                try:
+                    key_path.chmod(0o600)
+                except OSError:
+                    pass
+                key = generated
+            except FileExistsError:
+                key = key_path.read_bytes().strip()
+        return Fernet(key)
+
+    def _encrypt_credential(self, value: str) -> str:
+        if not value:
+            return ""
+        return self._credential_cipher().encrypt(value.encode("utf-8")).decode("ascii")
+
+    def _decrypt_credential(self, value: str) -> str:
+        if not value:
+            return ""
+        return self._credential_cipher().decrypt(value.encode("ascii")).decode("utf-8")
+
+    def _encrypt_bytes(self, value: bytes) -> str:
+        if not value:
+            return ""
+        return self._credential_cipher().encrypt(value).decode("ascii")
+
+    def _decrypt_bytes(self, value: str) -> bytes:
+        if not value:
+            return b""
+        return self._credential_cipher().decrypt(value.encode("ascii"))
+
+    def _materialize_system_pem(self, payload: bytes, filename: str, profile_id: int | None = None) -> str:
+        if not payload:
+            return ""
+        self.pem_runtime_dir.mkdir(parents=True, exist_ok=True)
+        safe_name = Path(filename or "system_connection.pem").name
+        if Path(safe_name).suffix.lower() not in {".pem", ".key", ".crt"}:
+            safe_name = "system_connection.pem"
+        target_dir = self.pem_runtime_dir / str(profile_id) if profile_id is not None else self.pem_runtime_dir
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / safe_name
+        if not target.exists() or target.read_bytes() != payload:
+            target.write_bytes(payload)
+        try:
+            target.chmod(0o600)
+        except OSError:
+            pass
+        return str(target)
+
+    def _remove_materialized_profile_pem(self, profile_id: int, filename: str) -> None:
+        safe_name = Path(filename or "").name
+        if not safe_name:
+            return
+        profile_dir = self.pem_runtime_dir / str(int(profile_id))
+        target = profile_dir / safe_name
+        try:
+            target.unlink(missing_ok=True)
+            profile_dir.rmdir()
+        except OSError:
+            pass
 
     def list_users(self) -> list[dict[str, Any]]:
         with self._connect() as connection:

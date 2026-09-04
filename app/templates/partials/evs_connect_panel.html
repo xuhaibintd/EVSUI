@@ -1,65 +1,42 @@
 {% set _connected_raw = evs.connected %}
 {% set is_connected = _connected_raw is sameas true or (_connected_raw|string|lower in ['1', 'true', 'yes', 'on']) %}
+{% set config_ready = evs.params.host and evs.params.username and evs.params.password and evs.params.ues_url and evs.params.pat_token and evs.params.pem_file %}
 <div class="connect-grid" data-step1-connected="{% if is_connected %}true{% else %}false{% endif %}">
   <div class="connect-entry">
-    <form id="evs-connect-form" class="stack connect-shell connect-fields" hx-post="/ui/evs/connect" hx-target="#section-connect-content" hx-swap="innerHTML" hx-encoding="multipart/form-data" enctype="multipart/form-data" hx-indicator="#connect-progress">
+    <form id="evs-connect-form" class="stack connect-shell" hx-post="/ui/evs/connect" hx-target="#section-connect-content" hx-swap="innerHTML" hx-indicator="#connect-progress">
       <fieldset class="connect-group">
-      <legend>Connection</legend>
-    <label class="field">
-      <span>Host</span>
-      <input type="text" name="host" value="{{ evs.params.host }}" placeholder="hostname" required />
-    </label>
-    <div class="connect-userpass-row">
-      <label class="field">
-        <span>Username</span>
-        <input type="text" name="username" value="{{ evs.params.username }}" placeholder="db user" required />
-      </label>
-      <label class="field">
-        <span>Password</span>
-        <input type="password" name="password" value="{{ evs.params.password }}" placeholder="db password" required />
-      </label>
-    </div>
-    <label class="field">
-      <span>UES URL</span>
-      <input type="text" name="ues_url" value="{{ evs.params.ues_url }}" placeholder="https://.../open-analytics" />
-    </label>
-    <div class="connect-userpass-row">
-      <label class="field">
-        <span>PAT Token</span>
-        <input type="text" name="pat_token" value="{{ evs.params.pat_token }}" placeholder="ccp token" required />
-      </label>
-      <label class="field">
-        <span>PEM File Upload</span>
-        <div class="file-input-shell" data-file-shell>
-          <input
-            type="file"
-            name="pem_file"
-            accept=".pem,.key,.crt"
-            class="file-input-native"
-            data-file-input
-            data-file-default="No file selected"
-            hx-post="/ui/evs/upload-pem"
-            hx-trigger="change"
-            hx-target="#pem-upload-status"
-            hx-swap="innerHTML"
-            hx-encoding="multipart/form-data"
-            hx-on::after-request="this.value=''"
-          />
-          <button type="button" class="ghost file-input-btn" data-file-trigger>Choose File</button>
-          <span class="file-input-name" data-file-name>No file selected</span>
+        <legend>System connection</legend>
+        {% if connection_profiles %}
+        <label class="field connection-profile-select">
+          <span>Database connection</span>
+          <select name="connection_id" required {% if is_connected %}disabled{% endif %}>
+            {% for profile in connection_profiles %}
+            <option value="{{ profile.id }}" {% if evs.selected_connection_id == profile.id %}selected{% endif %}>{{ profile.name }} · {{ profile.host }} · {{ profile.username }}{% if profile.is_default %} · Default{% endif %}</option>
+            {% endfor %}
+          </select>
+        </label>
+        {% endif %}
+        {% if config_ready %}
+        <div class="connection-config-summary">
+          <div class="connection-config-summary-wide"><span>Connection</span><strong>{{ evs.selected_connection_name or 'Default' }}</strong></div>
+          <div><span>Host</span><strong>{{ evs.params.host }}</strong></div>
+          <div><span>Username</span><strong>{{ evs.params.username }}</strong></div>
+          <div><span>UES URL</span><strong>{{ evs.params.ues_url }}</strong></div>
+          <div><span>Credentials</span><strong>Password and PAT configured</strong></div>
+          <div class="connection-config-summary-wide"><span>PEM file</span><strong>{{ evs.params.pem_filename or ('Configured' if evs.params.pem_file else 'Not configured') }}</strong></div>
         </div>
-        <div id="pem-upload-status">
-          {% set pem_file_path = evs.params.pem_file %}
-          {% include "partials/pem_upload_status.html" %}
+        {% else %}
+        <div class="connection-config-empty">
+          <strong>System connection is not configured.</strong>
+          <span>An administrator must save the database and authentication settings before connecting.</span>
+          {% if user_role|default('viewer') == 'admin' %}<a class="chip-btn" href="/admin/users#connection-configuration">Open Administration</a>{% endif %}
         </div>
-      </label>
-    </div>
-
+        {% endif %}
       </fieldset>
     </form>
 
     <div class="stack-inline connect-actions">
-      <button type="submit" form="evs-connect-form" class="connect-submit-btn progress-btn" data-progress-button {% if is_connected %}disabled aria-disabled="true"{% else %}aria-disabled="false"{% endif %}>
+      <button type="submit" form="evs-connect-form" class="connect-submit-btn progress-btn" data-progress-button {% if is_connected or not config_ready %}disabled aria-disabled="true"{% else %}aria-disabled="false"{% endif %}>
         <span class="connect-submit-label progress-btn-label">Connect</span>
         <span class="connect-submit-loading progress-btn-loading">
           <span class="progress-btn-spinner" aria-hidden="true"></span>
