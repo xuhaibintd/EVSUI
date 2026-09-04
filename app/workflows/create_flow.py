@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import re
 import time
 
 from app.services.create_config import (
@@ -25,7 +24,15 @@ from app.services.multi_format import (
     strip_create_ingestor_params,
     strip_file_based_create_params,
 )
-from app.utils.table_state import format_preview, row_value_by_header, table_from_result
+from app.utils.table_state import format_preview
+from app.workflows.create_status import (
+    bookrag_source_embedding_row_count as _bookrag_source_embedding_row_count,
+    bookrag_vector_index_row_count as _bookrag_vector_index_row_count,
+    classify_vectorstore_status as _classify_vectorstore_status,
+    multi_format_source_embedding_row_count as _multi_format_source_embedding_row_count,
+    read_vectorstore_status as _read_vectorstore_status,
+    scalar_from_sql_result as _scalar_from_sql_result,
+)
 
 def _positive_float_env(name: str, default: float) -> float:
     try:
@@ -49,7 +56,6 @@ def _optional_positive_float_env(name: str) -> float | None:
 CREATE_READY_TIMEOUT_SECONDS = _optional_positive_float_env("EVS_VECTORSTORE_READY_TIMEOUT_SECONDS")
 CREATE_READY_POLL_INTERVAL_SECONDS = _positive_float_env("EVS_VECTORSTORE_READY_POLL_SECONDS", 5)
 BOOKRAG_INDEX_READY_TIMEOUT_SECONDS = _positive_float_env("EVS_BOOKRAG_INDEX_READY_TIMEOUT_SECONDS", 0)
-_TERADATA_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def _split_document_file_hints(raw_value: str) -> list[str]:
@@ -66,247 +72,6 @@ def _append_elapsed(message: str, *, elapsed_seconds: float | None) -> str:
     if elapsed_seconds is None:
         return message
     return f"{message} Elapsed: {_format_elapsed(elapsed_seconds)}."
-
-
-def _classify_vectorstore_status(status_output) -> tuple[str, str, str]:
-    preview = format_preview(status_output, max_chars=None)
-    headers, rows = table_from_result(status_output)
-
-    status_text = ""
-    for row in rows:
-        status_text = row_value_by_header(headers, row, ("status", "state", "lifecycle", "operationstatus", "collectionstatus"))
-        if status_text:
-            break
-
-    normalized = status_text.strip().lower()
-    retry_after_text = ""
-    for row in rows:
-        retry_after_text = row_value_by_header(headers, row, ("retryafter",))
-        if retry_after_text:
-            break
-    if (not normalized) and isinstance(status_output, str):
-        status_text = status_output.strip()
-        normalized = status_text.lower()
-
-    if retry_after_text and not normalized:
-        return "in_progress", retry_after_text, preview
-    if retry_after_text:
-        return "in_progress", status_text or retry_after_text, preview
-    if not normalized:
-        return "unknown", status_text, preview
-    if "ready" in normalized:
-        return "ready", status_text, preview
-    if "failed" in normalized or "error" in normalized:
-        return "failed", status_text, preview
-
-    in_progress_markers = (
-        "initialized",
-        "ingested",
-        "ingested_partially",
-        "create_load_data_completed",
-        "create_generating_embeddings_completed",
-        "generate_embeddings_completed",
-        "create_index_completed",
-        "creating",
-        "initializing",
-        "pending",
-        "processing",
-        "ingesting",
-        "loading",
-        "generating",
-        "indexing",
-        "submitted",
-        "updating",
-        "create_",
-        "update_",
-        "create ",
-        "update ",
-    )
-    if any(marker in normalized for marker in in_progress_markers):
-        return "in_progress", status_text, preview
-    return "unknown", status_text, preview
-
-
-def _read_vectorstore_status(vector_store) -> tuple[str, str, str, str]:
-    status_fn = getattr(vector_store, "status", None)
-    if not callable(status_fn):
-        return "unknown", "", "", "VectorStore.status() is not callable."
-    try:
-        status_output = status_fn()
-    except Exception as ex:
-        error_text = str(ex)
-        normalized_error = error_text.lower()
-        if "failed" in normalized_error and any(
-            marker in normalized_error
-            for marker in ("create", "update", "initialize", "vector store", "vectorstore")
-        ):
-            return "failed", error_text, "", ""
-        return "unknown", "", "", f"Status check failed: {ex}"
-
-    state, status_text, preview = _classify_vectorstore_status(status_output)
-    return state, status_text, preview, ""
-
-
-def _quote_teradata_identifier(value: str) -> str:
-    identifier = str(value or "").strip()
-    if not _TERADATA_IDENTIFIER_RE.match(identifier):
-        raise ValueError(f"unsafe Teradata identifier: {identifier!r}")
-    return f'"{identifier}"'
-
-
-def _first_scalar(value):
-    if isinstance(value, dict):
-        return next(iter(value.values()), None)
-    if isinstance(value, (str, bytes, bytearray)):
-        return value
-    if isinstance(value, (list, tuple)):
-        return value[0] if value else None
-    try:
-        return value[0]
-    except Exception:
-        return value
-
-
-def _int_or_none(value) -> int | None:
-    if value is None:
-        return None
-    try:
-        return int(str(value).strip())
-    except (TypeError, ValueError):
-        return None
-
-
-def _scalar_from_sql_result(result) -> int | None:
-    """Read an integer scalar from DB-API cursors and test-friendly table results."""
-    if result is None:
-        return None
-
-    fetchone = getattr(result, "fetchone", None)
-    fetchall = getattr(result, "fetchall", None)
-    if callable(fetchone) or callable(fetchall):
-        parsed = None
-        try:
-            if callable(fetchone):
-                row = fetchone()
-                parsed = _int_or_none(_first_scalar(row)) if row is not None else None
-            if parsed is None and callable(fetchall):
-                remaining_rows = fetchall() or []
-                if remaining_rows:
-                    parsed = _int_or_none(_first_scalar(remaining_rows[0]))
-        except Exception:
-            parsed = None
-        finally:
-            close = getattr(result, "close", None)
-            if callable(close):
-                try:
-                    close()
-                except Exception:
-                    pass
-        return parsed
-
-    if hasattr(result, "iloc"):
-        try:
-            parsed = _int_or_none(result.iloc[0, 0])
-            if parsed is not None:
-                return parsed
-        except Exception:
-            pass
-
-    if isinstance(result, dict):
-        parsed = _int_or_none(_first_scalar(result))
-        if parsed is not None:
-            return parsed
-    if isinstance(result, (list, tuple)) and result:
-        parsed = _int_or_none(_first_scalar(result[0]))
-        if parsed is not None:
-            return parsed
-
-    headers, rows = table_from_result(result)
-    if rows and rows[0]:
-        value_index = 1 if headers and headers[0] == "#" and len(rows[0]) > 1 else 0
-        return _int_or_none(rows[0][value_index])
-    return None
-
-
-def _bookrag_vector_index_row_count(
-    *,
-    vector_store_name: str,
-    target_database: str,
-    execute_sql_fn,
-) -> tuple[int | None, str]:
-    if execute_sql_fn is None:
-        return None, "execute_sql is unavailable"
-    try:
-        schema_sql = _quote_teradata_identifier(target_database)
-        table_sql = _quote_teradata_identifier(f"vectorstore_{vector_store_name}_index")
-    except ValueError as ex:
-        return None, str(ex)
-    sql = f"SELECT COUNT(*) FROM {schema_sql}.{table_sql}"
-    try:
-        count_result = execute_sql_fn(sql)
-    except Exception as ex:
-        return None, str(ex)
-    count = _scalar_from_sql_result(count_result)
-    if count is None:
-        return None, f"could not parse row count from {format_preview(count_result, max_chars=300)}"
-    return count, ""
-
-
-def _bookrag_source_embedding_row_count(
-    *,
-    source_table_name: str,
-    target_database: str,
-    execute_sql_fn,
-) -> tuple[int | None, str]:
-    return _source_embedding_row_count(
-        source_table_name=source_table_name,
-        target_database=target_database,
-        data_column="content",
-        execute_sql_fn=execute_sql_fn,
-    )
-
-
-def _multi_format_source_embedding_row_count(
-    *,
-    source_table_name: str,
-    target_database: str,
-    execute_sql_fn,
-) -> tuple[int | None, str]:
-    return _source_embedding_row_count(
-        source_table_name=source_table_name,
-        target_database=target_database,
-        data_column="text",
-        execute_sql_fn=execute_sql_fn,
-    )
-
-
-def _source_embedding_row_count(
-    *,
-    source_table_name: str,
-    target_database: str,
-    data_column: str,
-    execute_sql_fn,
-) -> tuple[int | None, str]:
-    if execute_sql_fn is None:
-        return None, "execute_sql is unavailable"
-    try:
-        schema_sql = _quote_teradata_identifier(target_database)
-        table_sql = _quote_teradata_identifier(source_table_name)
-        data_column_sql = _quote_teradata_identifier(data_column)
-    except ValueError as ex:
-        return None, str(ex)
-    sql = (
-        f'SELECT COUNT(*) FROM {schema_sql}.{table_sql} '
-        f"WHERE {data_column_sql} IS NOT NULL AND TRIM({data_column_sql}) <> ''"
-    )
-    try:
-        count_result = execute_sql_fn(sql)
-    except Exception as ex:
-        return None, str(ex)
-    count = _scalar_from_sql_result(count_result)
-    if count is None:
-        return None, f"could not parse source row count from {format_preview(count_result, max_chars=300)}"
-    return count, ""
 
 
 async def _wait_for_bookrag_index_rows(

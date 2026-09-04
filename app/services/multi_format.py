@@ -12,6 +12,39 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Callable
 
+from app.services.multi_format_config import (
+    BOOKRAG_COMPLETE_TABLE_CONTRACT,
+    BOOKRAG_CSV_LOAD_WORKERS_DEFAULT,
+    BOOKRAG_CSV_MANIFEST_FILENAME,
+    BOOKRAG_CSV_MANIFEST_SCHEMA_VERSION,
+    BOOKRAG_CSV_PREPARE_WORKERS_DEFAULT,
+    BOOKRAG_ENTITY_TABLE_KEYS,
+    BOOKRAG_GRAPH_TOGGLE_FIELD,
+    BOOKRAG_LEGACY_GRAPH_TOGGLE_FIELDS,
+    BOOKRAG_PARSE_MANIFEST_FILENAME,
+    BOOKRAG_PARSE_MANIFEST_SCHEMA_VERSION,
+    BOOKRAG_TABLE_TOGGLE_DEFAULTS,
+    BOOKRAG_TABLE_TOGGLE_FIELDS,
+    BOOKRAG_TABLE_TOGGLE_ORDER,
+    BOOKRAG_TRANSFORM_VERSION,
+    BOOKRAG_UNSTRUCTURED_WORKERS_DEFAULT,
+    MULTI_FORMAT_CSV_LOAD_WORKERS_DEFAULT,
+    MULTI_FORMAT_CSV_MANIFEST_FILENAME,
+    MULTI_FORMAT_CSV_MANIFEST_SCHEMA_VERSION,
+    MULTI_FORMAT_CSV_PREPARE_WORKERS_DEFAULT,
+    MULTI_FORMAT_PARSE_MANIFEST_FILENAME,
+    MULTI_FORMAT_PARSE_MANIFEST_SCHEMA_VERSION,
+    MULTI_FORMAT_TRANSFORM_VERSION,
+    MULTI_FORMAT_UNSTRUCTURED_WORKERS_DEFAULT,
+    TERADATA_IDENTIFIER_MAX_LEN,
+    UNSTRUCTURED_CHUNK_COLUMNS,
+    first_defined as _first_defined,
+    parse_csv_values as _parse_csv_values,
+    strip_create_ingestor_params,
+    strip_file_based_create_params,
+    to_bool as _to_bool,
+    to_int as _to_int,
+)
 from app.services.teradata_sql import (
     ExecuteSqlFn,
     _count_teradata_rows,
@@ -93,117 +126,7 @@ from app.services.unstructured_workflow_builder import (
     build_multi_format_workflow_definition as _workflow_builder_build_multi_format_workflow_definition,
 )
 
-TERADATA_IDENTIFIER_MAX_LEN = 30
 ResolvePathFn = Callable[[str], str]
-FILE_BASED_CREATE_KEYS_TO_REMOVE = {
-    "chunk_size",
-    "chunk_overlap",
-    "optimized_chunking",
-    "header_height",
-    "footer_height",
-    "document_files",
-    "document_manifest",
-    "document_relations",
-    "ingestor",
-    "ingest_params",
-    "nv_ingestor",
-    "ingest_host",
-    "ingest_port",
-    "display_metadata",
-    "extract_text",
-    "extract_images",
-    "extract_tables",
-    "extract_infographics",
-    "extract_method",
-    "extract_metadata_json",
-    "extract_caption",
-    "tokenizer",
-    "vlm_model",
-    "vlm_base_url",
-    "hf_access_token",
-}
-FILE_BASED_CREATE_KEY_PREFIXES_TO_REMOVE = ("ingest_",)
-FILE_BASED_CREATE_KEY_SUFFIXES_TO_REMOVE = ("_ingestor",)
-
-
-UNSTRUCTURED_CHUNK_COLUMNS: list[tuple[str, str]] = [
-    ("text", "VARCHAR(32000) CHARACTER SET UNICODE"),
-    ("type", "VARCHAR(50) CHARACTER SET UNICODE"),
-    ("filename", "VARCHAR(255) CHARACTER SET UNICODE"),
-    ("element_id", "VARCHAR(64) CHARACTER SET UNICODE"),
-    ("id", 'VARCHAR(64) NOT NULL'),
-    ("table_id", "VARCHAR(128) CHARACTER SET UNICODE"),
-    ("page_number", "INTEGER"),
-    ("chunk_index", "INTEGER"),
-    ("is_continuation", "BYTEINT"),
-    ("num_carried_over_header_rows", "INTEGER"),
-    ("partitioner_type", "VARCHAR(100) CHARACTER SET UNICODE"),
-    ("image_description", "VARCHAR(32000) CHARACTER SET UNICODE"),
-    ("table_description", "VARCHAR(32000) CHARACTER SET UNICODE"),
-    ("generative_ocr", "VARCHAR(32000) CHARACTER SET UNICODE"),
-    ("text_as_html", "VARCHAR(32000) CHARACTER SET UNICODE"),
-    ("table_to_html", "VARCHAR(32000) CHARACTER SET UNICODE"),
-    ("filetype", "VARCHAR(50) CHARACTER SET UNICODE"),
-    ("date_processed", "VARCHAR(50)"),
-]
-
-BOOKRAG_TABLE_TOGGLE_FIELDS: dict[str, str] = {
-    "documents": "multi_format_bookrag_generate_documents",
-    "raw": "multi_format_bookrag_generate_raw",
-    "blocks": "multi_format_bookrag_generate_blocks",
-    "nodes": "multi_format_bookrag_generate_nodes",
-    "document_relations": "multi_format_bookrag_generate_document_relations",
-    "entities": "multi_format_bookrag_generate_entities",
-    "entity_links": "multi_format_bookrag_generate_entity_links",
-    "entity_relations": "multi_format_bookrag_generate_entity_relations",
-}
-
-BOOKRAG_TABLE_TOGGLE_DEFAULTS: dict[str, bool] = {
-    "documents": True,
-    "raw": True,
-    "blocks": True,
-    "nodes": True,
-    "document_relations": True,
-    "entities": True,
-    "entity_links": True,
-    "entity_relations": True,
-}
-
-BOOKRAG_TABLE_TOGGLE_ORDER: tuple[str, ...] = (
-    "documents",
-    "raw",
-    "blocks",
-    "nodes",
-    "document_relations",
-    "entities",
-    "entity_links",
-    "entity_relations",
-)
-
-BOOKRAG_ENTITY_TABLE_KEYS: tuple[str, ...] = ("entities", "entity_links", "entity_relations")
-BOOKRAG_GRAPH_TOGGLE_FIELD = "multi_format_bookrag_generate_graph"
-BOOKRAG_LEGACY_GRAPH_TOGGLE_FIELDS: tuple[str, ...] = (
-    "multi_format_bookrag_generate_entities",
-    "multi_format_bookrag_generate_entity_links",
-    "multi_format_bookrag_generate_entity_relations",
-)
-BOOKRAG_UNSTRUCTURED_WORKERS_DEFAULT = 5
-BOOKRAG_CSV_PREPARE_WORKERS_DEFAULT = 5
-BOOKRAG_CSV_LOAD_WORKERS_DEFAULT = 5
-BOOKRAG_PARSE_MANIFEST_FILENAME = "manifest.json"
-BOOKRAG_PARSE_MANIFEST_SCHEMA_VERSION = 1
-BOOKRAG_CSV_MANIFEST_SCHEMA_VERSION = 1
-BOOKRAG_CSV_MANIFEST_FILENAME = "manifest.json"
-BOOKRAG_TRANSFORM_VERSION = "bookrag-json-to-csv-v1"
-BOOKRAG_COMPLETE_TABLE_CONTRACT = "core-audit-graph-v1"
-MULTI_FORMAT_PARSE_MANIFEST_FILENAME = "manifest.json"
-MULTI_FORMAT_PARSE_MANIFEST_SCHEMA_VERSION = 1
-MULTI_FORMAT_CSV_MANIFEST_FILENAME = "manifest.json"
-MULTI_FORMAT_CSV_MANIFEST_SCHEMA_VERSION = 1
-MULTI_FORMAT_TRANSFORM_VERSION = "multi-format-json-to-unstructured-csv-v1"
-MULTI_FORMAT_UNSTRUCTURED_WORKERS_DEFAULT = 5
-MULTI_FORMAT_CSV_PREPARE_WORKERS_DEFAULT = 5
-MULTI_FORMAT_CSV_LOAD_WORKERS_DEFAULT = 5
 
 
 def _resolve_bookrag_unstructured_workers(file_count: int) -> int:
@@ -335,43 +258,6 @@ def normalize_document_files_for_create(
     exec_payload["document_files"] = resolved_items
 
     return exec_payload, warnings
-
-
-def _to_int(raw: str, default: int, minimum: int = 0, maximum: int | None = None) -> int:
-    try:
-        value = int(str(raw).strip())
-    except Exception:
-        return default
-    if value < minimum:
-        return default
-    if maximum is not None and value > maximum:
-        return maximum
-    return value
-
-
-def _to_bool(raw: Any, default: bool = False) -> bool:
-    if raw is None:
-        return default
-    value = str(raw).strip().lower()
-    if value in {"1", "true", "yes", "on"}:
-        return True
-    if value in {"0", "false", "no", "off", ""}:
-        return False
-    return default
-
-
-def _parse_csv_values(raw: Any) -> list[str]:
-    return [chunk.strip() for chunk in str(raw or "").split(",") if chunk.strip()]
-
-
-def _first_defined(*values: Any) -> Any:
-    for value in values:
-        if value is None:
-            continue
-        if isinstance(value, str) and not value.strip():
-            continue
-        return value
-    return None
 
 
 def _format_chunk_row_id(row_sequence: int | None) -> str:
@@ -710,36 +596,7 @@ def _wait_for_table_rows(
         time.sleep(max(1, poll_interval_seconds))
 
 
-def _strip_file_based_create_params(payload: dict[str, Any]) -> dict[str, Any]:
-    cleaned = dict(payload)
-    for key in list(cleaned):
-        normalized_key = str(key or "").strip().lower()
-        if (
-            normalized_key in FILE_BASED_CREATE_KEYS_TO_REMOVE
-            or normalized_key.startswith(FILE_BASED_CREATE_KEY_PREFIXES_TO_REMOVE)
-            or normalized_key.endswith(FILE_BASED_CREATE_KEY_SUFFIXES_TO_REMOVE)
-        ):
-            cleaned.pop(key, None)
-    for key in FILE_BASED_CREATE_KEYS_TO_REMOVE:
-        cleaned.pop(key, None)
-    return cleaned
-
-
-def strip_file_based_create_params(payload: dict[str, Any]) -> dict[str, Any]:
-    return _strip_file_based_create_params(payload)
-
-
-def strip_create_ingestor_params(payload: dict[str, Any]) -> dict[str, Any]:
-    cleaned = dict(payload)
-    for key in list(cleaned):
-        normalized_key = str(key or "").strip().lower()
-        if (
-            normalized_key in {"ingestor", "ingest_params", "nv_ingestor", "ingest_host", "ingest_port"}
-            or normalized_key.startswith(FILE_BASED_CREATE_KEY_PREFIXES_TO_REMOVE)
-            or normalized_key.endswith(FILE_BASED_CREATE_KEY_SUFFIXES_TO_REMOVE)
-        ):
-            cleaned.pop(key, None)
-    return cleaned
+_strip_file_based_create_params = strip_file_based_create_params
 
 
 def _now_ts() -> str:
