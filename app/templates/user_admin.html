@@ -111,7 +111,7 @@
           <h2 id="unstructured-configuration-title">Unstructured IO</h2>
           <p class="muted">Used by Multi Format and Multi-Format BookRAG for the current signed-in session.</p>
         </div>
-        <span class="connection-config-state {% if evs.params.unstructured_api_url and evs.params.unstructured_api_key %}is-configured{% endif %}">{% if evs.params.unstructured_api_url and evs.params.unstructured_api_key %}Configured{% else %}Not configured{% endif %}</span>
+        <span class="connection-config-state {% if evs.params.unstructured_api_url and unstructured_api_key_configured %}is-configured{% endif %}">{% if evs.params.unstructured_api_url and unstructured_api_key_configured %}Configured{% else %}Not configured{% endif %}</span>
       </div>
       <form class="unstructured-connection-form" method="post" action="/admin/unstructured-config">
         <label class="field">
@@ -120,8 +120,11 @@
         </label>
         <label class="field">
           <span>API Key</span>
-          <input type="password" name="unstructured_api_key" value="{{ evs.params.unstructured_api_key }}" placeholder="Unstructured API key" autocomplete="off" />
+          <input type="password" name="unstructured_api_key" value="" placeholder="{% if unstructured_api_key_configured %}Saved — leave blank to keep{% else %}Unstructured API key{% endif %}" autocomplete="new-password" />
         </label>
+        {% if unstructured_api_key_configured %}
+        <label class="inline-check"><input type="checkbox" name="clear_unstructured_api_key" value="true" /> Clear saved API key</label>
+        {% endif %}
         <div class="system-connection-actions">
           <button type="submit">Save Unstructured IO</button>
         </div>

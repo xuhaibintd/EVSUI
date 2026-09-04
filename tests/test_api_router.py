@@ -210,6 +210,16 @@ class BookRAGApiAccessTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(_has_valid_external_api_token(api_key_request))
             self.assertFalse(_has_valid_external_api_token(invalid_request))
 
+    def test_application_settings_can_disable_external_api_even_when_env_has_a_token(self) -> None:
+        request = _build_request(headers={"x-api-key": "secret-token"})
+        request.app.state.settings = SimpleNamespace(
+            external_api_enabled=False,
+            external_api_token="secret-token",
+        )
+
+        with patch.dict(os.environ, {"EVSUI_API_TOKEN": "secret-token"}, clear=False):
+            self.assertFalse(_has_valid_external_api_token(request))
+
     async def test_retrieve_get_runs_real_lookup_when_query_params_are_present(self) -> None:
         request = _build_request(headers={"x-api-key": "secret-token", "x-request-id": "req-123"})
         evidence = {"vector_store_name": "demo_vs", "packages": [{"rank": 1}], "package_count": 1}
@@ -238,15 +248,13 @@ class BookRAGApiAccessTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(payload["dummy_data"])
         self.assertEqual(payload["assistant_message"], "reply")
 
-    async def test_retrieve_get_without_params_still_returns_dummy_payload(self) -> None:
+    async def test_retrieve_get_without_params_rejects_missing_auth(self) -> None:
         request = _build_request()
-        payload = await api_bookrag_retrieve_get(request)
 
-        self.assertEqual(payload["vector_store_name"], "dummy_vs")
-        self.assertEqual(payload["meta"]["auth_mode"], "none")
-        self.assertEqual(payload["evidence"]["package_count"], 0)
-        self.assertEqual(payload["evidence"]["top_k_applied"], 5)
-        self.assertEqual(payload["dummy_data"]["status"], "dummy")
+        with self.assertRaises(HTTPException) as ctx:
+            await api_bookrag_retrieve_get(request)
+
+        self.assertEqual(ctx.exception.status_code, 401)
 
     async def test_answer_get_rejects_missing_auth(self) -> None:
         request = _build_request()

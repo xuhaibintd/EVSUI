@@ -101,11 +101,21 @@ class AuthStore:
         session_ttl_seconds: int = SESSION_TTL_SECONDS_DEFAULT,
         pem_runtime_dir: Path | None = None,
         legacy_file_root: Path | None = None,
+        credential_key: str = "",
+        credential_key_file: Path | None = None,
+        allow_generated_credential_key: bool = True,
     ) -> None:
         self.database_path = Path(database_path).expanduser().resolve()
         self.session_ttl_seconds = max(300, int(session_ttl_seconds))
         self.pem_runtime_dir = Path(pem_runtime_dir or (self.database_path.parent / "pem_runtime")).expanduser().resolve()
         self.legacy_file_root = Path(legacy_file_root or self.database_path.parent).expanduser().resolve()
+        self.credential_key = str(credential_key or "").strip()
+        self.credential_key_file = (
+            Path(credential_key_file).expanduser().resolve()
+            if credential_key_file is not None
+            else None
+        )
+        self.allow_generated_credential_key = bool(allow_generated_credential_key)
 
     def _connect(self) -> sqlite3.Connection:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -839,11 +849,13 @@ class AuthStore:
         return normalized
 
     def _credential_key_path(self) -> Path:
+        if self.credential_key_file is not None:
+            return self.credential_key_file
         configured = str(os.getenv("EVSUI_CREDENTIAL_KEY_FILE", "")).strip()
         return Path(configured).expanduser().resolve() if configured else self.database_path.with_suffix(".credentials.key")
 
     def _credential_cipher(self) -> Fernet:
-        configured = str(os.getenv("EVSUI_CREDENTIAL_KEY", "")).strip()
+        configured = self.credential_key or str(os.getenv("EVSUI_CREDENTIAL_KEY", "")).strip()
         if configured:
             return Fernet(configured.encode("ascii"))
 
@@ -852,6 +864,11 @@ class AuthStore:
         try:
             key = key_path.read_bytes().strip()
         except FileNotFoundError:
+            if not self.allow_generated_credential_key:
+                raise RuntimeError(
+                    f"Credential key file does not exist: {key_path}. "
+                    "Create it before starting EVSUI in production."
+                )
             generated = Fernet.generate_key()
             try:
                 with key_path.open("xb") as handle:

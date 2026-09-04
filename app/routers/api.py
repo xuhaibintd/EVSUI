@@ -18,7 +18,6 @@ from app.services.bookrag_retrieval import (
     render_bookrag_evidence_packages,
 )
 from app.services.bookrag_schema import build_bookrag_relationship_contract
-from app.runtime import DEFAULT_EVSUI_API_TOKEN
 from app.teradata_runtime import TERADATA_IMPORT_ERROR, VectorStore, execute_sql
 from app.utils.table_state import format_preview
 from app.web_support import (
@@ -376,13 +375,17 @@ class BookRAGAnswerResponse(BaseModel):
     assistant_time: str | None = None
 
 
-def _external_api_token() -> str:
-    configured = str(os.getenv("EVSUI_API_TOKEN", "")).strip()
-    return configured or DEFAULT_EVSUI_API_TOKEN
+def _external_api_token(request: Request | None = None) -> str:
+    settings = getattr(getattr(getattr(request, "app", None), "state", None), "settings", None)
+    if settings is not None:
+        if not bool(getattr(settings, "external_api_enabled", False)):
+            return ""
+        return str(getattr(settings, "external_api_token", "") or "").strip()
+    return str(os.getenv("EVSUI_API_TOKEN", "")).strip()
 
 
 def _resolve_external_token_context(request: Request) -> dict[str, str] | None:
-    configured = _external_api_token()
+    configured = _external_api_token(request)
     if not configured:
         return None
 
@@ -1022,11 +1025,8 @@ async def api_bookrag_schema(
 @router.get(
     "/api/bookrag/retrieve",
     response_model=BookRAGRetrieveResponse,
-    summary="Retrieve BookRAG dummy or evidence payload",
-    description=(
-        "Returns a dummy connectivity payload when called without query parameters. "
-        "When question/vector_store_name inputs are supplied, performs a real retrieval."
-    ),
+    summary="Retrieve BookRAG evidence",
+    description="Performs an authenticated BookRAG retrieval.",
 )
 async def api_bookrag_retrieve_get(
     request: Request,
@@ -1034,62 +1034,28 @@ async def api_bookrag_retrieve_get(
     vector_store_name: str | None = None,
     schema_name: str | None = None,
     top_k: int = 5,
-    dummy: str | None = None,
 ):
     schema_value = _normalize_optional_text(schema_name)
     top_k_value = _clamp_top_k(top_k)
-    has_runtime_inputs = any(value is not None for value in (question, vector_store_name, schema_name))
-    if has_runtime_inputs:
-        auth_context = _require_api_access(request)
-        if auth_context.get("mode") == "session":
-            _ensure_connected_runtime_for_session(request, request.app)
-        question_value, vector_store_value, evidence, _ = _retrieve_bookrag_evidence_or_raise(
-            question=question,
-            vector_store_name=vector_store_name,
-            schema_name=schema_value,
-            top_k=top_k_value,
-        )
-        evidence = _normalize_bookrag_evidence(evidence=evidence, top_k=top_k_value)
-        assistant_message = _build_bookrag_chat_reply(evidence, vector_store_value)
-        return {
-            "meta": _build_api_meta(request=request, auth_context=auth_context, top_k=top_k_value),
-            "question": question_value,
-            "vector_store_name": vector_store_value,
-            "schema_name": schema_value,
-            "evidence": evidence,
-            "dummy_data": None,
-            "assistant_message": assistant_message,
-            "user_time": None,
-            "assistant_time": None,
-        }
-
-    question_value = "三菱UFJフィナンシャル・グループの2026年3月期第3四半期決算の要点を確認したい"
-    vector_store_value = "dummy_vs"
-
+    auth_context = _require_api_access(request)
+    if auth_context.get("mode") == "session":
+        _ensure_connected_runtime_for_session(request, request.app)
+    question_value, vector_store_value, evidence, _ = _retrieve_bookrag_evidence_or_raise(
+        question=question,
+        vector_store_name=vector_store_name,
+        schema_name=schema_value,
+        top_k=top_k_value,
+    )
+    evidence = _normalize_bookrag_evidence(evidence=evidence, top_k=top_k_value)
+    assistant_message = _build_bookrag_chat_reply(evidence, vector_store_value)
     return {
-        "meta": _build_api_meta(request=request, auth_context=None, top_k=top_k_value),
+        "meta": _build_api_meta(request=request, auth_context=auth_context, top_k=top_k_value),
         "question": question_value,
         "vector_store_name": vector_store_value,
         "schema_name": schema_value,
-        "evidence": _normalize_bookrag_evidence(
-            evidence={
-                "vector_store_name": vector_store_value,
-                "schema_name": schema_value,
-                "packages": [],
-                "package_count": 0,
-                "similarity_row_count": 0,
-                "similarity_headers": [],
-                "similarity_preview": "",
-                "evidence_text": "",
-            },
-            top_k=top_k_value,
-        ),
-        "dummy_data": _build_bookrag_dummy_data(
-            question=question_value,
-            vector_store_name=vector_store_value,
-            schema_name=schema_value,
-        ),
-        "assistant_message": "GET 接続確認用のダミー BookRAG 応答を返しました。",
+        "evidence": evidence,
+        "dummy_data": None,
+        "assistant_message": assistant_message,
         "user_time": None,
         "assistant_time": None,
     }
@@ -1104,9 +1070,11 @@ async def api_bookrag_answer_get(
 ):
     schema_value = _normalize_optional_text(schema_name)
     top_k_value = _clamp_top_k(top_k)
+    auth_context = _require_api_access(request)
     has_runtime_inputs = any(value is not None for value in (question, vector_store_name, schema_name))
+    if not has_runtime_inputs:
+        raise HTTPException(status_code=422, detail="question and vector_store_name are required")
     if has_runtime_inputs:
-        auth_context = _require_api_access(request)
         if auth_context.get("mode") == "session":
             _ensure_connected_runtime_for_session(request, request.app)
         question_value, vector_store_value, evidence, similarity_result = _retrieve_bookrag_evidence_or_raise(
@@ -1210,7 +1178,7 @@ async def api_bookrag_answer_get(
     )
     answer = _build_bookrag_dummy_answer(question=question_value, llm_input=llm_input)
     return {
-        "meta": _build_api_meta(request=request, auth_context=None, top_k=top_k_value),
+        "meta": _build_api_meta(request=request, auth_context=auth_context, top_k=top_k_value),
         "question": question_value,
         "vector_store_name": vector_store_value,
         "schema_name": schema_value,

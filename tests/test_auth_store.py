@@ -8,6 +8,8 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from cryptography.fernet import Fernet
+
 from app.auth_store import AuthStore
 from app.session_state import SessionAwareState, new_session_scope
 
@@ -17,6 +19,34 @@ class AuthStoreTests(unittest.TestCase):
         store = AuthStore(Path(directory) / name, session_ttl_seconds=600)
         store.initialize()
         return store
+
+    def test_explicit_credential_key_is_used_without_creating_a_key_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            key_file = Path(tmpdir) / "must-not-be-created.key"
+            store = AuthStore(
+                Path(tmpdir) / "auth.db",
+                credential_key=Fernet.generate_key().decode("ascii"),
+                credential_key_file=key_file,
+                allow_generated_credential_key=False,
+            )
+
+            encrypted = store._encrypt_credential("secret")
+
+            self.assertEqual(store._decrypt_credential(encrypted), "secret")
+            self.assertFalse(key_file.exists())
+
+    def test_production_style_store_does_not_generate_a_missing_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            key_file = Path(tmpdir) / "missing.key"
+            store = AuthStore(
+                Path(tmpdir) / "auth.db",
+                credential_key_file=key_file,
+                allow_generated_credential_key=False,
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "does not exist"):
+                store._encrypt_credential("secret")
+            self.assertFalse(key_file.exists())
 
     def test_user_password_and_server_session_lifecycle(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

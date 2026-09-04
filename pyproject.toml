@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "evsui"
+version = "0.5.0"
+description = "FastAPI and HTMX interface for Teradata Vector Store workflows"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "argon2-cffi>=23.1.0",
+  "cryptography>=43.0.0",
+  "fastapi>=0.115.0",
+  "httpx>=0.27.0",
+  "jinja2>=3.1.4",
+  "packaging>=24.0",
+  "pandas>=2.2.0",
+  "pypdf>=5.0.0",
+  "python-multipart>=0.0.9",
+  "teradatagenai>=20.0.0.7",
+  "teradataml>=20.0.0.10",
+  "teradatasql>=20.0.0.60",
+  "teradatasqlalchemy>=20.0.0.9",
+  "unstructured-client==0.46.2",
+  "uvicorn[standard]>=0.30.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "coverage[toml]>=7.6,<8",
+  "pytest>=8.3,<9",
+  "ruff>=0.16,<0.17",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+exclude = [
+  ".git",
+  ".venv",
+  "data",
+  "pem_runtime",
+  "uploads",
+]
+
+[tool.ruff.lint]
+# Start with correctness checks. Broader style rules will be enabled one
+# feature package at a time as the legacy modules are split.
+select = ["E9", "F63", "F7", "F82"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.coverage.run]
+branch = true
+source = ["app"]
+omit = ["app/static/*", "app/templates/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+

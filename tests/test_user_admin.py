@@ -239,6 +239,18 @@ class UserAdminRouteTests(unittest.TestCase):
         params = self.app.state.user_sessions[sid]["evs_state"]["params"]
         self.assertEqual(params["unstructured_api_url"], "https://session.example/api")
         self.assertEqual(params["unstructured_api_key"], "session-key")
+        self.assertNotIn("session-key", response.text)
+        self.assertIn("Saved — leave blank to keep", response.text)
+
+        retained = self.client.post(
+            "/admin/unstructured-config",
+            data={
+                "unstructured_api_url": "https://updated.example/api",
+                "unstructured_api_key": "",
+            },
+        )
+        self.assertEqual(retained.status_code, 200)
+        self.assertEqual(params["unstructured_api_key"], "session-key")
 
     def test_connect_uses_database_pem_with_its_original_key_id_filename(self) -> None:
         self._login("admin", "admin-password")

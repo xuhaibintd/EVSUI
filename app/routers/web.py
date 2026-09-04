@@ -9,6 +9,7 @@ from pathlib import Path
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
+from app.core.security import redact_sensitive_text
 from app.runtime import SESSION_COOKIE_NAME
 from app.services.bookrag_section_rules import (
     BOOKRAG_SECTION_RULES_PATH,
@@ -154,6 +155,9 @@ def _render_user_admin(
             "connection_profiles": connection_profiles,
             "connection_password_configured": bool(connection_config.get("password")),
             "connection_pat_configured": bool(connection_config.get("pat_token")),
+            "unstructured_api_key_configured": bool(
+                (request.app.state.evs_state.get("params") or {}).get("unstructured_api_key")
+            ),
             "status": status,
             "active_tab": active_tab if active_tab in {"connection", "unstructured", "users"} else "connection",
         },
@@ -547,6 +551,7 @@ async def system_unstructured_config_save(
     request: Request,
     unstructured_api_url: str = Form(default=""),
     unstructured_api_key: str = Form(default=""),
+    clear_unstructured_api_key: str = Form(default=""),
 ):
     if _admin_principal(request) is None:
         return HTMLResponse("Forbidden", status_code=403)
@@ -554,7 +559,11 @@ async def system_unstructured_config_save(
     state = request.app.state.evs_state
     params = state.setdefault("params", {})
     params["unstructured_api_url"] = unstructured_api_url.strip()
-    params["unstructured_api_key"] = (unstructured_api_key or "").strip()
+    replacement_key = (unstructured_api_key or "").strip()
+    if clear_unstructured_api_key.strip().lower() in {"1", "true", "on", "yes"}:
+        params["unstructured_api_key"] = ""
+    elif replacement_key:
+        params["unstructured_api_key"] = replacement_key
     _persist_active_session_state(request, request.app)
     return _render_user_admin(
         request,
@@ -877,11 +886,16 @@ async def evs_connect(request: Request, connection_id: int | None = Form(default
                     "username": params["username"],
                     "password_length": len(params["password"] or ""),
                 },
-                "set_auth_token": auth_kwargs | {"pat_token": params["pat_token"], "pem_meta": pem_meta},
+                "set_auth_token": {
+                    "base_url": derived_base_url,
+                    "pat_token": _mask_token(params["pat_token"]),
+                    "pem_file": Path(str(auth_kwargs.get("pem_file") or "")).name,
+                    "pem_meta": pem_meta,
+                },
                 "pem_resolution": {
-                    "input": params["pem_file"],
-                    "resolved": resolved_pem_for_auth,
-                    "normalized": normalized_pem_for_auth,
+                    "input": Path(str(params["pem_file"] or "")).name,
+                    "resolved": Path(str(resolved_pem_for_auth or "")).name,
+                    "normalized": Path(str(normalized_pem_for_auth or "")).name,
                 },
             }
             set_auth_token(**auth_kwargs)
@@ -901,7 +915,11 @@ async def evs_connect(request: Request, connection_id: int | None = Form(default
             state["connect_steps"] = steps
         except Exception as ex:
             cleanup_after_fail = _cleanup_context()
-            steps.append(_new_connect_step("Execution Failed", "error", str(ex)))
+            safe_error = redact_sensitive_text(
+                ex,
+                secrets=(params.get("password"), params.get("pat_token")),
+            )
+            steps.append(_new_connect_step("Execution Failed", "error", safe_error))
             steps.append(
                 _new_connect_step(
                     "Rollback Cleanup",
@@ -912,7 +930,7 @@ async def evs_connect(request: Request, connection_id: int | None = Form(default
             state["connected"] = False
             state["connected_at"] = ""
             state["last_success"] = ""
-            state["last_error"] = f"Connection/auth failed: {ex}"
+            state["last_error"] = f"Connection/auth failed: {safe_error}"
             _clear_health_result(state)
             _clear_list_result(state)
             _clear_chat_list_result(state)

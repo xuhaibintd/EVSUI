@@ -6,18 +6,18 @@ from datetime import datetime
 
 from fastapi import Request, UploadFile
 
-from app.auth_store import AuthStore, auth_database_path
+from app.auth_store import AuthStore
+from app.core.security import redact_sensitive_text
+from app.core.settings import Settings
 
 from app.runtime import (
     AUTH_USERS_FILE_DEFAULT,
-    AUTH_DATABASE_FILE_DEFAULT,
     DEFAULT_CHAT_VS_NAME,
     DEFAULT_PAT_TOKEN,
     DOCUMENT_UPLOAD_DIR,
     PEM_UPLOAD_DIR,
     PROJECT_DIR,
     SESSION_COOKIE_NAME,
-    SESSION_TTL_SECONDS_DEFAULT,
     VS_BASICS_DIR,
 )
 from app.services.create_config import (
@@ -398,7 +398,8 @@ def _build_file_meta(path_hint: str) -> dict[str, str | int | bool]:
 
 def _new_connect_step(step: str, status: str, detail: str) -> dict[str, str]:
     status_lower = status.lower()
-    message = f"[{step}] {detail}"
+    safe_detail = redact_sensitive_text(detail)
+    message = f"[{step}] {safe_detail}"
     if status_lower == "error":
         logger.error(message)
     elif status_lower == "warn":
@@ -409,7 +410,7 @@ def _new_connect_step(step: str, status: str, detail: str) -> dict[str, str]:
         "time": datetime.now().strftime("%H:%M:%S"),
         "step": step,
         "status": status,
-        "detail": detail,
+        "detail": safe_detail,
     }
 
 
@@ -709,15 +710,20 @@ def _is_poc_auth_configured(app=None) -> bool:
     return is_poc_auth_configured(_load_auth_users)
 
 
-def initialize_app_state(app, templates) -> None:
+def initialize_app_state(app, templates, *, settings: Settings | None = None) -> None:
     existing_state = dict(getattr(app.state, "_state", {}) or {})
     app.state = SessionAwareState(existing_state)
     app.state.templates = templates
+    resolved_settings = settings or getattr(app.state, "settings", None) or Settings.from_env()
+    app.state.settings = resolved_settings
     auth_store = AuthStore(
-        auth_database_path(AUTH_DATABASE_FILE_DEFAULT),
-        session_ttl_seconds=SESSION_TTL_SECONDS_DEFAULT,
+        resolved_settings.database_path,
+        session_ttl_seconds=resolved_settings.session_ttl_seconds,
         pem_runtime_dir=PROJECT_DIR / "pem_runtime",
         legacy_file_root=PROJECT_DIR,
+        credential_key=resolved_settings.credential_key,
+        credential_key_file=resolved_settings.credential_key_file,
+        allow_generated_credential_key=not resolved_settings.is_production,
     )
     auth_store.initialize()
     legacy_users = _load_auth_users()
