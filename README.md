@@ -2,7 +2,7 @@
 
 Teradata Vector Store provides vector-search and retrieval capabilities on top of Teradata data. It stores document chunks and embeddings as managed vector stores, then exposes operations for creation, health checks, listing, deletion, semantic similarity search, and grounded Q&A through `VectorStore` and `VSManager`.
 
-EVSUI is a `FastAPI + Jinja2 + HTMX` interface for working with Teradata Vector Store. It helps users connect to Teradata, create vector stores from uploaded or configured document sources, validate retrieval in chat, run precision checks, and manage per-session Unstructured IO credentials.
+EVSUI is a `FastAPI + Jinja2 + HTMX` interface for working with Teradata Vector Store. It helps users select reusable Teradata connections, create vector stores from uploaded or configured sources, validate retrieval, govern BookRAG document metadata, and manage encrypted shared service credentials.
 
 ## Contents
 
@@ -17,6 +17,8 @@ EVSUI is a `FastAPI + Jinja2 + HTMX` interface for working with Teradata Vector 
 - [Authentication and Local Configuration](#authentication-and-local-configuration-reference)
 - [Multi-user Administration](#multi-user-administration)
 - [Project Structure and Routes](#project-structure)
+- [Architecture](docs/architecture.md)
+- [Operations](docs/operations.md)
 
 ## Getting Started
 
@@ -119,6 +121,8 @@ The legacy `connection` values are imported once as the default database connect
 
 `app/config/local_dev.json` is ignored by Git. Keep real passwords, PAT tokens, API keys, and certificate files out of version control.
 
+`data/evsui.db` is also intentionally ignored: it contains environment-specific users, encrypted credentials, sessions, and operational state. A fresh checkout creates the complete schema from versioned migrations. Back up and deploy the database as runtime data, not source code; see [Operations](docs/operations.md).
+
 ### 4. Start EVSUI
 
 With the virtual environment active, run:
@@ -172,7 +176,7 @@ For the uploaded-file `Text PDF Only` flow, the UI does not populate `object_nam
 1. Open **Vector Store Retrieval**.
 2. Select **Run List** to refresh the retrieval-specific list, then choose a vector store. The management and retrieval lists refresh independently.
 3. Choose `VectorStore.ask`, `VectorStore.similarity_search`, or **BookRAG API**, enter a question, and select **Send**.
-5. Use **System Configuration** to set per-session Unstructured credentials. For BookRAG stores, use **Administration** to manage document metadata and document relationships.
+5. Use **System Configuration** to manage shared encrypted Teradata and Unstructured credentials. For BookRAG stores, use **BookRAG Governance** to manage document metadata and relationships.
 
 ### Common startup problems
 
@@ -240,15 +244,16 @@ The principal code boundaries are:
 
 | Layer | Main location | Responsibility |
 |---|---|---|
-| Application entry | `app/main.py` | Creates FastAPI, mounts static files, and registers routers |
-| Web delivery | `app/routers/web.py`, `app/templates/`, `app/static/` | Login, HTML/HTMX endpoints, forms, and browser behavior |
+| Application entry | `app/main.py`, `app/core/` | App factory, typed settings, security headers, error handling, and Teradata runtime isolation |
+| Web delivery | `app/routers/web.py`, `app/routers/auth.py`, `app/routers/system_admin.py`, `app/templates/`, `app/static/` | Login, system configuration, HTML/HTMX endpoints, forms, and browser behavior |
 | JSON API | `app/routers/api.py` | BookRAG schema, retrieval, answer, and health endpoints |
 | Workflow orchestration | `app/workflows/` | Coordinates create, chat, and destroy operations |
 | Domain services | `app/services/` | Document processing, manifests, BookRAG schema/tree/retrieval, and SQL helpers |
 | Document-mode plug-ins | `app/services/doc_modes/` | Selects `Text PDF Only`, `Multi-Format`, or `Multi-Format BookRAG` behavior through one handler registry |
 | Runtime integrations | `app/teradata_runtime.py`, `app/services/unstructured_runtime.py` | Loads external SDKs and resolves integration configuration |
 | Unstructured boundary | `app/integrations/unstructured/` | Validates workflow contracts and exposes one stable gateway to submit, poll, diagnose, and download jobs |
-| Authentication | `app/auth_store.py` | SQLite schema, Argon2 passwords, login lockout, roles, server sessions, import/export, and audit records |
+| Persistence | `app/repositories/`, `app/db/` | SQLite repositories, numbered migrations, encrypted external-service configuration, jobs, artifacts, and online backup |
+| Authentication | `app/auth_store.py` | Argon2 passwords, login lockout, roles, server sessions, legacy migration facade, and audit records |
 | Session state | `app/session_state.py` | Uses context-local state so concurrent requests cannot swap user connection, form, upload, or chat state |
 
 ### Vector store creation paths
@@ -312,12 +317,12 @@ Detailed BookRAG table relationships and transformation rules are documented in 
 
 ### State and persistence model
 
-- Users, roles, password hashes, the shared system connection configuration, server-side session records, and authentication audit records are persisted in `data/evsui.db`. The database password, PAT token, and PEM contents are encrypted before they are written. The PEM is materialized only as a restricted runtime file when the SDK needs a filesystem path, using its original filename because Teradata derives the JWT `kid` from that name.
+- Users, roles, password hashes, reusable database connection profiles, shared Unstructured configuration, server-side sessions, jobs, artifact records, and audit records are persisted in `data/evsui.db`. Database passwords, PAT tokens, PEM contents, and external API keys are encrypted before they are written. A PEM is materialized only as a restricted runtime file when the SDK needs a filesystem path, using its original filename because Teradata derives the JWT `kid` from that name.
 - Connection status, upload selections, and chat history remain process-local per `evsui_sid`. They are request-scoped and concurrent-user safe, but restarting the process resets this temporary UI state. The shared system connection is loaded from SQLite at login and before connecting.
 - Session cookies contain only a random opaque ID. The server stores only its SHA-256 hash, applies an eight-hour default expiry, and revokes sessions on logout, password reset, or user disable.
-- Uploaded files, PEM files, raw JSON, generated CSV files, and manifests are stored below `uploads/`. They survive a process restart until removed from disk.
+- Uploaded documents, raw JSON, generated CSV files, and manifests are stored below `uploads/`. Encrypted PEM contents live in SQLite and restricted temporary materializations live below `pem_runtime/`.
 - Vector stores, standard multi-format source tables, and BookRAG tables are persisted in Teradata.
-- `data/`, `app/config/local_dev.json`, legacy auth-user files, and optional model-catalog overrides are local, ignored runtime data and must not be committed.
+- `data/`, `uploads/`, `pem_runtime/`, `.env`, local configuration, and legacy auth-user files are ignored runtime data and must not be committed.
 - The UI exposes independent management and retrieval list refreshes by design; selecting or deleting in one panel does not silently change the other panel's current list.
 
 ## Overview
@@ -404,9 +409,9 @@ Section construction uses Unstructured structure metadata where available, with 
 
 ### System Configuration and Admin Rules
 
-- Shows Unstructured IO account settings under **System Configuration**.
-- Saves `unstructured_api_url` and `unstructured_api_key` into the current user session.
-- Session values are used by Multi Format and Multi-Format BookRAG before falling back to `app/config/local_dev.json`.
+- **System Connection** manages reusable Teradata profiles that users select before connecting.
+- **Unstructured IO** stores one shared API endpoint and encrypted API key for Multi Format and Multi-Format BookRAG.
+- **User Management** controls accounts and roles. **BookRAG Governance** on the home page is separate and manages corpus metadata, document relationships, and JSON inspection.
 
 ## Current Behavior
 
@@ -425,8 +430,8 @@ Section construction uses Unstructured structure metadata where available, with 
 All Python dependencies are installed by `python -m pip install -r requirements.txt`. The file currently includes:
 
 - Web application: `fastapi`, `uvicorn[standard]`, `jinja2`, and `python-multipart`.
-- Teradata integration: `teradatagenai`, `teradataml`, `teradatamlwidgets`, `teradatasql`, and `teradatasqlalchemy`.
-- Document processing: `unstructured-client`.
+- Teradata integration: `teradatagenai`, `teradataml`, `teradatasql`, and `teradatasqlalchemy`.
+- Document processing: `unstructured-client`, `pandas`, `openpyxl`, and `pypdf`.
 - Authentication and credential encryption: `argon2-cffi` and `cryptography`; SQLite is supplied by Python's standard library.
 - Version handling: `packaging`.
 
@@ -691,7 +696,7 @@ For external MCP/SQL applications, call `GET /api/bookrag/schema?vector_store_na
 ### Administration and Migration
 
 - **Vector Store Creation -> Upload PDF / Documents** is file upload only. `bdrel` is created during Create together with `bdoc`, `bblk`, and `bnode`.
-- Create-time filename-rule rows are effective immediately. Use **Administration -> Business Configuration -> Document Relationships** to load, review, add, edit, delete, import, or export rows.
+- Create-time filename-rule rows are effective immediately. Use **BookRAG Governance → Document Governance → Document Relationships** to load, review, add, edit, delete, import, or export rows.
 - The Document Relationships panel refreshes its own Vector Store list on load and provides **Refresh Vector Stores**; it does not depend on running the Retrieval page's list action first.
 - If an older vector store has `bdoc` but no `bdrel`, click **Initialize bdrel**. This only creates the empty table after verifying that `bdoc` contains documents; it does not invent relationships.
 - When an existing legacy `bdrel` table is next initialized or changed, obsolete `is_active` and `confidence` columns are dropped without deleting rows. Retrieval already treats every legacy row as effective.
@@ -735,8 +740,8 @@ client_rules:
 - This configuration is required only for `Multi-Format` and `Multi-Format BookRAG`.
 - For local debugging, copy `app/config/local_dev.example.json` to `app/config/local_dev.json` and fill in `unstructured`.
 - `app/config/local_dev.json` is ignored by Git and must not be committed.
-- Administrators can override Unstructured IO settings for their active session from the **System Configuration** page.
-- Multi Format and Multi-Format BookRAG use session Unstructured IO settings first, then fall back to `app/config/local_dev.json`.
+- Administrators manage the shared Unstructured IO endpoint and encrypted API key from **System Configuration**.
+- On first startup only, `app/config/local_dev.json` can bootstrap the shared configuration when no database row exists. Later UI changes are authoritative and do not echo the saved key.
 - Supported API key fields: `api_key`, `key_id`, `UNSTRUCTURED_API_KEY`, `UNSTRUCTURED_API_KEY_AUTH`
 - Supported API URL fields: `api_url`, `UNSTRUCTURED_API_URL`, `UNSTRUCTURED_PLATFORM_URL`
 - Unstructured does not currently expose a public Workflow models-list endpoint in the documented API or Python SDK. EVSUI ships with an internal fallback model catalog and can load overrides from `app/config/unstructured_models.json` or `UNSTRUCTURED_MODEL_CATALOG_PATH`.
@@ -770,15 +775,13 @@ Notes:
 ## BookRAG API Notes
 
 - `GET /api/bookrag/schema?vector_store_name=...&schema_name=...` returns the authoritative physical table names, primary keys, table roles, and logical join contract for MCP/SQL clients.
-- `GET /api/bookrag/retrieve` with no query parameters returns a dummy connectivity payload.
 - `GET /api/bookrag/retrieve?question=...&vector_store_name=...` runs a real retrieval.
 - `POST /api/bookrag/retrieve` runs a real retrieval from a JSON body with `question` and `vector_store_name`.
-- `GET /api/bookrag/answer` with no query parameters returns a dummy answer payload.
 - `GET /api/bookrag/answer?question=...&vector_store_name=...` retrieves governed evidence and generates an answer from the locked final node set.
 - `POST /api/bookrag/answer` accepts a JSON body, retrieves governed evidence, and returns the answer, evidence packages, LLM input, and rank-based citations.
 - Answer citations identify the evidence list used for generation; they are not verified claim-to-source alignments.
 - API access accepts either the normal EVSUI login session cookie or `Authorization: Bearer <token>` / `x-api-key: <token>`.
-- Set `EVSUI_API_TOKEN` before exposing an API endpoint outside a local development machine. If it is not set, the current development fallback is `evsui-dev-token`.
+- External token access is disabled by default. Enable it explicitly with `EVSUI_EXTERNAL_API_ENABLED=true` and set a strong `EVSUI_API_TOKEN`; there is no built-in fallback token. Browser-session API access remains available to signed-in users.
 
 Example:
 
@@ -790,16 +793,19 @@ curl -H "Authorization: Bearer $EVSUI_API_TOKEN" \
 ## Authentication and Local Configuration Reference
 
 - `EVSUI_DATABASE_PATH` changes the SQLite path from the default `data/evsui.db`.
+- `EVSUI_ENVIRONMENT` accepts `development`, `test`, or `production`.
 - `EVSUI_BOOTSTRAP_ADMIN` and `EVSUI_BOOTSTRAP_PASSWORD` create the first administrator only while the user table is empty.
-- `EVSUI_CREDENTIAL_KEY` can supply the Fernet key used to encrypt database passwords and PAT tokens. If it is unset, EVSUI creates a local key beside the SQLite database.
-- `EVSUI_CREDENTIAL_KEY_FILE` changes the generated/read credential-key file path. Back up this key with the database; encrypted passwords, PAT tokens, and PEM contents cannot be recovered without it.
+- `EVSUI_CREDENTIAL_KEY` can supply the Fernet key used to encrypt database passwords, PAT tokens, PEM contents, and external API keys. Development can generate a local key; production requires an explicit key or key-file location.
+- `EVSUI_CREDENTIAL_KEY_FILE` changes the credential-key path. Back up this key with the database; encrypted secrets cannot be recovered without it.
+- `WEB_CONCURRENCY` must remain `1` while the Teradata SDK context is process-global. Startup rejects any other value.
+- `EVSUI_MAX_UPLOAD_BYTES`, `EVSUI_ARTIFACT_RETENTION_DAYS`, `EVSUI_ARTIFACT_CLEANUP_ENABLED`, and `EVSUI_JOB_STALE_SECONDS` control upload and operational lifecycles.
 - `EVSUI_LOCAL_CONFIG` can point to a local config file other than `app/config/local_dev.json`.
 - `app/config/auth_users.json` remains supported only as a first-run legacy import source and is ignored by Git. Its format is `{"users":{"alice":"alice-pass","bob":"bob-pass"}}`.
 - `POC_AUTH_FILE` can point to a different auth-user JSON file.
 - `POC_ADMIN_USER` and `POC_ADMIN_PASSWORD` are legacy first-run inputs only.
 - Roles are `admin`, `operator`, and `viewer`. This release enforces `admin` on user administration; corpus-level and document-level authorization remain future production controls.
 - Five consecutive invalid passwords lock an account for five minutes.
-- Each login gets a persisted server-side session and independent request-scoped UI state, including Unstructured settings.
+- Each login gets a persisted server-side session and independent request-scoped UI state. Teradata and Unstructured definitions are shared system configuration; the selected/active connection remains session-specific.
 
 Legacy credentials in local JSON files are plain text, but SQLite stores only Argon2 password hashes. Remove legacy passwords after verifying migration. Use strong filesystem permissions, HTTPS through a trusted reverse proxy, a non-default `EVSUI_API_TOKEN`, and an appropriate production authentication layer before allowing non-local access.
 
@@ -811,7 +817,7 @@ Only an `admin` can open `GET /admin/users`. The page supports:
 - enabling and disabling accounts;
 - resetting a password and revoking that user's existing sessions.
 
-Do not edit `evsui.db` while EVSUI is running. For backup, stop the process or use SQLite's online backup tooling and keep the database together with its `-wal` and `-shm` files. SQLite is appropriate for one EVSUI application instance. Move authentication storage to PostgreSQL or another shared database before running multiple application replicas.
+Do not edit `evsui.db` manually while EVSUI is running. Use `python -m app.db backup` for a transactionally consistent live backup and retain the credential key with it. SQLite is appropriate for one EVSUI application instance. Move the control plane and Teradata execution to separately isolated services before running multiple replicas.
 
 ```mermaid
 sequenceDiagram
@@ -832,13 +838,16 @@ sequenceDiagram
 
 ## Project Structure
 
-- Application entry and routes: `app/main.py`
-- Authentication database: `app/auth_store.py`
+- Application factory and cross-cutting concerns: `app/main.py`, `app/core/`
+- Web, authentication, system configuration, and JSON API routes: `app/routers/`
+- SQLite migrations, backup, and repositories: `app/db/`, `app/repositories/`
+- Authentication facade and encrypted credential access: `app/auth_store.py`, `app/services/credential_vault.py`
+- Persistent jobs and artifact lifecycle: `app/services/job_worker.py`, `app/services/artifact_lifecycle.py`
 - Unstructured integration boundary: `app/integrations/unstructured/`
 - Local debug config example: `app/config/local_dev.example.json`
 - Service layer:
   - `app/services/create_config.py` (create form schema/coercion)
-  - `app/services/multi_format.py` (multi-format preprocessing pipeline)
+  - `app/services/multi_format.py`, `multi_format_config.py`, `multi_format_excel.py` (multi-format orchestration, configuration, and spreadsheet partitioning)
   - `app/services/bookrag_schema.py` (BookRAG table schemas, primary keys, and external relationship contract)
   - `app/services/bookrag_document_relations.py` (`bdrel` suggestion, validation, persistence, and CRUD)
   - `app/services/bookrag_integrity.py` (per-document relationship validation before persistence)
@@ -847,7 +856,7 @@ sequenceDiagram
 - Static assets: `app/static/`
 - Upload directories:
   - Documents: `uploads/documents/`
-  - PEM: `uploads/pem/`
+  - Encrypted PEM source: SQLite; restricted SDK materialization: `pem_runtime/`
 - Optional environment source:
   - `../VS_Basics_Full_Kit/vars-vs_demo.json`
 
@@ -859,7 +868,6 @@ sequenceDiagram
 - `POST /admin/users/{username}/toggle`, `/role`, `/password`
 - `GET /admin/users/export`, `POST /admin/users/import`
 - `POST /ui/evs/connect`, `POST /ui/evs/reset`
-- `POST /ui/evs/upload-pem`
 - `POST /ui/evs/health`, `POST /ui/evs/list`
 - `POST /ui/chat/vs-list`
 - `POST /ui/evs/select`, `POST /ui/evs/destroy`
@@ -871,6 +879,8 @@ sequenceDiagram
 - `GET /ui/admin/document-relations/export`
 - `GET /api/bookrag/schema`, `GET|POST /api/bookrag/retrieve`, `GET|POST /api/bookrag/answer`
 - `GET /healthz`
+
+Schema, backup, artifact, and worker commands are documented in [Operations](docs/operations.md). Module dependency rules and the current single-worker constraint are documented in [Architecture](docs/architecture.md).
 
 ## Health Check
 

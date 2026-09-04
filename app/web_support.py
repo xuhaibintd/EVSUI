@@ -785,6 +785,8 @@ def initialize_app_state(app, templates, *, settings: Settings | None = None) ->
         allow_generated_credential_key=not resolved_settings.is_production,
     )
     auth_store.initialize()
+    if resolved_settings.is_production:
+        auth_store.credential_vault.cipher()
     legacy_users = _load_auth_users()
     if not legacy_users:
         fallback_username, fallback_password = poc_admin_credentials()

@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from app.db.backup import backup_database
 from app.db.migrations import LATEST_SCHEMA_VERSION, migrate_database, migration_status
 
 
@@ -47,6 +48,30 @@ class MigrationTests(unittest.TestCase):
             migrate_database(database_path)
 
             self.assertEqual(migrate_database(database_path), [])
+
+    def test_online_backup_contains_committed_database_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            database_path = Path(tmpdir) / "evsui.db"
+            backup_path = Path(tmpdir) / "backup" / "evsui.db"
+            migrate_database(database_path)
+            connection = sqlite3.connect(database_path)
+            try:
+                connection.execute(
+                    "INSERT INTO schema_versions(version, applied_at) VALUES(999, 1)"
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            result = backup_database(database_path, backup_path)
+
+            self.assertEqual(result, backup_path.resolve())
+            backup = sqlite3.connect(backup_path)
+            try:
+                row = backup.execute("SELECT applied_at FROM schema_versions WHERE version=999").fetchone()
+            finally:
+                backup.close()
+            self.assertEqual(row, (1,))
 
     def test_existing_pre_pem_schema_is_upgraded_without_data_loss(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

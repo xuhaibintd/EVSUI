@@ -10,6 +10,7 @@ from app.db.sqlite import SQLiteDatabase
 from app.repositories import ArtifactRepository, JobRepository
 from app.services.artifact_lifecycle import ArtifactLifecycle
 from app.services.job_worker import PersistentJobWorker
+from app.services.maintenance_jobs import ARTIFACT_CLEANUP_JOB, build_maintenance_job_handlers
 
 
 class JobsAndArtifactsTests(unittest.TestCase):
@@ -50,6 +51,25 @@ class JobsAndArtifactsTests(unittest.TestCase):
 
             self.assertEqual(completed["status"], "failed")
             self.assertNotIn("secret-value", completed["error"])
+
+    def test_maintenance_worker_runs_cleanup_as_a_persistent_job(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            database = self._database(tmpdir)
+            jobs = JobRepository(database)
+            upload_root = Path(tmpdir) / "uploads"
+            upload_root.mkdir()
+            lifecycle = ArtifactLifecycle(ArtifactRepository(database), root=upload_root)
+            jobs.create(kind=ARTIFACT_CLEANUP_JOB, payload={"apply": False})
+            worker = PersistentJobWorker(
+                jobs,
+                handlers=build_maintenance_job_handlers(lifecycle, cleanup_enabled=False),
+            )
+
+            completed = worker.run_once()
+
+            self.assertEqual(completed["status"], "succeeded")
+            self.assertFalse(completed["result"]["apply"])
+            self.assertEqual(completed["result"]["candidate_count"], 0)
 
     def test_artifact_cleanup_is_dry_run_by_default_and_root_scoped(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

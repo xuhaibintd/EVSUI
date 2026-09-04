@@ -1,0 +1,13 @@
+.git
+.github
+.venv
+__pycache__
+*.pyc
+.env
+data
+uploads
+pem_runtime
+app/config/local_dev.json
+app/config/auth_users.json
+app/config/unstructured.json
+app/config/unstructured_models.json

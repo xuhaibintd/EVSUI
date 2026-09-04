@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.core.errors import configure_error_handlers
 from app.core.security import SecurityMiddleware, redact_sensitive_text
 
 
@@ -62,6 +63,24 @@ class SecurityTests(unittest.TestCase):
             response = client.post("/mutate")
 
         self.assertEqual(response.status_code, 403)
+
+    def test_unexpected_api_error_returns_request_id_without_secret(self) -> None:
+        app = FastAPI()
+        configure_error_handlers(app)
+
+        @app.get("/api/fail")
+        async def fail():
+            raise RuntimeError("password=should-not-leak")
+
+        with self.assertLogs("evsui.errors", level="ERROR") as captured:
+            with TestClient(app, raise_server_exceptions=False) as client:
+                response = client.get("/api/fail", headers={"X-Request-ID": "req-123"})
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.headers["x-request-id"], "req-123")
+        self.assertEqual(response.json(), {"detail": "Internal server error", "request_id": "req-123"})
+        self.assertNotIn("should-not-leak", response.text)
+        self.assertNotIn("should-not-leak", "\n".join(captured.output))
 
 
 if __name__ == "__main__":

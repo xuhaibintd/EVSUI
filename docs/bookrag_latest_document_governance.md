@@ -55,7 +55,7 @@ MUBKWM_bk_retrieval_v: 旧版を除外し、publication_date 順の latest_rank 
 
 ## Operations
 
-1. Open `Administration > Business Configuration > Document Metadata`.
+1. Open `BookRAG Governance > Document Governance > Document Metadata`.
 2. Select the vector store and run `Auto-fill Metadata`.
 3. Confirm rows whose source is `filename` and status is `review`; correct the publication date when necessary.
 4. In `Document Relationships`, register `new document --updates--> old document` for revisions.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -8,11 +9,27 @@ from app.services.multi_format_excel import (
     build_excel_headers,
     excel_column_name,
     partition_excel_chunks,
+    read_excel_sheet_rows,
     split_text_with_overlap,
 )
 
 
 class MultiFormatExcelTests(unittest.TestCase):
+    def test_reads_a_real_xlsx_workbook(self) -> None:
+        import pandas as pd
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workbook = Path(tmpdir) / "sample.xlsx"
+            pd.DataFrame([["Name", "Amount"], ["Sales", 120]]).to_excel(
+                workbook,
+                index=False,
+                header=False,
+            )
+
+            sheets = read_excel_sheet_rows(workbook)
+
+        self.assertEqual(sheets, [("Sheet1", [(1, ["Name", "Amount"]), (2, ["Sales", "120"])])])
+
     def test_column_names_and_duplicate_headers_are_stable(self) -> None:
         self.assertEqual(excel_column_name(1), "A")
         self.assertEqual(excel_column_name(27), "AA")

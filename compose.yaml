@@ -1,0 +1,18 @@
+services:
+  evsui:
+    build: .
+    ports:
+      - "8010:8010"
+    environment:
+      EVSUI_ENVIRONMENT: production
+      WEB_CONCURRENCY: "1"
+      EVSUI_CREDENTIAL_KEY: "${EVSUI_CREDENTIAL_KEY:?Set EVSUI_CREDENTIAL_KEY}"
+      EVSUI_BOOTSTRAP_ADMIN: "${EVSUI_BOOTSTRAP_ADMIN:-admin}"
+      EVSUI_BOOTSTRAP_PASSWORD: "${EVSUI_BOOTSTRAP_PASSWORD:?Set EVSUI_BOOTSTRAP_PASSWORD}"
+      EVSUI_EXTERNAL_API_ENABLED: "${EVSUI_EXTERNAL_API_ENABLED:-false}"
+      EVSUI_API_TOKEN: "${EVSUI_API_TOKEN:-}"
+    volumes:
+      - ./data:/app/data
+      - ./uploads:/app/uploads
+      - ./pem_runtime:/app/pem_runtime
+    restart: unless-stopped
