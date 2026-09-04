@@ -11,6 +11,7 @@ from app.repositories import ArtifactRepository, JobRepository
 from app.services.artifact_lifecycle import ArtifactLifecycle
 from app.services.job_worker import PersistentJobWorker
 from app.services.maintenance_jobs import ARTIFACT_CLEANUP_JOB, build_maintenance_job_handlers
+from app.services.credential_vault import CredentialVault
 
 
 class JobsAndArtifactsTests(unittest.TestCase):
@@ -51,6 +52,58 @@ class JobsAndArtifactsTests(unittest.TestCase):
 
             self.assertEqual(completed["status"], "failed")
             self.assertNotIn("secret-value", completed["error"])
+
+    def test_sensitive_payload_is_encrypted_and_removed_after_completion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            database = self._database(tmpdir)
+            vault = CredentialVault(
+                database_path=database.path,
+                runtime_dir=Path(tmpdir) / "pem_runtime",
+            )
+            jobs = JobRepository(database, credential_vault=vault)
+            created = jobs.create(
+                kind="secret",
+                payload={"name": "demo"},
+                secret_payload={"provider_api_key": "never-plaintext"},
+            )
+            self.assertEqual(created["secret_payload"], {})
+            with database.connect() as connection:
+                stored = connection.execute(
+                    "SELECT payload_json, secret_payload_ciphertext FROM jobs WHERE id=?",
+                    (created["id"],),
+                ).fetchone()
+            self.assertNotIn("never-plaintext", stored["payload_json"])
+            self.assertNotIn("never-plaintext", stored["secret_payload_ciphertext"])
+
+            claimed = jobs.claim_next(kinds={"secret"})
+            self.assertEqual(claimed["secret_payload"]["provider_api_key"], "never-plaintext")
+            jobs.succeed(created["id"], {"ok": True})
+
+            with database.connect() as connection:
+                ciphertext = connection.execute(
+                    "SELECT secret_payload_ciphertext FROM jobs WHERE id=?",
+                    (created["id"],),
+                ).fetchone()[0]
+            self.assertEqual(ciphertext, "")
+
+    def test_worker_does_not_persist_a_secret_echoed_by_a_handler(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            database = self._database(tmpdir)
+            vault = CredentialVault(
+                database_path=database.path,
+                runtime_dir=Path(tmpdir) / "pem_runtime",
+            )
+            jobs = JobRepository(database, credential_vault=vault)
+            jobs.create(
+                kind="echo",
+                secret_payload={"provider_api_key": "runtime-only-secret"},
+            )
+            completed = PersistentJobWorker(
+                jobs,
+                handlers={"echo": lambda payload, _heartbeat: {"message": payload["provider_api_key"]}},
+            ).run_once()
+
+            self.assertNotIn("runtime-only-secret", str(completed["result"]))
 
     def test_maintenance_worker_runs_cleanup_as_a_persistent_job(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import csv
 import io
 from pathlib import Path
@@ -10,12 +9,26 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from app.core.security import redact_sensitive_text
 from app.routers.auth import router as auth_router
+from app.routers.jobs import (
+    queue_workflow_job,
+    render_job_progress,
+    router as jobs_router,
+)
 from app.routers.system_admin import router as system_admin_router
 from app.services.bookrag_section_rules import (
     BOOKRAG_SECTION_RULES_PATH,
     save_bookrag_section_rules,
 )
 from app.services.unstructured_json_inspector import build_unstructured_json_inspector_context
+from app.services.workflow_jobs import (
+    BOOKRAG_CSV_GENERATE_JOB,
+    BOOKRAG_CSV_LOAD_JOB,
+    BOOKRAG_PARSE_JOB,
+    MULTI_FORMAT_CSV_GENERATE_JOB,
+    MULTI_FORMAT_CSV_LOAD_JOB,
+    MULTI_FORMAT_PARSE_JOB,
+    VECTOR_STORE_CREATE_JOB,
+)
 from app.services.bookrag_document_relations import (
     BOOKRAG_DOCUMENT_RELATION_TYPES,
     delete_document_relation,
@@ -41,12 +54,6 @@ from app.services.doc_modes.constants import collect_doc_pipeline_ui_values
 from app.services.multi_format import (
     list_bookrag_csv_runs,
     list_multi_format_csv_runs,
-    run_bookrag_csv_load,
-    run_bookrag_document_parsing,
-    run_bookrag_json_to_csv,
-    run_multi_format_csv_load,
-    run_multi_format_document_parsing,
-    run_multi_format_json_to_csv,
 )
 from app.teradata_runtime import (
     TERADATA_IMPORT_ERROR,
@@ -98,6 +105,7 @@ from app.workflows.destroy_flow import handle_destroy_selected
 router = APIRouter()
 router.include_router(auth_router)
 router.include_router(system_admin_router)
+router.include_router(jobs_router)
 
 
 def _session_principal(request: Request):
@@ -652,28 +660,16 @@ async def parse_documents_for_create(request: Request):
     create_values.update(collect_doc_pipeline_ui_values(form, field_max_len=CREATE_FIELD_MAX_LEN))
     vector_store_name = str(form.get("vector_store_name") or "").strip()
 
-    summary = None
-    error = ""
-    try:
-        summary = await asyncio.to_thread(
-            run_bookrag_document_parsing,
-            create_values=create_values,
-            vector_store_name=vector_store_name,
-            uploaded_documents=uploaded_documents,
-            connection_params=dict(request.app.state.evs_state.get("params") or {}),
-            resolve_path_hint=_resolve_path_hint,
-        )
-    except Exception as ex:
-        error = str(ex)
-
-    return request.app.state.templates.TemplateResponse(
+    job = queue_workflow_job(
         request,
-        "partials/bookrag_document_parsing_result.html",
-        {
-            "bookrag_document_parsing": summary,
-            "bookrag_document_parsing_error": error,
+        kind=BOOKRAG_PARSE_JOB,
+        payload={
+            "create_values": create_values,
+            "vector_store_name": vector_store_name,
+            "uploaded_documents": uploaded_documents,
         },
     )
+    return render_job_progress(request, job)
 
 
 @router.post("/ui/create/generate-csv", response_class=HTMLResponse)
@@ -699,31 +695,17 @@ async def generate_csv_for_create(request: Request):
         or ""
     ).strip()
 
-    summary = None
-    error = ""
-    try:
-        summary = await asyncio.to_thread(
-            run_bookrag_json_to_csv,
-            parse_run_id=parse_run_id,
-            create_values=create_values,
-            vector_store_name=vector_store_name,
-            target_database=target_database,
-        )
-    except Exception as ex:
-        error = str(ex)
-
-    return request.app.state.templates.TemplateResponse(
+    job = queue_workflow_job(
         request,
-        "partials/bookrag_csv_generation_result.html",
-        {
-            "bookrag_csv_generation": summary,
-            "bookrag_csv_generation_error": error,
-            "bookrag_load_csv_runs": [summary] if summary and summary.get("status") == "ready" else [],
-            "bookrag_selected_load_csv_run_id": str(summary.get("csv_run_id") or "") if summary else "",
-            "bookrag_load_panel_oob": bool(summary and summary.get("status") == "ready"),
-            "evs": request.app.state.evs_state,
+        kind=BOOKRAG_CSV_GENERATE_JOB,
+        payload={
+            "parse_run_id": parse_run_id,
+            "create_values": create_values,
+            "vector_store_name": vector_store_name,
+            "target_database": target_database,
         },
     )
+    return render_job_progress(request, job)
 
 
 @router.post("/ui/create/load-csv-tables", response_class=HTMLResponse)
@@ -752,16 +734,12 @@ async def load_csv_tables(request: Request):
         if csv_run is None:
             raise RuntimeError("Select a CSV generation run in ready status.")
 
-        summary = await asyncio.to_thread(
-            run_bookrag_csv_load,
-            csv_run_id=csv_run_id,
-            execute_sql_fn=execute_sql,
+        job = queue_workflow_job(
+            request,
+            kind=BOOKRAG_CSV_LOAD_JOB,
+            payload={"csv_run_id": csv_run_id},
         )
-        request.app.state.evs_state["last_error"] = ""
-        request.app.state.evs_state["last_success"] = (
-            f"CSV run '{csv_run_id}' loaded into verified database tables."
-        )
-        _persist_active_session_state(request, request.app)
+        return render_job_progress(request, job)
     except Exception as ex:
         error = str(ex)
         request.app.state.evs_state["last_success"] = ""
@@ -771,11 +749,11 @@ async def load_csv_tables(request: Request):
         request,
         "partials/bookrag_csv_load_result.html",
         {
-            "bookrag_csv_load": summary,
+            "bookrag_csv_load": None,
             "bookrag_csv_load_error": error,
-            "bookrag_loaded_csv_runs": [summary] if summary else [],
-            "bookrag_selected_loaded_csv_run_id": csv_run_id if summary else "",
-            "bookrag_vector_name_oob": bool(summary),
+            "bookrag_loaded_csv_runs": [],
+            "bookrag_selected_loaded_csv_run_id": "",
+            "bookrag_vector_name_oob": False,
             "create_values": getattr(request.app.state, "create_form_values", {}),
             "evs": request.app.state.evs_state,
         },
@@ -790,24 +768,18 @@ async def parse_multi_format_documents_for_create(request: Request):
     form = await request.form()
     create_values = default_create_values()
     create_values.update(collect_doc_pipeline_ui_values(form, field_max_len=CREATE_FIELD_MAX_LEN))
-    summary = None
-    error = ""
-    try:
-        summary = await asyncio.to_thread(
-            run_multi_format_document_parsing,
-            create_values=create_values,
-            vector_store_name=str(form.get("vector_store_name") or "").strip(),
-            uploaded_documents=[dict(item) for item in request.app.state.document_uploads],
-            connection_params=dict(request.app.state.evs_state.get("params") or {}),
-            resolve_path_hint=_resolve_path_hint,
-        )
-    except Exception as ex:
-        error = str(ex)
-    return request.app.state.templates.TemplateResponse(
+    vector_store_name = str(form.get("vector_store_name") or "").strip()
+    uploaded_documents = [dict(item) for item in request.app.state.document_uploads]
+    job = queue_workflow_job(
         request,
-        "partials/multi_format_document_parsing_result.html",
-        {"multi_format_document_parsing": summary, "multi_format_document_parsing_error": error},
+        kind=MULTI_FORMAT_PARSE_JOB,
+        payload={
+            "create_values": create_values,
+            "vector_store_name": vector_store_name,
+            "uploaded_documents": uploaded_documents,
+        },
     )
+    return render_job_progress(request, job)
 
 
 @router.post("/ui/create/multi-format/generate-csv", response_class=HTMLResponse)
@@ -823,34 +795,23 @@ async def generate_multi_format_csv_for_create(request: Request):
     ).strip()
     evs_state = getattr(request.app.state, "evs_state", {}) or {}
     connection_params = dict(evs_state.get("params") or {})
-    summary = None
-    error = ""
-    try:
-        summary = await asyncio.to_thread(
-            run_multi_format_json_to_csv,
-            parse_run_id=parse_run_id,
-            vector_store_name=str(form.get("multi_format_csv_vector_store_name") or "").strip(),
-            target_database=str(
-                form.get("multi_format_csv_target_database")
-                or form.get("target_database")
-                or connection_params.get("username")
-                or ""
-            ).strip(),
-        )
-    except Exception as ex:
-        error = str(ex)
-    return request.app.state.templates.TemplateResponse(
+    vector_store_name = str(form.get("multi_format_csv_vector_store_name") or "").strip()
+    target_database = str(
+        form.get("multi_format_csv_target_database")
+        or form.get("target_database")
+        or connection_params.get("username")
+        or ""
+    ).strip()
+    job = queue_workflow_job(
         request,
-        "partials/multi_format_csv_generation_result.html",
-        {
-            "multi_format_csv_generation": summary,
-            "multi_format_csv_generation_error": error,
-            "multi_format_load_csv_runs": [summary] if summary and summary.get("status") == "ready" else [],
-            "multi_format_selected_load_csv_run_id": str(summary.get("csv_run_id") or "") if summary else "",
-            "multi_format_load_panel_oob": bool(summary and summary.get("status") == "ready"),
-            "evs": request.app.state.evs_state,
+        kind=MULTI_FORMAT_CSV_GENERATE_JOB,
+        payload={
+            "parse_run_id": parse_run_id,
+            "vector_store_name": vector_store_name,
+            "target_database": target_database,
         },
     )
+    return render_job_progress(request, job)
 
 
 @router.post("/ui/create/multi-format/load-csv-table", response_class=HTMLResponse)
@@ -873,16 +834,12 @@ async def load_multi_format_csv_table(request: Request):
             raise RuntimeError(f"Teradata SQL runtime is unavailable: {TERADATA_IMPORT_ERROR}")
         if not any(item["csv_run_id"] == csv_run_id for item in list_multi_format_csv_runs()):
             raise RuntimeError("Select a Multi-Format CSV generation run in ready status.")
-        summary = await asyncio.to_thread(
-            run_multi_format_csv_load,
-            csv_run_id=csv_run_id,
-            execute_sql_fn=execute_sql,
+        job = queue_workflow_job(
+            request,
+            kind=MULTI_FORMAT_CSV_LOAD_JOB,
+            payload={"csv_run_id": csv_run_id},
         )
-        request.app.state.evs_state["last_error"] = ""
-        request.app.state.evs_state["last_success"] = (
-            f"Multi-Format CSV run '{csv_run_id}' loaded into the verified unstructured table."
-        )
-        _persist_active_session_state(request, request.app)
+        return render_job_progress(request, job)
     except Exception as ex:
         error = str(ex)
         request.app.state.evs_state["last_success"] = ""
@@ -891,11 +848,11 @@ async def load_multi_format_csv_table(request: Request):
         request,
         "partials/multi_format_csv_load_result.html",
         {
-            "multi_format_csv_load": summary,
+            "multi_format_csv_load": None,
             "multi_format_csv_load_error": error,
-            "multi_format_loaded_csv_runs": [summary] if summary else [],
-            "multi_format_selected_loaded_csv_run_id": csv_run_id if summary else "",
-            "multi_format_vector_name_oob": bool(summary),
+            "multi_format_loaded_csv_runs": [],
+            "multi_format_selected_loaded_csv_run_id": "",
+            "multi_format_vector_name_oob": False,
             "create_values": getattr(request.app.state, "create_form_values", {}),
             "evs": request.app.state.evs_state,
         },
@@ -1113,6 +1070,16 @@ async def upload_and_prepare_create(request: Request):
         return HTMLResponse("Unauthorized", status_code=401)
     _activate_session_state(request, request.app)
     is_htmx = request.headers.get("HX-Request", "").lower() == "true"
+
+    def enqueue_create(command: dict):
+        job = queue_workflow_job(request, kind=VECTOR_STORE_CREATE_JOB, payload=command)
+        request.app.state.evs_state["last_error"] = ""
+        request.app.state.evs_state["last_success"] = ""
+        request.app.state.evs_state["last_notice"] = (
+            f"Vector Store creation queued as job {job['id']}."
+        )
+        return render_job_progress(request, job)
+
     response = await handle_upload_and_prepare_create(
         request,
         request.app,
@@ -1127,6 +1094,7 @@ async def upload_and_prepare_create(request: Request):
         is_vectorstore_already_exists_error_fn=_is_vectorstore_already_exists_error,
         verify_vectorstore_exists_fn=_verify_vectorstore_exists,
         append_connect_step=_append_connect_step,
+        enqueue_create_fn=enqueue_create,
     )
     _register_document_artifacts(request, list(request.app.state.document_uploads or []))
     _persist_active_session_state(request, request.app)

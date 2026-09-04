@@ -143,32 +143,29 @@ class DocumentParseRouteTests(unittest.IsolatedAsyncioTestCase):
                     "multi_format_bookrag_ocr_languages": "jpn",
                 }
 
-        captured_response = {}
-
-        def template_response(request, template_name, context):
-            captured_response.update(template=template_name, context=context)
-            return captured_response
-
         uploads = [{"doc_id": "doc-1", "saved_path": "uploads/documents/doc-1/sample.pdf"}]
         app = SimpleNamespace(
             state=SimpleNamespace(
                 document_uploads=uploads,
                 evs_state={"params": {"unstructured_api_key": "key"}},
-                templates=SimpleNamespace(TemplateResponse=template_response),
             )
         )
-        summary = {"status": "ok", "file_count": 1, "success_count": 1, "failure_count": 0}
+        job = {"id": "job-1", "kind": "bookrag.documents.parse", "status": "queued"}
 
         with mock.patch.object(web_router_module, "_is_logged_in", return_value=True), mock.patch.object(
             web_router_module, "_activate_session_state"
         ), mock.patch.object(
-            web_router_module, "run_bookrag_document_parsing", return_value=summary
-        ) as parse_mock:
+            web_router_module, "queue_workflow_job", return_value=job
+        ) as queue_mock, mock.patch.object(
+            web_router_module, "render_job_progress", return_value={"job": job}
+        ) as render_mock:
             response = await web_router_module.parse_documents_for_create(Request(app))
 
-        self.assertEqual(response["template"], "partials/bookrag_document_parsing_result.html")
-        self.assertEqual(response["context"]["bookrag_document_parsing"], summary)
-        call_kwargs = parse_mock.call_args.kwargs
+        self.assertEqual(response, {"job": job})
+        render_mock.assert_called_once_with(mock.ANY, job)
+        call_kwargs = queue_mock.call_args.kwargs
+        self.assertEqual(call_kwargs["kind"], "bookrag.documents.parse")
+        call_kwargs = call_kwargs["payload"]
         self.assertEqual(call_kwargs["vector_store_name"], "demo_vs")
         self.assertEqual(call_kwargs["uploaded_documents"], uploads)
         self.assertEqual(call_kwargs["create_values"]["multi_format_bookrag_strategy"], "vlm")
@@ -188,35 +185,31 @@ class DocumentParseRouteTests(unittest.IsolatedAsyncioTestCase):
                     "multi_format_bookrag_generate_raw": "true",
                 }
 
-        captured_response = {}
-
-        def template_response(request, template_name, context):
-            captured_response.update(template=template_name, context=context)
-            return captured_response
-
         app = SimpleNamespace(
             state=SimpleNamespace(
                 evs_state={"params": {"username": "fallback_schema"}},
-                templates=SimpleNamespace(TemplateResponse=template_response),
             )
         )
-        summary = {"status": "ready", "file_count": 2, "success_count": 2, "failure_count": 0}
+        job = {"id": "job-2", "kind": "bookrag.csv.generate", "status": "queued"}
 
         with mock.patch.object(web_router_module, "_is_logged_in", return_value=True), mock.patch.object(
             web_router_module, "_activate_session_state"
         ), mock.patch.object(
-            web_router_module, "run_bookrag_json_to_csv", return_value=summary
-        ) as csv_mock:
+            web_router_module, "queue_workflow_job", return_value=job
+        ) as queue_mock, mock.patch.object(
+            web_router_module, "render_job_progress", return_value={"job": job}
+        ) as render_mock:
             response = await web_router_module.generate_csv_for_create(Request(app))
 
-        self.assertEqual(response["template"], "partials/bookrag_csv_generation_result.html")
-        self.assertEqual(response["context"]["bookrag_csv_generation"], summary)
-        self.assertEqual(response["context"]["bookrag_load_csv_runs"], [summary])
-        self.assertTrue(response["context"]["bookrag_load_panel_oob"])
-        self.assertEqual(csv_mock.call_args.kwargs["parse_run_id"], "current-run")
-        self.assertEqual(csv_mock.call_args.kwargs["vector_store_name"], "demo_vs")
-        self.assertEqual(csv_mock.call_args.kwargs["target_database"], "demo_schema")
-        self.assertEqual(csv_mock.call_args.kwargs["create_values"]["multi_format_bookrag_generate_raw"], "true")
+        self.assertEqual(response, {"job": job})
+        render_mock.assert_called_once_with(mock.ANY, job)
+        call_kwargs = queue_mock.call_args.kwargs
+        self.assertEqual(call_kwargs["kind"], "bookrag.csv.generate")
+        payload = call_kwargs["payload"]
+        self.assertEqual(payload["parse_run_id"], "current-run")
+        self.assertEqual(payload["vector_store_name"], "demo_vs")
+        self.assertEqual(payload["target_database"], "demo_schema")
+        self.assertEqual(payload["create_values"]["multi_format_bookrag_generate_raw"], "true")
 
     async def test_load_route_only_loads_and_verifies_database_tables(self):
         class Request:
@@ -228,57 +221,31 @@ class DocumentParseRouteTests(unittest.IsolatedAsyncioTestCase):
                     "bookrag_csv_run_id": "csv-run-1",
                 }
 
-        captured_response = {}
-        events = []
-
-        def template_response(request, template_name, context):
-            captured_response.update(template=template_name, context=context)
-            return captured_response
-
         app = SimpleNamespace(
             state=SimpleNamespace(
                 evs_state={"connected": True, "params": {}, "last_success": "", "last_error": ""},
-                templates=SimpleNamespace(TemplateResponse=template_response),
             )
         )
-        load_summary = {
-            "status": "ready",
-            "csv_run_id": "csv-run-1",
-            "vector_store_name": "demo_vs",
-            "target_database": "demo_schema",
-            "node_table": "demo_schema.demo_vs_bk_bnode",
-            "inserted_rows": 20,
-            "task_count": 4,
-            "workers": 4,
-            "elapsed_seconds": 10,
-            "warnings": [],
-        }
-
-        def run_load(**kwargs):
-            events.append("load")
-            return load_summary
-
-        vector_store_mock = mock.Mock()
+        job = {"id": "job-3", "kind": "bookrag.csv.load", "status": "queued"}
         with mock.patch.object(web_router_module, "_is_logged_in", return_value=True), mock.patch.object(
             web_router_module, "_activate_session_state"
         ), mock.patch.object(
             web_router_module, "list_bookrag_csv_runs", return_value=[{"csv_run_id": "csv-run-1", "vector_store_name": "demo_vs"}]
         ), mock.patch.object(
-            web_router_module, "run_bookrag_csv_load", side_effect=run_load
-        ), mock.patch.object(
-            web_router_module, "VectorStore", vector_store_mock
-        ), mock.patch.object(
+            web_router_module, "queue_workflow_job", return_value=job
+        ) as queue_mock, mock.patch.object(
+            web_router_module, "render_job_progress", return_value={"job": job}
+        ) as render_mock, mock.patch.object(
             web_router_module, "execute_sql", mock.Mock()
         ), mock.patch.object(
             web_router_module, "_persist_active_session_state"
         ):
             response = await web_router_module.load_csv_tables(Request(app))
 
-        self.assertEqual(events, ["load"])
-        vector_store_mock.assert_not_called()
-        self.assertEqual(response["template"], "partials/bookrag_csv_load_result.html")
-        self.assertEqual(response["context"]["bookrag_csv_load"], load_summary)
-        self.assertEqual(response["context"]["bookrag_loaded_csv_runs"], [load_summary])
+        self.assertEqual(response, {"job": job})
+        render_mock.assert_called_once_with(mock.ANY, job)
+        self.assertEqual(queue_mock.call_args.kwargs["kind"], "bookrag.csv.load")
+        self.assertEqual(queue_mock.call_args.kwargs["payload"], {"csv_run_id": "csv-run-1"})
 
     async def test_load_route_never_creates_vector_store_when_csv_loading_fails(self):
         class Request:
@@ -303,23 +270,22 @@ class DocumentParseRouteTests(unittest.IsolatedAsyncioTestCase):
                 templates=SimpleNamespace(TemplateResponse=template_response),
             )
         )
-        vector_store_mock = mock.Mock()
         with mock.patch.object(web_router_module, "_is_logged_in", return_value=True), mock.patch.object(
             web_router_module, "_activate_session_state"
         ), mock.patch.object(
             web_router_module, "list_bookrag_csv_runs", return_value=[{"csv_run_id": "csv-run-1", "vector_store_name": "demo_vs"}]
         ), mock.patch.object(
-            web_router_module, "run_bookrag_csv_load", side_effect=RuntimeError("one CSV failed")
-        ), mock.patch.object(
-            web_router_module, "VectorStore", vector_store_mock
-        ), mock.patch.object(
+            web_router_module, "queue_workflow_job", side_effect=RuntimeError("job queue unavailable")
+        ) as queue_mock, mock.patch.object(
             web_router_module, "execute_sql", mock.Mock()
+        ), mock.patch.object(
+            web_router_module, "render_job_progress"
         ):
             response = await web_router_module.load_csv_tables(Request(app))
 
-        vector_store_mock.assert_not_called()
+        queue_mock.assert_called_once()
         self.assertEqual(response["template"], "partials/bookrag_csv_load_result.html")
-        self.assertIn("one CSV failed", response["context"]["bookrag_csv_load_error"])
+        self.assertIn("job queue unavailable", response["context"]["bookrag_csv_load_error"])
 
 
 class ConnectPanelTemplateTests(unittest.TestCase):

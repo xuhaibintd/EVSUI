@@ -30,6 +30,19 @@ def _env_int(name: str, default: int, *, minimum: int = 1) -> int:
     return value
 
 
+def _env_float(name: str, default: float, *, minimum: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = float(raw)
+    except ValueError as ex:
+        raise RuntimeError(f"{name} must be a number.") from ex
+    if value < minimum:
+        raise RuntimeError(f"{name} must be at least {minimum:g}.")
+    return value
+
+
 @dataclass(frozen=True)
 class Settings:
     environment: str
@@ -46,6 +59,8 @@ class Settings:
     artifact_retention_days: int
     artifact_cleanup_enabled: bool
     job_stale_seconds: int
+    vectorstore_ready_timeout_seconds: float
+    vectorstore_ready_poll_seconds: float
 
     @property
     def is_production(self) -> bool:
@@ -92,6 +107,12 @@ class Settings:
             artifact_retention_days=_env_int("EVSUI_ARTIFACT_RETENTION_DAYS", 30),
             artifact_cleanup_enabled=_env_bool("EVSUI_ARTIFACT_CLEANUP_ENABLED", False),
             job_stale_seconds=_env_int("EVSUI_JOB_STALE_SECONDS", 15 * 60, minimum=60),
+            vectorstore_ready_timeout_seconds=_env_float(
+                "EVS_VECTORSTORE_READY_TIMEOUT_SECONDS", 7200.0, minimum=60.0
+            ),
+            vectorstore_ready_poll_seconds=_env_float(
+                "EVS_VECTORSTORE_READY_POLL_SECONDS", 5.0, minimum=0.1
+            ),
         )
 
     def validate_runtime(self) -> None:

@@ -16,3 +16,25 @@ services:
       - ./uploads:/app/uploads
       - ./pem_runtime:/app/pem_runtime
     restart: unless-stopped
+  worker:
+    build: .
+    command: ["python", "-m", "app.worker"]
+    depends_on:
+      evsui:
+        condition: service_healthy
+    environment:
+      EVSUI_ENVIRONMENT: production
+      WEB_CONCURRENCY: "1"
+      EVSUI_CREDENTIAL_KEY: "${EVSUI_CREDENTIAL_KEY:?Set EVSUI_CREDENTIAL_KEY}"
+      EVSUI_ARTIFACT_CLEANUP_ENABLED: "${EVSUI_ARTIFACT_CLEANUP_ENABLED:-false}"
+      EVSUI_ARTIFACT_RETENTION_DAYS: "${EVSUI_ARTIFACT_RETENTION_DAYS:-30}"
+      EVSUI_JOB_STALE_SECONDS: "${EVSUI_JOB_STALE_SECONDS:-900}"
+      EVS_VECTORSTORE_READY_TIMEOUT_SECONDS: "${EVS_VECTORSTORE_READY_TIMEOUT_SECONDS:-7200}"
+      EVS_VECTORSTORE_READY_POLL_SECONDS: "${EVS_VECTORSTORE_READY_POLL_SECONDS:-5}"
+    volumes:
+      - ./data:/app/data
+      - ./uploads:/app/uploads
+      - ./pem_runtime:/app/pem_runtime
+    healthcheck:
+      disable: true
+    restart: unless-stopped

@@ -126,7 +126,7 @@ class AuthStore:
             self.database,
             ttl_seconds=self.session_ttl_seconds,
         )
-        self.jobs = JobRepository(self.database)
+        self.jobs = JobRepository(self.database, credential_vault=self.credential_vault)
         self.artifacts = ArtifactRepository(self.database)
         self.external_services = ExternalServiceRepository(self.database, self.credential_vault)
 

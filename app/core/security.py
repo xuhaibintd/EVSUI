@@ -16,6 +16,63 @@ _SENSITIVE_ASSIGNMENT = re.compile(
 )
 _BEARER_TOKEN = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+")
 _UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+_SENSITIVE_KEYS = {
+    "password",
+    "passwd",
+    "pat",
+    "pat_token",
+    "api_key",
+    "access_token",
+    "authorization",
+    "credential",
+    "secret",
+    "pem_content",
+}
+
+
+def is_sensitive_key(value: object) -> bool:
+    key = str(value or "").strip().lower()
+    return key in _SENSITIVE_KEYS or any(
+        key.endswith(suffix)
+        for suffix in ("_password", "_api_key", "_access_token", "_credential", "_secret")
+    )
+
+
+def redact_sensitive_data(value, *, secrets: Iterable[object] = ()):
+    """Recursively remove secret values while preserving a useful result shape."""
+    if isinstance(value, dict):
+        return {
+            str(key): (
+                "[REDACTED]"
+                if is_sensitive_key(key) and item is not None and item != ""
+                else redact_sensitive_data(item, secrets=secrets)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_sensitive_data(item, secrets=secrets) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redact_sensitive_data(item, secrets=secrets) for item in value)
+    if isinstance(value, str):
+        return redact_sensitive_text(value, secrets=secrets)
+    return value
+
+
+def sensitive_values(value) -> list[object]:
+    if isinstance(value, (list, tuple)):
+        found: list[object] = []
+        for item in value:
+            found.extend(sensitive_values(item))
+        return found
+    if not isinstance(value, dict):
+        return []
+    found: list[object] = []
+    for key, item in value.items():
+        if is_sensitive_key(key) and item is not None and item != "":
+            found.append(item)
+        elif isinstance(item, (dict, list, tuple)):
+            found.extend(sensitive_values(item))
+    return found
 
 
 def redact_sensitive_text(value: object, *, secrets: Iterable[object] = ()) -> str:

@@ -46,6 +46,31 @@ class SettingsTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "WEB_CONCURRENCY=1"):
             settings.validate_runtime()
 
+    def test_vectorstore_poll_settings_are_validated_centrally(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            os.environ,
+            {
+                "EVS_VECTORSTORE_READY_TIMEOUT_SECONDS": "30",
+                "EVS_VECTORSTORE_READY_POLL_SECONDS": "not-a-number",
+            },
+            clear=True,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "TIMEOUT_SECONDS must be at least 60"):
+                Settings.from_env(project_dir=Path(tmp))
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            os.environ,
+            {
+                "EVS_VECTORSTORE_READY_TIMEOUT_SECONDS": "60",
+                "EVS_VECTORSTORE_READY_POLL_SECONDS": "0.25",
+            },
+            clear=True,
+        ):
+            settings = Settings.from_env(project_dir=Path(tmp))
+
+        self.assertEqual(settings.vectorstore_ready_timeout_seconds, 60.0)
+        self.assertEqual(settings.vectorstore_ready_poll_seconds, 0.25)
+
 
 if __name__ == "__main__":
     unittest.main()

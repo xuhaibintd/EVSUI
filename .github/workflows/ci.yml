@@ -19,10 +19,16 @@ jobs:
           python-version: "3.11"
           cache: pip
       - name: Install dependencies
-        run: python -m pip install --upgrade pip && python -m pip install -r requirements-dev.txt
+        run: python -m pip install --upgrade pip build && python -m pip install -r requirements-dev.txt
+      - name: Validate installed dependency graph
+        run: python -m pip check
       - name: Compile Python sources
-        run: python -m compileall -q app
+        run: python -m compileall -q app scripts
       - name: Static correctness checks
-        run: python -m ruff check app tests
+        run: python -m ruff check app tests scripts
       - name: Unit and route tests
         run: python -m unittest discover -s tests -q
+      - name: Build distributable wheel
+        run: python -m build --wheel
+      - name: Verify wheel excludes local runtime secrets
+        run: python scripts/verify_wheel.py

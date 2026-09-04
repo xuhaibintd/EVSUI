@@ -7,7 +7,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.core.errors import configure_error_handlers
-from app.core.security import SecurityMiddleware, redact_sensitive_text
+from app.core.security import SecurityMiddleware, redact_sensitive_data, redact_sensitive_text
+from app.services.create_config import build_create_call_preview
 
 
 class SecurityTests(unittest.TestCase):
@@ -20,6 +21,19 @@ class SecurityTests(unittest.TestCase):
         self.assertNotIn("abc123", redacted)
         self.assertNotIn("token.value", redacted)
         self.assertIn("[REDACTED]", redacted)
+
+    def test_structured_redaction_covers_nested_provider_keys(self) -> None:
+        payload = {
+            "name": "demo",
+            "settings": {"multi_format_vlm_provider_api_key": "secret", "tokenizer": "keep"},
+        }
+
+        redacted = redact_sensitive_data(payload)
+        preview = build_create_call_preview("demo", payload)
+
+        self.assertEqual(redacted["settings"]["multi_format_vlm_provider_api_key"], "[REDACTED]")
+        self.assertEqual(redacted["settings"]["tokenizer"], "keep")
+        self.assertNotIn("secret", preview)
 
     def test_security_headers_and_cross_site_csrf_rejection(self) -> None:
         app = FastAPI()

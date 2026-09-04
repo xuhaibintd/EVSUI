@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "evsui"
-version = "0.6.0"
+version = "0.7.0"
 description = "FastAPI and HTMX interface for Teradata Vector Store workflows"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -37,13 +37,16 @@ dev = [
 [project.scripts]
 evsui-db = "app.db.__main__:main"
 evsui-ops = "app.ops.__main__:main"
+evsui-worker = "app.worker:main"
 
 [tool.setuptools.packages.find]
 include = ["app*"]
 
 [tool.setuptools.package-data]
 app = [
-  "config/*.json",
+  "config/*.example.json",
+  "config/bookrag_retrieval_policy.json",
+  "config/bookrag_section_rules.json",
   "static/**/*",
   "templates/**/*.html",
 ]

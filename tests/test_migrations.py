@@ -100,7 +100,7 @@ class MigrationTests(unittest.TestCase):
             finally:
                 connection.close()
 
-            self.assertEqual(migrate_database(database_path), [4, 5, 6, 7, 8])
+            self.assertEqual(migrate_database(database_path), list(range(4, LATEST_SCHEMA_VERSION + 1)))
 
             connection = sqlite3.connect(database_path)
             try:
@@ -111,9 +111,13 @@ class MigrationTests(unittest.TestCase):
                 host = connection.execute(
                     "SELECT host FROM system_connection_config WHERE config_id=1"
                 ).fetchone()[0]
+                job_columns = {
+                    row[1] for row in connection.execute("PRAGMA table_info(jobs)").fetchall()
+                }
             finally:
                 connection.close()
             self.assertIn("pem_ciphertext", columns)
+            self.assertIn("secret_payload_ciphertext", job_columns)
             self.assertEqual(host, "kept-host")
 
 

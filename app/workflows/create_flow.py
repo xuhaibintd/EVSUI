@@ -5,6 +5,7 @@ import json
 import os
 import time
 
+from app.core.security import redact_sensitive_data
 from app.services.create_config import (
     CORE_CREATE_FIELDS,
     CREATE_FIELDS,
@@ -167,6 +168,7 @@ async def handle_upload_and_prepare_create(
     is_vectorstore_already_exists_error_fn,
     verify_vectorstore_exists_fn,
     append_connect_step,
+    enqueue_create_fn=None,
 ):
     if not app.state.evs_state["connected"]:
         app.state.evs_state["last_success"] = ""
@@ -369,6 +371,22 @@ async def handle_upload_and_prepare_create(
     )
     warnings.extend(path_warnings)
 
+    if callable(enqueue_create_fn):
+        return enqueue_create_fn(
+            {
+                "vector_store_name": vector_store_name,
+                "create_preset": create_preset,
+                "create_mode": create_mode,
+                "doc_pipeline_mode": doc_pipeline_mode,
+                "create_values": create_values,
+                "create_payload": create_payload,
+                "exec_payload": exec_payload,
+                "create_call_preview": build_create_call_preview(vector_store_name, create_payload),
+                "uploaded_files": saved if saved else app.state.document_uploads,
+                "warnings": warnings,
+            }
+        )
+
     precheck_status_preview = ""
     if should_run_vectorstore_create and callable(verify_vectorstore_exists_fn):
         verified_existing_store = False
@@ -400,8 +418,8 @@ async def handle_upload_and_prepare_create(
                     "create_mode": create_mode,
                     "uploaded_files": saved if saved else app.state.document_uploads,
                     "warnings": warnings,
-                    "create_payload_json": json.dumps(create_payload, indent=2, ensure_ascii=False),
-                    "create_execute_payload_json": json.dumps(exec_payload, indent=2, ensure_ascii=False),
+                    "create_payload_json": json.dumps(redact_sensitive_data(create_payload), indent=2, ensure_ascii=False),
+                    "create_execute_payload_json": json.dumps(redact_sensitive_data(exec_payload), indent=2, ensure_ascii=False),
                     "create_call_preview": build_create_call_preview(vector_store_name, create_payload),
                     "execution_output_preview": "",
                     "status_output_preview": existence_check_detail,
@@ -540,8 +558,8 @@ async def handle_upload_and_prepare_create(
                 "create_mode": create_mode,
                 "uploaded_files": saved if saved else app.state.document_uploads,
                 "warnings": warnings,
-                "create_payload_json": json.dumps(create_payload, indent=2, ensure_ascii=False),
-                "create_execute_payload_json": json.dumps(exec_payload, indent=2, ensure_ascii=False),
+                "create_payload_json": json.dumps(redact_sensitive_data(create_payload), indent=2, ensure_ascii=False),
+                "create_execute_payload_json": json.dumps(redact_sensitive_data(exec_payload), indent=2, ensure_ascii=False),
                 "create_call_preview": build_create_call_preview(vector_store_name, create_payload),
                 "execution_output_preview": "",
                 "status_output_preview": precheck_status_preview,
@@ -908,8 +926,8 @@ async def handle_upload_and_prepare_create(
         "create_mode": create_mode,
         "uploaded_files": saved if saved else app.state.document_uploads,
         "warnings": warnings,
-        "create_payload_json": json.dumps(create_payload, indent=2, ensure_ascii=False),
-        "create_execute_payload_json": json.dumps(exec_payload, indent=2, ensure_ascii=False),
+        "create_payload_json": json.dumps(redact_sensitive_data(create_payload), indent=2, ensure_ascii=False),
+        "create_execute_payload_json": json.dumps(redact_sensitive_data(exec_payload), indent=2, ensure_ascii=False),
         "create_call_preview": build_create_call_preview(vector_store_name, create_payload),
         "execution_output_preview": execution_output_preview,
         "status_output_preview": status_output_preview,

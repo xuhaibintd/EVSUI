@@ -62,6 +62,8 @@ class RuntimeIsolationMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         manager = getattr(request.app.state, "teradata_runtime_manager", None)
         path = request.url.path
+        if path.startswith("/ui/jobs/"):
+            return await call_next(request)
         if manager is None or not (path.startswith("/ui/") or path.startswith("/api/bookrag")):
             return await call_next(request)
 

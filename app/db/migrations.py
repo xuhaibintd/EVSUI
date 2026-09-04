@@ -195,6 +195,12 @@ def _migration_008_external_service_configs(connection: sqlite3.Connection) -> N
     )
 
 
+def _migration_009_encrypted_job_secrets(connection: sqlite3.Connection) -> None:
+    columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(jobs)").fetchall()}
+    if "secret_payload_ciphertext" not in columns:
+        connection.execute("ALTER TABLE jobs ADD COLUMN secret_payload_ciphertext TEXT NOT NULL DEFAULT ''")
+
+
 MIGRATIONS = (
     Migration(1, "identity_and_audit", _migration_001_identity),
     Migration(2, "legacy_user_connections", _migration_002_legacy_user_connections),
@@ -204,6 +210,7 @@ MIGRATIONS = (
     Migration(6, "persistent_jobs", _migration_006_persistent_jobs),
     Migration(7, "artifacts", _migration_007_artifacts),
     Migration(8, "external_service_configs", _migration_008_external_service_configs),
+    Migration(9, "encrypted_job_secrets", _migration_009_encrypted_job_secrets),
 )
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version
 

@@ -4,6 +4,7 @@ import json
 from copy import deepcopy
 from typing import Any
 
+from app.core.security import redact_sensitive_data
 from app.services.doc_modes.constants import DOC_PIPELINE_UI_DEFAULTS
 
 
@@ -393,7 +394,7 @@ def apply_create_preset(payload: dict, preset: str, vector_store_name: str) -> N
 
 
 def build_create_call_preview(vector_store_name: str, payload: dict) -> str:
-    payload_json = json.dumps(payload, indent=2, ensure_ascii=False)
+    payload_json = json.dumps(redact_sensitive_data(payload), indent=2, ensure_ascii=False)
     return (
         f"pdf_vs = VectorStore('{vector_store_name}')\n"
         f"create_kwargs = {payload_json}\n"

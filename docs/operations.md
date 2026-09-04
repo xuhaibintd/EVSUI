@@ -9,6 +9,14 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8010
 ```
 
+Run the durable workflow worker in a second terminal:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.worker
+```
+
+Document parsing, CSV generation/loading, and Vector Store creation remain queued until a worker is running. The web process never executes these long operations inline.
+
 Run the same verification used by CI:
 
 ```powershell
@@ -26,7 +34,7 @@ Run the same verification used by CI:
 .\.venv\Scripts\python.exe -m app.db migrate
 ```
 
-Current schema version 8 contains:
+Current schema version 9 contains:
 
 | Table | Purpose |
 |---|---|
@@ -34,7 +42,7 @@ Current schema version 8 contains:
 | `users`, `sessions`, `permissions`, `audit_logs` | Identity, access, opaque server sessions, and audit events |
 | `system_connection_profiles` | Reusable Teradata profiles with encrypted password, PAT, and PEM |
 | `external_service_configs` | Shared service endpoints and encrypted API keys, currently Unstructured IO |
-| `jobs` | Durable queued/running/completed job state and progress |
+| `jobs` | Durable queued/running/completed state, progress, and transient encrypted job secrets |
 | `artifacts` | Tracked file metadata and retention state |
 | `connection_configs`, `system_connection_config` | Compatibility tables retained for migration from older releases |
 
@@ -57,13 +65,18 @@ $env:EVSUI_ARTIFACT_CLEANUP_ENABLED = "true"
 .\.venv\Scripts\python.exe -m app.ops cleanup-artifacts --apply
 ```
 
-The same cleanup can run through the durable job table:
+The same cleanup can run through the durable job table. `app.ops run-jobs` is a bounded maintenance drain; the continuous application worker is `app.worker`:
 
 ```powershell
 .\.venv\Scripts\python.exe -m app.ops enqueue-artifact-cleanup
 .\.venv\Scripts\python.exe -m app.ops run-jobs
 .\.venv\Scripts\python.exe -m app.ops jobs
+.\.venv\Scripts\python.exe -m app.worker --once
 ```
+
+The worker runs one job at a time because the Teradata SDK context is process-global. It records a heartbeat every 30 seconds even while an SDK call is blocking. On startup, jobs whose heartbeat is older than `EVSUI_JOB_STALE_SECONDS` are returned to the queue. Queued jobs can be cancelled from the UI; already-running external operations are not force-killed.
+
+Vector Store readiness is polled every `EVS_VECTORSTORE_READY_POLL_SECONDS` (default 5 seconds) for at most `EVS_VECTORSTORE_READY_TIMEOUT_SECONDS` (default 7200 seconds). A timeout marks the job failed but does not cancel remote work that Teradata has already accepted, so verify remote status before retrying.
 
 Only tracked, expired files below `uploads/` are eligible. Existing untracked files are never automatically registered or deleted.
 
@@ -73,8 +86,9 @@ Only tracked, expired files below `uploads/` are eligible. Existing untracked fi
 - Set `WEB_CONCURRENCY=1`.
 - Provide `EVSUI_CREDENTIAL_KEY` or an explicit, pre-created `EVSUI_CREDENTIAL_KEY_FILE`.
 - Mount persistent storage for `data/`, `uploads/`, and `pem_runtime/`.
+- Run exactly one `app.worker` process against each deployment database unless job kinds are explicitly partitioned.
 - Terminate HTTPS at a trusted reverse proxy and preserve `Host`, `Origin`, and `X-Forwarded-Proto` correctly.
 - Enable the external API only when needed with `EVSUI_EXTERNAL_API_ENABLED=true` and a strong `EVSUI_API_TOKEN`.
 - Schedule online database backups and dry-run artifact inventory before enabling cleanup.
 
-Do not run multiple replicas against this process-global Teradata context. Scale by moving Teradata work to isolated worker processes first.
+`compose.yaml` starts both the web application and its durable worker with the same SQLite, upload, PEM-runtime mounts, and credential key. Do not scale the worker above one while Teradata handlers share process-global SDK state.

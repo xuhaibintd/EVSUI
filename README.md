@@ -19,6 +19,7 @@ EVSUI is a `FastAPI + Jinja2 + HTMX` interface for working with Teradata Vector 
 - [Project Structure and Routes](#project-structure)
 - [Architecture](docs/architecture.md)
 - [Operations](docs/operations.md)
+- [SQLite schema](docs/database_schema.md)
 
 ## Getting Started
 
@@ -131,6 +132,14 @@ With the virtual environment active, run:
 python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8010
 ```
 
+In a second terminal, start the durable workflow worker:
+
+```powershell
+python -m app.worker
+```
+
+Document parsing, CSV loading, and Vector Store creation are queued in SQLite and rendered through UI polling, so they continue if the browser request ends.
+
 Open <http://127.0.0.1:8010> and sign in with the credentials configured in the previous step. The `--reload` option is intended for local development.
 
 To verify that the web process is running:
@@ -167,7 +176,7 @@ The expected response is `{"status":"ok"}`. This endpoint checks the EVSUI proce
    - **Multi-Format BookRAG** uses Unstructured and builds document-scoped BookRAG tables before vector creation.
 3. Set the Vector Store name, embeddings model, search algorithm, and any mode-specific settings.
 4. For either multi-format mode, complete the three visible stages in order: **Document Parsing**, **Generate CSV from JSON**, and **Load CSV to Unstructured Table** or **Load CSV to Tables**. Then select the table-ready run shown in the Vector Store name field.
-5. Select **Create Vector Store** and wait until the status reaches `Ready` or `Failed`. By default, the server keeps polling without a time-based cutoff.
+5. Select **Create Vector Store** and wait until the background job reports `Ready` or `Failed`. The default readiness timeout is two hours and can be changed with `EVS_VECTORSTORE_READY_TIMEOUT_SECONDS`.
 
 For the uploaded-file `Text PDF Only` flow, the UI does not populate `object_names` automatically. Supply the source fields required by your Teradata Vector Store configuration.
 
@@ -421,7 +430,7 @@ Section construction uses Unstructured structure metadata where available, with 
 - No auto-list on connect; list execution is manual.
 - Vector Store Creation submit validation blocks create unless `vector_store_name`, `doc_pipeline_mode`, `embeddings_model`, and a document source are present. Uploaded files and `document_files` both satisfy this check.
 - For uploaded-file create flow, `object_names` is not auto-filled by the UI.
-- Vector Store Creation does not report success when `VectorStore.create()` merely returns. By default it polls every 5 seconds (`EVS_VECTORSTORE_READY_POLL_SECONDS`) until `VectorStore.status()` reaches the terminal `Ready` or `Failed` state; there is no time-based cutoff. Operations may set `EVS_VECTORSTORE_READY_TIMEOUT_SECONDS` explicitly when an infrastructure-level request limit is required. An explicitly configured timeout is reported as still processing and leaves the CSV manifest in `creating`, because the server-side operation is not cancelled.
+- Vector Store Creation does not report success when `VectorStore.create()` merely returns. The worker polls every 5 seconds by default (`EVS_VECTORSTORE_READY_POLL_SECONDS`) until `VectorStore.status()` reaches `Ready` or `Failed`, with a two-hour default timeout (`EVS_VECTORSTORE_READY_TIMEOUT_SECONDS`). A timeout fails the durable job and records diagnostics but cannot cancel work already accepted by the remote service; operators should check the remote status before retrying.
 - After a loaded BookRAG store reaches `Ready`, the app verifies that the vector index row count matches the non-empty `bnode.content` row count. `EVS_BOOKRAG_INDEX_READY_TIMEOUT_SECONDS` can optionally add a database-visibility grace period; the default is a single immediate verification. An unavailable verification query is a warning; a successfully verified empty or incomplete index is an error.
 - If `create()` reports `already exists`, the app verifies existence with unfiltered `VSManager.list()` and only reuses the store when its current status is `Ready`.
 

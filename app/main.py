@@ -17,7 +17,7 @@ from app.web_support import initialize_app_state
 def create_app(settings: Settings | None = None) -> FastAPI:
     resolved_settings = settings or Settings.from_env()
     resolved_settings.validate_runtime()
-    application = FastAPI(title="Teradata Vector Store", version="0.6.0")
+    application = FastAPI(title="Teradata Vector Store", version="0.7.0")
     application.state.settings = resolved_settings
     configure_error_handlers(application)
     application.add_middleware(SecurityMiddleware)

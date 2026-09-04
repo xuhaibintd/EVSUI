@@ -1,0 +1,29 @@
+<div
+  class="bookrag-parse-result {% if job.status in ['failed', 'cancelled'] %}bookrag-parse-result-error{% else %}bookrag-parse-result-warn{% endif %}"
+  role="status"
+  aria-live="polite"
+  {% if job.status in ['queued', 'running'] %}
+  hx-get="/ui/jobs/{{ job.id }}"
+  hx-trigger="load delay:1500ms"
+  hx-target="this"
+  hx-swap="outerHTML"
+  {% endif %}
+>
+  <div class="bookrag-parse-result-head">
+    <strong>{{ job_label }}</strong>
+    <span>{{ job.status|capitalize }} · {{ job.progress }}%</span>
+  </div>
+  {% if job.status == 'queued' %}
+  <p>The operation is queued and will continue independently of this page.</p>
+  <button type="button" class="ghost" hx-post="/ui/jobs/{{ job.id }}/cancel" hx-target="closest div[role='status']" hx-swap="outerHTML">Cancel queued job</button>
+  {% elif job.status == 'running' %}
+  <p>The worker is processing this operation. You may leave this page safely.</p>
+  {% elif job.status == 'cancelled' %}
+  <p>This queued operation was cancelled.</p>
+  {% elif job.status == 'failed' %}
+  <p>{{ job.error or 'The background operation failed.' }}</p>
+  {% else %}
+  <p>The background operation finished.</p>
+  {% endif %}
+  <p class="muted">Job ID: {{ job.id }}</p>
+</div>
