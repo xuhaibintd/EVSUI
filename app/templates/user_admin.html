@@ -109,14 +109,14 @@
       <div class="user-section-heading">
         <div>
           <h2 id="unstructured-configuration-title">Unstructured IO</h2>
-          <p class="muted">Used by Multi Format and Multi-Format BookRAG for the current signed-in session.</p>
+          <p class="muted">Shared by all signed-in users for Multi Format and Multi-Format BookRAG. The API key is encrypted in SQLite.</p>
         </div>
         <span class="connection-config-state {% if evs.params.unstructured_api_url and unstructured_api_key_configured %}is-configured{% endif %}">{% if evs.params.unstructured_api_url and unstructured_api_key_configured %}Configured{% else %}Not configured{% endif %}</span>
       </div>
       <form class="unstructured-connection-form" method="post" action="/admin/unstructured-config">
         <label class="field">
           <span>API URL</span>
-          <input type="url" name="unstructured_api_url" value="{{ evs.params.unstructured_api_url }}" placeholder="https://platform.unstructuredapp.io/api/v1" />
+          <input type="url" name="unstructured_api_url" value="{{ unstructured_config.api_url|default('') }}" placeholder="https://platform.unstructuredapp.io/api/v1" />
         </label>
         <label class="field">
           <span>API Key</span>

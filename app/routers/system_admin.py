@@ -54,6 +54,16 @@ def _render_user_admin(
                 "detail": f"System connection configuration could not be loaded: {redact_sensitive_text(ex)}",
             }
             status_code = 500
+    try:
+        unstructured_config = request.app.state.auth_store.get_unstructured_config()
+    except Exception as ex:
+        unstructured_config = {}
+        if status is None:
+            status = {
+                "kind": "error",
+                "detail": f"Unstructured IO configuration could not be loaded: {redact_sensitive_text(ex)}",
+            }
+            status_code = 500
     return request.app.state.templates.TemplateResponse(
         request,
         "user_admin.html",
@@ -68,9 +78,8 @@ def _render_user_admin(
             "connection_profiles": connection_profiles,
             "connection_password_configured": bool(connection_config.get("password")),
             "connection_pat_configured": bool(connection_config.get("pat_token")),
-            "unstructured_api_key_configured": bool(
-                (request.app.state.evs_state.get("params") or {}).get("unstructured_api_key")
-            ),
+            "unstructured_config": unstructured_config,
+            "unstructured_api_key_configured": bool(unstructured_config.get("api_key_configured")),
             "status": status,
             "active_tab": active_tab if active_tab in {"connection", "unstructured", "users"} else "connection",
         },
@@ -210,23 +219,32 @@ async def system_unstructured_config_save(
     unstructured_api_key: str = Form(default=""),
     clear_unstructured_api_key: str = Form(default=""),
 ):
-    if _admin_principal(request) is None:
+    principal = _admin_principal(request)
+    if principal is None:
         return HTMLResponse("Forbidden", status_code=403)
     _activate_session_state(request, request.app)
-    state = request.app.state.evs_state
-    params = state.setdefault("params", {})
-    params["unstructured_api_url"] = unstructured_api_url.strip()
-    replacement_key = (unstructured_api_key or "").strip()
-    if clear_unstructured_api_key.strip().lower() in {"1", "true", "on", "yes"}:
-        params["unstructured_api_key"] = ""
-    elif replacement_key:
-        params["unstructured_api_key"] = replacement_key
-    _persist_active_session_state(request, request.app)
-    return _render_user_admin(
-        request,
-        status={"kind": "ok", "detail": "Unstructured IO configuration saved for the current session."},
-        active_tab="unstructured",
-    )
+    try:
+        saved = request.app.state.auth_store.save_unstructured_config(
+            principal.user_id,
+            api_url=unstructured_api_url,
+            api_key=unstructured_api_key,
+            clear_api_key=clear_unstructured_api_key.strip().lower() in {"1", "true", "on", "yes"},
+        )
+        for scope in request.app.state.user_sessions.values():
+            params = scope.setdefault("evs_state", {}).setdefault("params", {})
+            params["unstructured_api_url"] = str(saved.get("api_url") or "")
+            params["unstructured_api_key"] = str(saved.get("api_key") or "")
+        active_params = request.app.state.evs_state.setdefault("params", {})
+        active_params["unstructured_api_url"] = str(saved.get("api_url") or "")
+        active_params["unstructured_api_key"] = str(saved.get("api_key") or "")
+        _persist_active_session_state(request, request.app)
+        return _render_user_admin(
+            request,
+            status={"kind": "ok", "detail": "Shared Unstructured IO configuration saved."},
+            active_tab="unstructured",
+        )
+    except Exception as ex:
+        return _error_response(request, ex, tab="unstructured")
 
 
 @router.post("/admin/users/create", response_class=HTMLResponse)

@@ -177,18 +177,27 @@ def new_session_scope(username: str, default_evs_state_fn: Callable[[], dict], d
 def apply_saved_connection_config(scope: dict[str, Any], auth_store, principal) -> bool:
     if auth_store is None or principal is None:
         return False
+    loaded = False
+    params = scope.setdefault("evs_state", {}).setdefault("params", {})
     try:
         saved = auth_store.get_connection_profile()
     except Exception as ex:
         scope.setdefault("evs_state", {})["last_error"] = f"Saved connection configuration could not be loaded: {ex}"
-        return False
-    if not saved:
-        return False
-    params = scope.setdefault("evs_state", {}).setdefault("params", {})
-    params.update(saved)
-    scope["evs_state"]["selected_connection_id"] = saved.get("id")
-    scope["evs_state"]["selected_connection_name"] = saved.get("name", "")
-    return True
+    else:
+        if saved:
+            params.update(saved)
+            scope["evs_state"]["selected_connection_id"] = saved.get("id")
+            scope["evs_state"]["selected_connection_name"] = saved.get("name", "")
+            loaded = True
+    try:
+        unstructured = auth_store.get_unstructured_config()
+    except Exception as ex:
+        scope.setdefault("evs_state", {})["last_error"] = f"Unstructured IO configuration could not be loaded: {ex}"
+    else:
+        params["unstructured_api_url"] = str(unstructured.get("api_url") or "")
+        params["unstructured_api_key"] = str(unstructured.get("api_key") or "")
+        loaded = loaded or bool(params["unstructured_api_url"] or params["unstructured_api_key"])
+    return loaded
 
 
 def session_id_from_request(request: Request, session_cookie_name: str) -> str:

@@ -29,7 +29,15 @@ class MigrationTests(unittest.TestCase):
             finally:
                 connection.close()
             self.assertTrue(
-                {"users", "sessions", "audit_logs", "system_connection_profiles"}.issubset(tables)
+                {
+                    "users",
+                    "sessions",
+                    "audit_logs",
+                    "system_connection_profiles",
+                    "jobs",
+                    "artifacts",
+                    "external_service_configs",
+                }.issubset(tables)
             )
 
     def test_migration_runner_is_idempotent(self) -> None:
@@ -67,7 +75,7 @@ class MigrationTests(unittest.TestCase):
             finally:
                 connection.close()
 
-            self.assertEqual(migrate_database(database_path), [4, 5, 6, 7])
+            self.assertEqual(migrate_database(database_path), [4, 5, 6, 7, 8])
 
             connection = sqlite3.connect(database_path)
             try:

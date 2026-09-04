@@ -483,7 +483,16 @@ def _load_connect_defaults() -> dict[str, str]:
 
 def _load_session_connect_defaults() -> dict[str, str]:
     defaults = _load_connect_defaults()
-    for key in ("host", "username", "password", "ues_url", "pat_token", "pem_file"):
+    for key in (
+        "host",
+        "username",
+        "password",
+        "ues_url",
+        "pat_token",
+        "pem_file",
+        "unstructured_api_url",
+        "unstructured_api_key",
+    ):
         defaults[key] = ""
     return defaults
 
@@ -783,6 +792,7 @@ def initialize_app_state(app, templates, *, settings: Settings | None = None) ->
             legacy_users[fallback_username] = fallback_password
     auth_store.bootstrap(legacy_users)
     auth_store.bootstrap_connection_config(_load_connect_defaults())
+    auth_store.bootstrap_unstructured_config(_load_connect_defaults())
     auth_store.migrate_legacy_system_pem()
     auth_store.migrate_singleton_connection_profile()
     app.state.auth_store = auth_store

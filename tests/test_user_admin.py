@@ -11,6 +11,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.testclient import TestClient
 
 from app.auth_store import AuthStore
+from app.core.settings import Settings
 from app.routers.api import router as api_router
 from app.routers.web import router as web_router
 from app.runtime import STATIC_DIR, TEMPLATES_DIR
@@ -22,7 +23,11 @@ class UserAdminRouteTests(unittest.TestCase):
         self.tempdir = tempfile.TemporaryDirectory()
         app = FastAPI()
         app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-        initialize_app_state(app, Jinja2Templates(directory=str(TEMPLATES_DIR)))
+        initialize_app_state(
+            app,
+            Jinja2Templates(directory=str(TEMPLATES_DIR)),
+            settings=Settings.from_env(project_dir=Path(self.tempdir.name)),
+        )
         store = AuthStore(Path(self.tempdir.name) / "users.db", session_ttl_seconds=600)
         store.initialize()
         store.create_user(username="admin", password="admin-password", role="admin")
@@ -221,7 +226,7 @@ class UserAdminRouteTests(unittest.TestCase):
         self.assertIn('name="connection_id"', home.text)
         self.assertIn("Japan Lake · db.example.com · db_admin", home.text)
 
-    def test_admin_can_save_unstructured_configuration_for_current_session(self) -> None:
+    def test_admin_can_save_shared_unstructured_configuration(self) -> None:
         self._login("admin", "admin-password")
 
         response = self.client.post(
@@ -233,12 +238,15 @@ class UserAdminRouteTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("Unstructured IO configuration saved for the current session.", response.text)
+        self.assertIn("Shared Unstructured IO configuration saved.", response.text)
         self.assertIn('id="system-config-tab-unstructured" checked', response.text)
         sid = self.client.cookies.get("evsui_sid")
         params = self.app.state.user_sessions[sid]["evs_state"]["params"]
         self.assertEqual(params["unstructured_api_url"], "https://session.example/api")
         self.assertEqual(params["unstructured_api_key"], "session-key")
+        stored = self.store.get_unstructured_config()
+        self.assertEqual(stored["api_url"], "https://session.example/api")
+        self.assertEqual(stored["api_key"], "session-key")
         self.assertNotIn("session-key", response.text)
         self.assertIn("Saved — leave blank to keep", response.text)
 
@@ -251,6 +259,12 @@ class UserAdminRouteTests(unittest.TestCase):
         )
         self.assertEqual(retained.status_code, 200)
         self.assertEqual(params["unstructured_api_key"], "session-key")
+        self.client.post("/logout")
+        self._login("reader", "reader-password")
+        reader_sid = self.client.cookies.get("evsui_sid")
+        reader_params = self.app.state.user_sessions[reader_sid]["evs_state"]["params"]
+        self.assertEqual(reader_params["unstructured_api_url"], "https://updated.example/api")
+        self.assertEqual(reader_params["unstructured_api_key"], "session-key")
 
     def test_connect_uses_database_pem_with_its_original_key_id_filename(self) -> None:
         self._login("admin", "admin-password")

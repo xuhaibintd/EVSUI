@@ -10,8 +10,6 @@ from starlette.requests import Request
 
 from app.routers.api import (
     BookRAGEvidenceResponse,
-    _build_bookrag_dummy_answer,
-    _build_bookrag_dummy_data,
     _build_bookrag_llm_input,
     _build_bookrag_live_answer_or_raise,
     _has_valid_external_api_token,
@@ -20,37 +18,6 @@ from app.routers.api import (
     api_bookrag_retrieve_get,
     api_bookrag_schema,
 )
-
-
-class BookRAGApiDummyDataTests(unittest.TestCase):
-    def test_dummy_data_default_date_is_stable(self) -> None:
-        payload = _build_bookrag_dummy_data(
-            question="q",
-            vector_store_name="vs",
-            schema_name=None,
-        )
-
-        self.assertEqual(payload["dummy_date"], "2099-12-31")
-
-    def test_dummy_data_shape_is_stable(self) -> None:
-        payload = _build_bookrag_dummy_data(
-            question="What is the connectivity status?",
-            vector_store_name="demo_vs",
-            schema_name="demo_schema",
-        )
-
-        self.assertEqual(payload["status"], "dummy")
-        self.assertEqual(payload["api"], "bookrag.retrieve")
-        self.assertEqual(payload["version"], "dummy-v1")
-        self.assertEqual(payload["dummy_date"], "2099-12-31")
-        self.assertEqual(payload["question_echo"], "What is the connectivity status?")
-        self.assertEqual(payload["vector_store_name_echo"], "demo_vs")
-        self.assertEqual(payload["schema_name_echo"], "demo_schema")
-        self.assertEqual(payload["sample_entities"][0]["entity_type"], "ORGANIZATION")
-        self.assertEqual(payload["sample_entities"][3]["name"], "非金利収益")
-        self.assertEqual(payload["sample_mapping"][0]["node_id"], "node-demo-001")
-        self.assertIn("安定成長局面", payload["sample_match"]["content"])
-        self.assertEqual(payload["sample_match"]["source_element_id"], "block-demo-001")
 
 
 class BookRAGApiAnswerShapeTests(unittest.TestCase):
@@ -111,33 +78,6 @@ class BookRAGApiAnswerShapeTests(unittest.TestCase):
             payload["evidence"][0]["document_relations"][0]["related_filename"],
             "2026春号.pdf",
         )
-
-    def test_dummy_answer_contains_citations(self) -> None:
-        llm_input = {
-            "question": "決算の要点は？",
-            "instructions": [],
-            "evidence": [
-                {
-                    "rank": 1,
-                    "title": "総括",
-                    "section_title": "総括",
-                    "path": "決算短信 > 総括",
-                    "pages": [2, 2],
-                    "node_id": "node-1",
-                    "source_element_id": "block-1",
-                }
-            ],
-        }
-
-        answer = _build_bookrag_dummy_answer(
-            question="決算の要点は？",
-            llm_input=llm_input,
-        )
-
-        self.assertEqual(answer["mode"], "dummy")
-        self.assertTrue(answer["grounded"])
-        self.assertEqual(answer["citations"][0]["node_id"], "node-1")
-        self.assertIn("安定成長フェーズ", answer["text"])
 
     def test_governance_fields_survive_response_validation(self) -> None:
         payload = BookRAGEvidenceResponse.model_validate(
@@ -245,7 +185,6 @@ class BookRAGApiAccessTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["evidence"]["packages_total"], 1)
         self.assertEqual(payload["evidence"]["top_k_applied"], 5)
         self.assertEqual(payload["evidence"]["retrieval_source"], "bnode.content")
-        self.assertIsNone(payload["dummy_data"])
         self.assertEqual(payload["assistant_message"], "reply")
 
     async def test_retrieve_get_without_params_rejects_missing_auth(self) -> None:
@@ -264,6 +203,16 @@ class BookRAGApiAccessTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(ctx.exception.status_code, 401)
         self.assertEqual((ctx.exception.headers or {}).get("WWW-Authenticate"), "Bearer")
+
+    async def test_answer_get_never_falls_back_to_demo_data(self) -> None:
+        request = _build_request(headers={"x-api-key": "secret-token"})
+
+        with patch.dict(os.environ, {"EVSUI_API_TOKEN": "secret-token"}, clear=False):
+            with self.assertRaises(HTTPException) as ctx:
+                await api_bookrag_answer_get(request)
+
+        self.assertEqual(ctx.exception.status_code, 422)
+        self.assertEqual(ctx.exception.detail, "question and vector_store_name are required")
 
     async def test_answer_get_uses_live_model_when_query_params_are_present(self) -> None:
         request = _build_request(headers={"x-api-key": "secret-token", "x-request-id": "req-456"})

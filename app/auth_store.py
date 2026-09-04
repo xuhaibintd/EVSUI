@@ -15,7 +15,13 @@ from cryptography.fernet import InvalidToken
 
 from app.db.migrations import run_migrations
 from app.db.sqlite import SQLiteDatabase
-from app.repositories import ArtifactRepository, JobRepository, SessionRepository, UserRepository
+from app.repositories import (
+    ArtifactRepository,
+    ExternalServiceRepository,
+    JobRepository,
+    SessionRepository,
+    UserRepository,
+)
 from app.services.credential_vault import CredentialVault
 
 
@@ -122,6 +128,7 @@ class AuthStore:
         )
         self.jobs = JobRepository(self.database)
         self.artifacts = ArtifactRepository(self.database)
+        self.external_services = ExternalServiceRepository(self.database, self.credential_vault)
 
     def _connect(self) -> sqlite3.Connection:
         return self.database.connect()
@@ -292,6 +299,59 @@ class AuthStore:
 
     def revoke_session(self, session_id: str) -> None:
         self.sessions.revoke(session_id)
+
+    def get_unstructured_config(self) -> dict[str, Any]:
+        return self.external_services.get("unstructured") or {
+            "service_name": "unstructured",
+            "api_url": "",
+            "api_key": "",
+            "api_key_configured": False,
+        }
+
+    def save_unstructured_config(
+        self,
+        actor_user_id: int,
+        *,
+        api_url: str,
+        api_key: str | None = None,
+        clear_api_key: bool = False,
+    ) -> dict[str, Any]:
+        with self._connect() as connection:
+            user = connection.execute(
+                "SELECT username FROM users WHERE id=? AND enabled=1 AND role='admin'",
+                (int(actor_user_id),),
+            ).fetchone()
+        if user is None:
+            raise PermissionError("Unstructured IO configuration requires an enabled administrator.")
+        existing = self.get_unstructured_config()
+        stored_key = "" if clear_api_key else (
+            str(api_key or "").strip() or str(existing.get("api_key") or "")
+        )
+        saved = self.external_services.save(
+            "unstructured",
+            api_url=str(api_url or "").strip(),
+            api_key=stored_key,
+            updated_by=int(actor_user_id),
+        )
+        with self._connect() as connection:
+            self._audit_with_connection(
+                connection,
+                user_id=int(actor_user_id),
+                username=str(user["username"]),
+                action="external_service.save",
+                resource="unstructured",
+                result="ok",
+                detail="api_key_configured=" + str(bool(saved.get("api_key"))).lower(),
+            )
+        return saved
+
+    def bootstrap_unstructured_config(self, values: dict[str, Any] | None) -> bool:
+        config = values or {}
+        return self.external_services.bootstrap(
+            "unstructured",
+            api_url=str(config.get("unstructured_api_url") or config.get("api_url") or "").strip(),
+            api_key=str(config.get("unstructured_api_key") or config.get("api_key") or "").strip(),
+        )
 
     def get_system_connection_config(self) -> dict[str, Any] | None:
         with self._connect() as connection:

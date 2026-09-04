@@ -184,6 +184,34 @@ class AuthStoreTests(unittest.TestCase):
             self.assertNotIn("test-certificate", raw_payload)
             self.assertTrue(store.database_path.with_suffix(".credentials.key").exists())
 
+    def test_unstructured_config_is_shared_encrypted_and_admin_managed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._store(tmpdir)
+            admin = store.create_user(username="admin", password="admin-password", role="admin")
+            reader = store.create_user(username="reader", password="reader-password", role="viewer")
+
+            saved = store.save_unstructured_config(
+                admin.user_id,
+                api_url="https://unstructured.example/api/v1",
+                api_key="private-unstructured-key",
+            )
+
+            self.assertEqual(saved["api_url"], "https://unstructured.example/api/v1")
+            self.assertEqual(saved["api_key"], "private-unstructured-key")
+            with self.assertRaises(PermissionError):
+                store.save_unstructured_config(
+                    reader.user_id,
+                    api_url="https://forged.example/api",
+                    api_key="forged-key",
+                )
+            connection = sqlite3.connect(store.database_path)
+            try:
+                raw = str(connection.execute("SELECT * FROM external_service_configs").fetchall())
+            finally:
+                connection.close()
+            self.assertNotIn("private-unstructured-key", raw)
+            self.assertIn("https://unstructured.example/api/v1", raw)
+
     def test_legacy_pem_path_is_migrated_into_encrypted_database_storage(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = Path(tmpdir)

@@ -182,6 +182,19 @@ def _migration_007_artifacts(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migration_008_external_service_configs(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """CREATE TABLE IF NOT EXISTS external_service_configs (
+               service_name TEXT PRIMARY KEY COLLATE NOCASE,
+               api_url TEXT NOT NULL DEFAULT '',
+               api_key_ciphertext TEXT NOT NULL DEFAULT '',
+               updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+               created_at INTEGER NOT NULL,
+               updated_at INTEGER NOT NULL
+           )"""
+    )
+
+
 MIGRATIONS = (
     Migration(1, "identity_and_audit", _migration_001_identity),
     Migration(2, "legacy_user_connections", _migration_002_legacy_user_connections),
@@ -190,6 +203,7 @@ MIGRATIONS = (
     Migration(5, "connection_profiles", _migration_005_connection_profiles),
     Migration(6, "persistent_jobs", _migration_006_persistent_jobs),
     Migration(7, "artifacts", _migration_007_artifacts),
+    Migration(8, "external_service_configs", _migration_008_external_service_configs),
 )
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version
 
