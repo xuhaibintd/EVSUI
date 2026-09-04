@@ -29,7 +29,7 @@
         <div class="connection-config-empty">
           <strong>System connection is not configured.</strong>
           <span>An administrator must save the database and authentication settings before connecting.</span>
-          {% if user_role|default('viewer') == 'admin' %}<a class="chip-btn" href="/admin/users#connection-configuration">Open Administration</a>{% endif %}
+          {% if user_role|default('viewer') == 'admin' %}<a class="chip-btn" href="/admin/users#connection-configuration">Open System Configuration</a>{% endif %}
         </div>
         {% endif %}
       </fieldset>

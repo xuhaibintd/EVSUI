@@ -45,6 +45,10 @@ from app.services.multi_format_config import (
     to_bool as _to_bool,
     to_int as _to_int,
 )
+from app.services.multi_format_excel import (
+    is_excel_file as _is_excel_file,
+    partition_excel_chunks as _partition_excel_chunks_impl,
+)
 from app.services.teradata_sql import (
     ExecuteSqlFn,
     _count_teradata_rows,
@@ -57,7 +61,6 @@ from app.services.unstructured_runtime import (
     BOOKRAG_CSV_STAGE_DIR_DEFAULT,
     BOOKRAG_PDF_IMAGE_EXTENSIONS,
     BOOKRAG_RAW_STAGE_DIR_DEFAULT,
-    EXCEL_EXTENSIONS,
     MULTI_FORMAT_CSV_STAGE_DIR_DEFAULT,
     MULTI_FORMAT_RAW_STAGE_DIR_DEFAULT,
     UNSTRUCTURED_RAW_STAGE_DIR_DEFAULT,
@@ -1186,211 +1189,18 @@ def _as_int(value: Any) -> int | None:
         return None
 
 
-def _is_excel_file(src: Path) -> bool:
-    return src.suffix.lower() in EXCEL_EXTENSIONS
-
-
-def _excel_column_name(index: int) -> str:
-    label = ""
-    value = max(1, int(index))
-    while value > 0:
-        value, rem = divmod(value - 1, 26)
-        label = chr(65 + rem) + label
-    return label or "A"
-
-
-def _normalize_excel_cell_value(value: Any) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, bool):
-        return "TRUE" if value else "FALSE"
-    if isinstance(value, int):
-        return str(value)
-    if isinstance(value, float):
-        if value.is_integer():
-            return str(int(value))
-        return format(value, "g")
-    if hasattr(value, "isoformat") and not isinstance(value, str):
-        try:
-            return str(value.isoformat(sep=" "))
-        except TypeError:
-            try:
-                return str(value.isoformat())
-            except Exception:
-                pass
-    return str(value).strip()
-
-
-def _trim_excel_cells(values: list[str]) -> list[str]:
-    trimmed = list(values)
-    while trimmed and not trimmed[-1]:
-        trimmed.pop()
-    return trimmed
-
-
-def _should_use_excel_headers(rows: list[tuple[int, list[str]]]) -> bool:
-    if len(rows) < 2:
-        return False
-    first_values = rows[0][1]
-    non_empty = [value for value in first_values if value]
-    if len(non_empty) < 2:
-        return False
-    mostly_label_like = sum(1 for value in non_empty if not any(ch.isdigit() for ch in value[:24]))
-    return mostly_label_like >= max(1, len(non_empty) // 2)
-
-
-def _build_excel_headers(values: list[str]) -> list[str]:
-    seen: dict[str, Any] = {}
-    headers: list[str] = []
-    for idx, value in enumerate(values, start=1):
-        candidate = re.sub(r"\s+", " ", value).strip() or f"Column {_excel_column_name(idx)}"
-        count = seen.get(candidate, 0) + 1
-        seen[candidate] = count
-        if count > 1:
-            candidate = f"{candidate} ({count})"
-        headers.append(candidate)
-    return headers
-
-
-def _split_text_with_overlap(text: str, max_chars: int, overlap_chars: int) -> list[str]:
-    normalized = str(text or "").strip()
-    if not normalized:
-        return []
-    if max_chars <= 0 or len(normalized) <= max_chars:
-        return [normalized]
-
-    overlap_chars = max(0, min(overlap_chars, max_chars - 1))
-    parts: list[str] = []
-    start = 0
-    while start < len(normalized):
-        end = min(len(normalized), start + max_chars)
-        if end < len(normalized):
-            newline_break = normalized.rfind("\n", start, end)
-            space_break = normalized.rfind(" ", start, end)
-            break_at = max(newline_break, space_break)
-            if break_at > start + (max_chars // 2):
-                end = break_at
-        piece = normalized[start:end].strip()
-        if piece:
-            parts.append(piece)
-        if end >= len(normalized):
-            break
-        start = max(end - overlap_chars, start + 1)
-        while start < len(normalized) and normalized[start].isspace():
-            start += 1
-    return parts or [normalized[:max_chars].strip()]
-
-
-def _read_excel_sheet_rows(src: Path) -> list[tuple[str, list[tuple[int, list[str]]]]]:
-    import pandas as pd
-
-    workbook = pd.read_excel(src, sheet_name=None, header=None, dtype=object)
-    sheets: list[tuple[str, list[tuple[int, list[str]]]]] = []
-    for sheet_name, frame in workbook.items():
-        rows: list[tuple[int, list[str]]] = []
-        for row_number, row in enumerate(frame.itertuples(index=False, name=None), start=1):
-            values: list[str] = []
-            for cell in row:
-                if pd.isna(cell):
-                    values.append("")
-                else:
-                    values.append(_normalize_excel_cell_value(cell))
-            values = _trim_excel_cells(values)
-            if any(values):
-                rows.append((row_number, values))
-        if rows:
-            sheets.append((str(sheet_name), rows))
-    return sheets
-
-
 def _partition_excel_chunks(
     src: Path,
     *,
     chunk_size: int,
     chunk_overlap: int,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
-    content_type = mimetypes.guess_type(src.name)[0] or "application/octet-stream"
-    sheet_rows = _read_excel_sheet_rows(src)
-    raw_elements: list[dict[str, Any]] = []
-    table_rows: list[dict[str, Any]] = []
-    sheet_names: list[str] = []
-    logical_row_count = 0
-
-    chunk_sequence = 0
-    for sheet_name, rows in sheet_rows:
-        sheet_names.append(sheet_name)
-        use_headers = _should_use_excel_headers(rows)
-        headers = _build_excel_headers(rows[0][1]) if use_headers else []
-        data_rows = rows[1:] if use_headers and len(rows) > 1 else rows
-        for row_number, values in data_rows:
-            logical_row_count += 1
-            parts: list[str] = []
-            for idx, value in enumerate(values, start=1):
-                if not value:
-                    continue
-                header = headers[idx - 1] if idx - 1 < len(headers) else f"Column {_excel_column_name(idx)}"
-                parts.append(f"{header}: {value}")
-            if not parts:
-                continue
-
-            full_text = f"Workbook: {src.name}\nSheet: {sheet_name}\nRow: {row_number}\n" + "\n".join(parts)
-            record_id = uuid.uuid4().hex
-            record_locator = f"{src.name}#sheet={sheet_name}#row={row_number}"
-            metadata = {
-                "record_id": record_id,
-                "filename": src.name,
-                "file_directory": str(src.parent),
-                "filetype": content_type,
-                "record_locator": record_locator,
-                "sheet_name": sheet_name,
-                "row_number": row_number,
-                "row_kind": "excel_structured",
-            }
-            raw_elements.append(
-                {
-                    "id": record_id,
-                    "element_id": record_id,
-                    "type": "TableRow",
-                    "text": full_text,
-                    "metadata": metadata,
-                }
-            )
-
-            segments = _split_text_with_overlap(full_text, chunk_size, chunk_overlap)
-            segment_total = len(segments)
-            for segment_index, segment in enumerate(segments, start=1):
-                element_id = uuid.uuid4().hex
-                element_metadata = dict(metadata)
-                if segment_total > 1:
-                    element_metadata["segment_index"] = segment_index
-                    element_metadata["segment_total"] = segment_total
-                chunk_sequence += 1
-                row = _element_to_chunk_row(
-                    {
-                        "id": element_id,
-                        "element_id": element_id,
-                        "type": "TableRow",
-                        "text": segment,
-                        "metadata": element_metadata,
-                    },
-                    src=src,
-                    content_type=content_type,
-                    row_sequence=chunk_sequence,
-                )
-                if row:
-                    table_rows.append(row)
-
-    request_parameters = {
-        "mode": "excel-structured",
-        "file_name": src.name,
-        "content_type": content_type,
-        "sheet_names": sheet_names,
-        "sheet_count": len(sheet_names),
-        "logical_row_count": logical_row_count,
-        "chunk_size": chunk_size,
-        "chunk_overlap": chunk_overlap,
-    }
-    return table_rows, raw_elements, request_parameters
+    return _partition_excel_chunks_impl(
+        src,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        element_to_chunk_row=_element_to_chunk_row,
+    )
 
 
 def _element_to_chunk_row(

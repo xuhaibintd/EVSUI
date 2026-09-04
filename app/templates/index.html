@@ -7,7 +7,7 @@
     <button class="menu-item active" type="button" data-section="section-connect">Connect &amp; Manage</button>
     <button class="menu-item {% if not evs.connected %}disabled locked{% endif %}" type="button" data-section="section-create" aria-disabled="{% if not evs.connected %}true{% else %}false{% endif %}" {% if not evs.connected %}disabled{% endif %}>Vector Store Creation</button>
     <button class="menu-item {% if not evs.connected %}disabled locked{% endif %}" type="button" data-section="section-chat" aria-disabled="{% if not evs.connected %}true{% else %}false{% endif %}" {% if not evs.connected %}disabled{% endif %}>Vector Store Retrieval</button>
-    <button class="menu-item {% if not evs.connected %}disabled locked{% endif %}" type="button" data-section="section-admin" aria-disabled="{% if not evs.connected %}true{% else %}false{% endif %}" {% if not evs.connected %}disabled{% endif %}>Administration</button>
+    <button class="menu-item {% if not evs.connected %}disabled locked{% endif %}" type="button" data-section="section-admin" aria-disabled="{% if not evs.connected %}true{% else %}false{% endif %}" {% if not evs.connected %}disabled{% endif %}>BookRAG Governance</button>
     <p id="menu-hint" class="menu-hint muted"></p>
   </aside>
 
@@ -43,7 +43,7 @@
       <div class="wizard-nav">
         <div class="wizard-actions">
           <button type="button" class="ghost wizard-btn" data-target="section-create">Back</button>
-          <button type="button" class="wizard-btn" data-target="section-admin" data-requires-connected="true" {% if not evs.connected %}disabled{% endif %}>Next: Administration</button>
+          <button type="button" class="wizard-btn" data-target="section-admin" data-requires-connected="true" {% if not evs.connected %}disabled{% endif %}>Next: BookRAG Governance</button>
           <button type="button" class="ghost wizard-btn" data-target="section-connect">Go to Connect</button>
         </div>
       </div>

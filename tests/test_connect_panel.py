@@ -370,7 +370,7 @@ class ConnectPanelTemplateTests(unittest.TestCase):
         html = self.template.render(evs=evs, is_htmx=False, user_role="admin")
 
         self.assertIn("System connection is not configured.", html)
-        self.assertIn("Open Administration", html)
+        self.assertIn("Open System Configuration", html)
         self.assertIn('href="/admin/users#connection-configuration"', html)
         self.assertIn('connect-submit-btn progress-btn" data-progress-button disabled aria-disabled="true"', html)
 
@@ -393,7 +393,7 @@ class UnstructuredAdminPanelTests(unittest.TestCase):
         html = self.template.render(evs=_base_evs(True), json_inspector={"files": [], "selected_file": "", "summary": None, "error": ""})
 
         self.assertNotIn("External Account Configuration", html)
-        self.assertIn("Business Configuration", html)
+        self.assertIn("Document Governance", html)
         self.assertIn('class="admin-rule-tab-panel admin-rule-panel-business"', html)
         self.assertNotIn("Unstructured IO", html)
         self.assertNotIn('name="unstructured_api_url"', html)
