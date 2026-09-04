@@ -15,6 +15,8 @@ from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerifyMismatchError
 from cryptography.fernet import Fernet, InvalidToken
 
+from app.db.migrations import run_migrations
+
 
 AUTH_ROLES = ("admin", "operator", "viewer")
 PASSWORD_HASHER = PasswordHasher()
@@ -132,128 +134,7 @@ class AuthStore:
     def initialize(self) -> None:
         with self._connect() as connection:
             connection.execute("PRAGMA journal_mode = WAL")
-            connection.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS schema_versions (
-                    version INTEGER PRIMARY KEY,
-                    applied_at INTEGER NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS users (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    username TEXT NOT NULL COLLATE NOCASE UNIQUE,
-                    display_name TEXT NOT NULL DEFAULT '',
-                    password_hash TEXT NOT NULL,
-                    role TEXT NOT NULL CHECK (role IN ('admin', 'operator', 'viewer')),
-                    enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
-                    failed_login_count INTEGER NOT NULL DEFAULT 0,
-                    locked_until INTEGER,
-                    last_login_at INTEGER,
-                    created_at INTEGER NOT NULL,
-                    updated_at INTEGER NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS sessions (
-                    session_id_hash TEXT PRIMARY KEY,
-                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                    created_at INTEGER NOT NULL,
-                    last_seen_at INTEGER NOT NULL,
-                    expires_at INTEGER NOT NULL,
-                    revoked_at INTEGER
-                );
-                CREATE INDEX IF NOT EXISTS ix_sessions_user ON sessions(user_id);
-                CREATE INDEX IF NOT EXISTS ix_sessions_expiry ON sessions(expires_at);
-                CREATE TABLE IF NOT EXISTS permissions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                    resource_type TEXT NOT NULL,
-                    resource_name TEXT NOT NULL,
-                    permission TEXT NOT NULL CHECK (permission IN ('read', 'write', 'admin')),
-                    created_at INTEGER NOT NULL,
-                    UNIQUE(user_id, resource_type, resource_name)
-                );
-                CREATE TABLE IF NOT EXISTS audit_logs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-                    username TEXT NOT NULL DEFAULT '',
-                    action TEXT NOT NULL,
-                    resource TEXT NOT NULL DEFAULT '',
-                    result TEXT NOT NULL,
-                    detail TEXT NOT NULL DEFAULT '',
-                    created_at INTEGER NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS connection_configs (
-                    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-                    host TEXT NOT NULL DEFAULT '',
-                    username TEXT NOT NULL DEFAULT '',
-                    password_ciphertext TEXT NOT NULL DEFAULT '',
-                    ues_url TEXT NOT NULL DEFAULT '',
-                    pat_token_ciphertext TEXT NOT NULL DEFAULT '',
-                    pem_file TEXT NOT NULL DEFAULT '',
-                    created_at INTEGER NOT NULL,
-                    updated_at INTEGER NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS system_connection_config (
-                    config_id INTEGER PRIMARY KEY CHECK (config_id = 1),
-                    host TEXT NOT NULL DEFAULT '',
-                    username TEXT NOT NULL DEFAULT '',
-                    password_ciphertext TEXT NOT NULL DEFAULT '',
-                    ues_url TEXT NOT NULL DEFAULT '',
-                    pat_token_ciphertext TEXT NOT NULL DEFAULT '',
-                    pem_file TEXT NOT NULL DEFAULT '',
-                    pem_filename TEXT NOT NULL DEFAULT '',
-                    pem_ciphertext TEXT NOT NULL DEFAULT '',
-                    updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-                    created_at INTEGER NOT NULL,
-                    updated_at INTEGER NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS system_connection_profiles (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL COLLATE NOCASE UNIQUE,
-                    host TEXT NOT NULL DEFAULT '',
-                    username TEXT NOT NULL DEFAULT '',
-                    password_ciphertext TEXT NOT NULL DEFAULT '',
-                    ues_url TEXT NOT NULL DEFAULT '',
-                    pat_token_ciphertext TEXT NOT NULL DEFAULT '',
-                    pem_filename TEXT NOT NULL DEFAULT '',
-                    pem_ciphertext TEXT NOT NULL DEFAULT '',
-                    is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
-                    updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-                    created_at INTEGER NOT NULL,
-                    updated_at INTEGER NOT NULL
-                );
-                """
-            )
-            system_config_columns = {
-                str(row[1])
-                for row in connection.execute("PRAGMA table_info(system_connection_config)").fetchall()
-            }
-            if "pem_filename" not in system_config_columns:
-                connection.execute(
-                    "ALTER TABLE system_connection_config ADD COLUMN pem_filename TEXT NOT NULL DEFAULT ''"
-                )
-            if "pem_ciphertext" not in system_config_columns:
-                connection.execute(
-                    "ALTER TABLE system_connection_config ADD COLUMN pem_ciphertext TEXT NOT NULL DEFAULT ''"
-                )
-            connection.execute(
-                "INSERT OR IGNORE INTO schema_versions(version, applied_at) VALUES(1, ?)",
-                (int(time.time()),),
-            )
-            connection.execute(
-                "INSERT OR IGNORE INTO schema_versions(version, applied_at) VALUES(2, ?)",
-                (int(time.time()),),
-            )
-            connection.execute(
-                "INSERT OR IGNORE INTO schema_versions(version, applied_at) VALUES(3, ?)",
-                (int(time.time()),),
-            )
-            connection.execute(
-                "INSERT OR IGNORE INTO schema_versions(version, applied_at) VALUES(4, ?)",
-                (int(time.time()),),
-            )
-            connection.execute(
-                "INSERT OR IGNORE INTO schema_versions(version, applied_at) VALUES(5, ?)",
-                (int(time.time()),),
-            )
+            run_migrations(connection)
 
     def count_users(self) -> int:
         with self._connect() as connection:

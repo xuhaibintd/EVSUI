@@ -7,6 +7,7 @@ from datetime import datetime
 from fastapi import Request, UploadFile
 
 from app.auth_store import AuthStore
+from app.core.runtime_manager import TeradataRuntimeManager
 from app.core.security import redact_sensitive_text
 from app.core.settings import Settings
 
@@ -348,10 +349,6 @@ def _ensure_connected_runtime_for_session(
     if not all([host, username, password, ues_url, pat_token]):
         raise RuntimeError("Stored Step 1 connection parameters are incomplete for runtime reactivation.")
 
-    cleanup_before = _cleanup_context()
-    _ = cleanup_before
-    create_context(host=host, username=username, password=password)
-
     base_url = _derive_base_url(ues_url)
     resolved_pem_for_auth = _resolve_path_hint(pem_hint)
     normalized_pem_for_auth = _normalize_pem_filename_for_auth(resolved_pem_for_auth) if resolved_pem_for_auth else ""
@@ -362,12 +359,55 @@ def _ensure_connected_runtime_for_session(
         auth_kwargs["pem_file"] = resolved_pem_for_auth
     elif pem_hint:
         auth_kwargs["pem_file"] = pem_hint
-    set_auth_token(**auth_kwargs)
+    manager = getattr(app.state, "teradata_runtime_manager", None)
+    if manager is None:
+        _cleanup_context()
+        create_context(host=host, username=username, password=password)
+        set_auth_token(**auth_kwargs)
+    else:
+        profile_id = state.get("selected_connection_id") or "default"
+        session_id = _session_id_from_request(request) or "anonymous"
+        manager.reactivate(
+            identity=f"session:{session_id}:connection:{profile_id}",
+            cleanup=_cleanup_context,
+            connect=lambda: create_context(host=host, username=username, password=password),
+            authenticate=lambda: set_auth_token(**auth_kwargs),
+        )
     if not was_connected:
         state["connected"] = True
         state["connected_at"] = _now_ts()
         state["last_error"] = ""
         state["last_success"] = "Connection restored from saved parameters."
+
+
+def _ensure_external_api_runtime(app) -> None:
+    manager = getattr(app.state, "teradata_runtime_manager", None)
+    if manager is None:
+        return
+    if create_context is None or set_auth_token is None:
+        raise RuntimeError(f"teradataml/teradatagenai runtime is unavailable: {TERADATA_IMPORT_ERROR}")
+    saved = app.state.auth_store.get_connection_profile()
+    if not saved:
+        raise RuntimeError("No default database connection is configured for the external API.")
+    host = str(saved.get("host") or "").strip()
+    username = str(saved.get("username") or "").strip()
+    password = str(saved.get("password") or "")
+    ues_url = str(saved.get("ues_url") or "").strip()
+    pat_token = str(saved.get("pat_token") or "").strip()
+    if not all([host, username, password, ues_url, pat_token]):
+        raise RuntimeError("The default database connection is incomplete for external API use.")
+    pem_hint = str(saved.get("pem_file") or "").strip()
+    resolved_pem = _resolve_path_hint(pem_hint)
+    normalized_pem = _normalize_pem_filename_for_auth(resolved_pem) if resolved_pem else ""
+    auth_kwargs = {"base_url": _derive_base_url(ues_url), "pat_token": pat_token}
+    if normalized_pem or resolved_pem or pem_hint:
+        auth_kwargs["pem_file"] = normalized_pem or resolved_pem or pem_hint
+    manager.reactivate(
+        identity=f"external-api:connection:{saved.get('id') or 'default'}",
+        cleanup=_cleanup_context,
+        connect=lambda: create_context(host=host, username=username, password=password),
+        authenticate=lambda: set_auth_token(**auth_kwargs),
+    )
 
 
 def _cleanup_result_status(cleanup_result: dict[str, str]) -> str:
@@ -716,6 +756,8 @@ def initialize_app_state(app, templates, *, settings: Settings | None = None) ->
     app.state.templates = templates
     resolved_settings = settings or getattr(app.state, "settings", None) or Settings.from_env()
     app.state.settings = resolved_settings
+    app.state.teradata_runtime_manager = TeradataRuntimeManager()
+    app.state.ensure_session_runtime = _ensure_connected_runtime_for_session
     auth_store = AuthStore(
         resolved_settings.database_path,
         session_ttl_seconds=resolved_settings.session_ttl_seconds,

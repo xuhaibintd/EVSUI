@@ -24,6 +24,7 @@ from app.web_support import (
     _activate_session_state,  # noqa: F401 - compatibility patch point for API tests/hosts
     _build_bookrag_chat_reply,
     _ensure_connected_runtime_for_session,
+    _ensure_external_api_runtime,
     _is_logged_in,
 )
 
@@ -418,6 +419,13 @@ def _require_api_access(request: Request) -> dict[str, str]:
     if auth_context is not None:
         return auth_context
     raise HTTPException(status_code=401, detail="Unauthorized", headers={"WWW-Authenticate": "Bearer"})
+
+
+def _ensure_api_runtime(request: Request, auth_context: dict[str, str]) -> None:
+    if auth_context.get("mode") == "session":
+        _ensure_connected_runtime_for_session(request, request.app)
+    else:
+        _ensure_external_api_runtime(request.app)
 
 
 def _request_id_from_request(request: Request) -> str:
@@ -1008,8 +1016,7 @@ async def api_bookrag_schema(
     schema_name: str | None = None,
 ):
     auth_context = _require_api_access(request)
-    if auth_context.get("mode") == "session":
-        _ensure_connected_runtime_for_session(request, request.app)
+    _ensure_api_runtime(request, auth_context)
     selected = str(vector_store_name or "").strip()
     if not selected:
         raise HTTPException(status_code=422, detail="vector_store_name is required")
@@ -1038,8 +1045,7 @@ async def api_bookrag_retrieve_get(
     schema_value = _normalize_optional_text(schema_name)
     top_k_value = _clamp_top_k(top_k)
     auth_context = _require_api_access(request)
-    if auth_context.get("mode") == "session":
-        _ensure_connected_runtime_for_session(request, request.app)
+    _ensure_api_runtime(request, auth_context)
     question_value, vector_store_value, evidence, _ = _retrieve_bookrag_evidence_or_raise(
         question=question,
         vector_store_name=vector_store_name,
@@ -1075,8 +1081,7 @@ async def api_bookrag_answer_get(
     if not has_runtime_inputs:
         raise HTTPException(status_code=422, detail="question and vector_store_name are required")
     if has_runtime_inputs:
-        if auth_context.get("mode") == "session":
-            _ensure_connected_runtime_for_session(request, request.app)
+        _ensure_api_runtime(request, auth_context)
         question_value, vector_store_value, evidence, similarity_result = _retrieve_bookrag_evidence_or_raise(
             question=question,
             vector_store_name=vector_store_name,
@@ -1199,8 +1204,7 @@ async def api_bookrag_answer_get(
 )
 async def api_bookrag_retrieve(request: Request, payload: BookRAGRetrieveRequest):
     auth_context = _require_api_access(request)
-    if auth_context.get("mode") == "session":
-        _ensure_connected_runtime_for_session(request, request.app)
+    _ensure_api_runtime(request, auth_context)
 
     schema_value = _normalize_optional_text(payload.schema_name)
     top_k_value = _clamp_top_k(payload.top_k)
@@ -1243,8 +1247,7 @@ async def api_bookrag_retrieve(request: Request, payload: BookRAGRetrieveRequest
 @router.post("/api/bookrag/answer", response_model=BookRAGAnswerResponse)
 async def api_bookrag_answer(request: Request, payload: BookRAGAnswerRequest):
     auth_context = _require_api_access(request)
-    if auth_context.get("mode") == "session":
-        _ensure_connected_runtime_for_session(request, request.app)
+    _ensure_api_runtime(request, auth_context)
 
     schema_value = _normalize_optional_text(payload.schema_name)
     top_k_value = _clamp_top_k(payload.top_k)

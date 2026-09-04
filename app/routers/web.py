@@ -911,6 +911,12 @@ async def evs_connect(request: Request, connection_id: int | None = Form(default
             state["selected_vs_name"] = ""
             _clear_destroy_result(state)
             state["actual_params"] = actual_params
+            runtime_manager = getattr(request.app.state, "teradata_runtime_manager", None)
+            if runtime_manager is not None:
+                runtime_manager.mark_active(
+                    f"session:{_session_id_from_request(request) or 'anonymous'}:"
+                    f"connection:{state.get('selected_connection_id') or 'default'}"
+                )
             steps.append(_new_connect_step("VSManager.list()", "info", "Skipped on connect. Click 'Run List' manually."))
             state["connect_steps"] = steps
         except Exception as ex:
@@ -938,6 +944,9 @@ async def evs_connect(request: Request, connection_id: int | None = Form(default
             _clear_destroy_result(state)
             state["actual_params"] = actual_params
             state["connect_steps"] = steps
+            runtime_manager = getattr(request.app.state, "teradata_runtime_manager", None)
+            if runtime_manager is not None:
+                runtime_manager.invalidate()
 
     return _render_connect_panel(request, request.app)
 
@@ -949,6 +958,9 @@ async def evs_reset(request: Request):
     _activate_session_state(request, request.app)
     selected_connection_id = request.app.state.evs_state.get("selected_connection_id")
     cleanup_result = _cleanup_context()
+    runtime_manager = getattr(request.app.state, "teradata_runtime_manager", None)
+    if runtime_manager is not None:
+        runtime_manager.invalidate()
     reset_state = _default_evs_state()
     principal = _session_principal(request)
     if principal is not None:

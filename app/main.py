@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from app.core.runtime_manager import RuntimeIsolationMiddleware
 from app.core.security import SecurityMiddleware
 from app.core.settings import Settings
 from app.runtime import STATIC_DIR, TEMPLATES_DIR
@@ -18,6 +19,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application = FastAPI(title="Teradata Vector Store", version="0.5.0")
     application.state.settings = resolved_settings
     application.add_middleware(SecurityMiddleware)
+    application.add_middleware(RuntimeIsolationMiddleware)
     application.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     initialize_app_state(
         application,
