@@ -26,4 +26,3 @@ jobs:
         run: python -m ruff check app tests
       - name: Unit and route tests
         run: python -m unittest discover -s tests -q
-
