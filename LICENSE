@@ -1,0 +1,127 @@
+TERADATA PRODUCT-RESTRICTED SOURCE-AVAILABLE LICENSE
+Version 1.0 - Proposed terms for teradataevsui
+
+DRAFT - SUBJECT TO TERADATA APPROVAL
+
+This document is a proposed license. Teradata must confirm ownership of the
+covered Software and approve these terms before they are published as an
+effective license. This draft does not itself establish ownership, confirm
+corporate authorization, or grant rights on Teradata's behalf.
+
+Proposed copyright notice:
+Copyright (c) 2026 Teradata. All rights reserved, except as expressly licensed.
+
+1. DEFINITIONS AND SCOPE
+
+"Teradata" means the Teradata legal entity that owns, or is authorized to
+license, the relevant Software.
+
+"Software" means the original teradataevsui source code, documentation, and
+related project materials that Teradata owns or is authorized to license under
+these terms. Third-party materials are excluded as described in Section 6.
+
+"Teradata Products" means software products, platforms, or services supplied
+and licensed or otherwise lawfully made available by Teradata, including
+Teradata database, analytics, and vector-store products and services.
+
+"Permitted Purpose" means developing, testing, integrating, deploying,
+operating, or maintaining solutions based on or used with Teradata Products.
+Such solutions must actually use, integrate with, or be developed for Teradata
+Products. Merely referring to Teradata, retaining a Teradata logo, or including
+an unused Teradata connector does not establish a Permitted Purpose.
+
+2. OWNERSHIP
+
+The Software is a Teradata project. Teradata retains its copyright and other
+intellectual property rights in the Software. Access to the source code does
+not transfer ownership or place the Software in the public domain.
+
+This license does not assign a contributor's independently owned rights to
+Teradata. Any required copyright assignment or contribution authorization
+must be established separately. Rights not expressly granted are reserved.
+
+3. LIMITED LICENSE GRANT
+
+Once these terms have been approved and issued by an authorized Teradata
+representative, and subject to compliance with every condition below,
+Teradata grants a worldwide, non-exclusive, royalty-free copyright license
+to access, use, reproduce, modify, and distribute the Software and derivative
+works solely for a Permitted Purpose.
+
+This permission applies to development and production use only within that
+Teradata-product scope. It does not authorize general-purpose use outside it.
+
+4. TERADATA-PRODUCT RESTRICTION
+
+You may not use, adapt, port, distribute, or offer the Software or derivative
+works for purposes unrelated to Teradata Products. In particular, you may not
+repurpose the Software, or its covered components, as a standalone solution
+or a solution for non-Teradata database, analytics, or vector-store products
+without a separate written license from an authorized Teradata representative.
+
+Third-party operating systems, cloud infrastructure, libraries, supporting
+databases, and external services may support a solution for a Permitted
+Purpose. Their supporting use does not authorize an independent non-Teradata
+use of the Software. These restrictions cover the Software, not independently
+licensed third-party components or unrelated software.
+
+5. MODIFICATIONS AND REDISTRIBUTION
+
+Every redistribution of the Software or a derivative work, in source or binary
+form, must include this license and retain applicable copyright, attribution,
+and third-party notices. You must clearly identify your modifications and
+must not represent them as approved, supported, or warranted by Teradata.
+
+You may distribute covered modifications only on terms that preserve the
+Teradata-product restriction and the other conditions of this license. You
+may not relicense Teradata-owned portions under terms permitting unrestricted
+use or use outside the Permitted Purpose. Recipients receive no broader rights
+to those portions than are provided by this license.
+
+6. THIRD-PARTY MATERIALS AND TERADATA PRODUCT LICENSES
+
+Third-party libraries, SDKs, assets, and other materials remain the property
+of their respective rights holders and are governed by their own licenses.
+This license neither replaces nor narrows rights independently granted by
+those licenses. It does not relicense Teradata proprietary products or SDKs.
+
+You must separately obtain and comply with all required Teradata Product
+licenses, subscriptions, access permissions, and third-party service terms.
+Making this project's source available does not make Teradata Products free
+or grant a license to their proprietary code. No trademark license, product
+certification, endorsement, or support commitment is granted here.
+
+7. NO WARRANTY; LIMITATION OF LIABILITY
+
+TO THE EXTENT PERMITTED BY APPLICABLE LAW, THE SOFTWARE IS PROVIDED "AS IS",
+WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NONINFRINGEMENT.
+
+TO THE EXTENT PERMITTED BY APPLICABLE LAW, TERADATA AND THE CONTRIBUTORS WILL
+NOT BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM THE
+SOFTWARE OR ITS USE, WHETHER IN CONTRACT, TORT, OR OTHERWISE. NOTHING IN THIS
+LICENSE EXCLUDES LIABILITY OR RIGHTS THAT CANNOT LAWFULLY BE EXCLUDED.
+
+8. TERMINATION
+
+The permissions granted by this license terminate automatically if you breach
+its conditions. On termination, you must cease use and distribution of the
+Software under this license. A recipient's independent, compliant license is
+not terminated solely because of your breach. Reinstatement or an exception
+requires written authorization from an authorized Teradata representative.
+
+9. SOURCE AVAILABILITY, NOT UNRESTRICTED OPEN SOURCE
+
+This is a product-restricted, source-available license. It is not an
+OSI-approved open-source license and must not be described as granting
+unrestricted open-source rights. Public access to the repository does not
+remove the Teradata-product restriction.
+
+The restriction is a legal licensing condition; it is not a claim that the
+Software technically prevents every unauthorized use.
+
+10. ADDITIONAL PERMISSIONS
+
+Any use outside the Permitted Purpose requires a separate written agreement
+with an authorized Teradata representative. Only an authorized rights holder
+may approve this license or grant exceptions to it.

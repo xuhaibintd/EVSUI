@@ -4,9 +4,23 @@ Teradata Vector Store provides vector-search and retrieval capabilities on top o
 
 teradataevsui is a `FastAPI + Jinja2 + HTMX` interface for working with Teradata Vector Store. It helps users select reusable Teradata connections, create vector stores from uploaded or configured sources, validate retrieval, govern BookRAG document metadata, and manage encrypted shared service credentials.
 
+## License and ownership
+
+The proposed [Teradata Product-Restricted Source-Available License](LICENSE)
+declares Teradata ownership of the covered project materials and limits use,
+modification, and redistribution to solutions based on or used with Teradata
+products. Standalone use or adaptation for non-Teradata products requires
+separate written permission. Supporting third-party dependencies retain their
+own licenses; Teradata products still require their own licenses and access rights.
+
+These are **draft terms pending Teradata's confirmation of ownership and approval**,
+not a claim of an existing official Teradata license. This is a source-available,
+product-restricted proposal, not an OSI-approved open-source license.
+
 ## Contents
 
 - [Getting Started](#getting-started)
+- [License and ownership](#license-and-ownership)
 - [Using teradataevsui](#using-teradataevsui)
 - [Overall Design](#overall-design)
 - [Feature Overview](#overview)
@@ -29,7 +43,12 @@ commands remain compatibility aliases. Windows launchers use `scripts/teradataev
 Existing `EVSUI_*` environment variables, `data/evsui.db`, its credential key, and
 session cookies retain their names so existing installations keep their configuration
 and encrypted data. No database migration or credential re-entry is needed for this rename.
-The GitHub repository URL is unchanged.
+The GitHub repository is now `https://github.com/xuhaibintd/teradataevsui`.
+For an existing checkout, update its remote with
+`git remote set-url origin https://github.com/xuhaibintd/teradataevsui.git`.
+After moving or renaming the local project directory, recreate the virtual
+environment and reinstall dependencies: virtualenv launchers and editable installs
+can contain absolute paths. Keep `data/`, its credential key, and `uploads/` intact.
 
 On Windows, after installing dependencies into `.venv`, use `start.cmd`, `stop.cmd`,
 `restart.cmd`, and `status.cmd` to manage the web service and Worker together.
@@ -51,7 +70,7 @@ Before installing teradataevsui, make sure you have:
 ### 1. Get the code
 
 ```bash
-git clone https://github.com/xuhaibintd/EVSUI.git teradataevsui
+git clone https://github.com/xuhaibintd/teradataevsui.git
 cd teradataevsui
 ```
 
