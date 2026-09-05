@@ -1851,7 +1851,7 @@ def run_multi_format_csv_load(
         return {**summary, "already_loaded": True}
     if str(manifest.get("load_status") or "") == "loading":
         raise RuntimeError(
-            "This Multi-Format CSV run is already marked as loading. If its worker was interrupted, "
+            "This Multi-Format CSV run is already marked as loading. If its operation was interrupted, "
             "inspect the target table and confirm no loader is active before explicitly starting a new CSV load run. "
             "Automatic retry did not clear or overwrite any target table."
         )
@@ -2511,7 +2511,7 @@ def run_bookrag_csv_load(
         return {**stored_summary, "already_loaded": True}
     if load_status == "loading":
         raise RuntimeError(
-            "This CSV generation run is already marked as loading. If its worker was interrupted, "
+            "This CSV generation run is already marked as loading. If its operation was interrupted, "
             "inspect the target tables and confirm no loader is active before explicitly starting a new CSV load run. "
             "Automatic retry did not clear or overwrite any target table."
         )

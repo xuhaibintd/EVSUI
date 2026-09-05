@@ -17,7 +17,7 @@
   <p>The operation is queued and will continue independently of this page.</p>
   <button type="button" class="ghost" hx-post="/ui/jobs/{{ job.id }}/cancel" hx-target="closest div[role='status']" hx-swap="outerHTML">Cancel queued job</button>
   {% elif job.status == 'running' %}
-  <p>The worker is processing this operation. You may leave this page safely.</p>
+  <p>The application is processing this operation. You may leave this page safely.</p>
   {% elif job.status == 'cancelled' %}
   <p>This queued operation was cancelled.</p>
   {% elif job.status == 'failed' %}

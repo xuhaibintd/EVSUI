@@ -38,11 +38,9 @@ dev = [
 [project.scripts]
 teradataevsui-db = "app.db.__main__:main"
 teradataevsui-ops = "app.ops.__main__:main"
-teradataevsui-worker = "app.worker:main"
 # Compatibility aliases for existing automation.
 evsui-db = "app.db.__main__:main"
 evsui-ops = "app.ops.__main__:main"
-evsui-worker = "app.worker:main"
 
 [tool.setuptools.packages.find]
 include = ["app*"]

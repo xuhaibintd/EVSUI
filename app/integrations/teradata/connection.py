@@ -36,7 +36,7 @@ def _base_url(ues_url: str) -> str:
 
 @contextmanager
 def activated_connection(auth_store, profile_id: int | None) -> Iterator[dict[str, Any]]:
-    """Activate exactly one stored profile inside a dedicated worker process."""
+    """Activate one stored profile for a serialized background operation."""
     if profile_id is None:
         raise RuntimeError("The queued operation has no database connection profile.")
     if create_context is None or set_auth_token is None or execute_sql is None:

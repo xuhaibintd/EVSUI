@@ -169,7 +169,7 @@ class JobRepository:
         with self.database.connect() as connection:
             cursor = connection.execute(
                 """UPDATE jobs SET status='queued', started_at=NULL, heartbeat_at=NULL, progress=0,
-                          error='Recovered after worker interruption.', updated_at=?
+                          error='Recovered after application interruption.', updated_at=?
                    WHERE status='running' AND COALESCE(heartbeat_at, started_at, updated_at)<?""",
                 (now, int(stale_before)),
             )

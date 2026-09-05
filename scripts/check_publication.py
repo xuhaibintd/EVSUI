@@ -18,8 +18,8 @@ PRIVATE_PATHS = {
     "app/config/unstructured.json",
     "app/config/unstructured_models.json",
 }
-PRIVATE_PREFIXES = (".run/", "data/", "local-notes/", "pem_runtime/", "test-results/", "uploads/")
-PRIVATE_SUFFIXES = (".db", ".key", ".p12", ".pem", ".pfx", ".sqlite", ".sqlite3")
+PRIVATE_PREFIXES = ("data/", "local-notes/", "pem_runtime/", "test-results/", "uploads/")
+PRIVATE_SUFFIXES = (".app.lock", ".db", ".key", ".p12", ".pem", ".pfx", ".sqlite", ".sqlite3")
 DATED_INTERNAL_REPORT = re.compile(r"(?:^|/)(?:audit|review|report|testing)[-_]\d{4}", re.IGNORECASE)
 CJK = re.compile(r"[\u3040-\u30ff\u3400-\u9fff]")
 MACHINE_PATH = re.compile(r"(?i)[A-Z]:[\\/]+(?:Documents and Settings|Users)[\\/]+")
@@ -39,7 +39,7 @@ SENSITIVE_LOCAL_KEYS = {
     "api_key", "host", "password", "pat_token", "pem_file", "secret", "token", "ues_url", "username"
 }
 REQUIRED_DOCKER_IGNORES = {
-    ".env", ".run", ".venv", "*.db", "*.key", "*.pem", "data", "local-notes",
+    ".env", ".venv", "*.app.lock", "*.db", "*.key", "*.pem", "data", "local-notes",
     "pem_runtime", "test-results", "uploads",
 }
 

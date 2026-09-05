@@ -16,9 +16,9 @@ dist
 *.p12
 *.pfx
 *.db
+*.app.lock
 *.sqlite
 *.sqlite3
-.run
 test-results
 local-notes
 .coverage

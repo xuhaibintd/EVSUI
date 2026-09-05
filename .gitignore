@@ -16,6 +16,7 @@ pem_runtime/
 *.p12
 *.pfx
 *.db
+*.app.lock
 *.sqlite
 *.sqlite3
 app/config/auth_users.json
@@ -27,5 +28,4 @@ test-results/
 .coverage
 .coverage.*
 htmlcov/
-.run/
 local-notes/

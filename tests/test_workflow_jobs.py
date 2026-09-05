@@ -181,7 +181,7 @@ class WorkflowJobTests(unittest.TestCase):
         self.assertNotIn("database-secret", str(raised.exception))
         self.assertIn("[REDACTED]", str(raised.exception))
 
-    def test_vector_create_runs_inside_worker_connection_and_reaches_ready(self) -> None:
+    def test_vector_create_runs_inside_background_connection_and_reaches_ready(self) -> None:
         @contextmanager
         def activated(_auth_store, profile_id):
             self.assertEqual(profile_id, 12)

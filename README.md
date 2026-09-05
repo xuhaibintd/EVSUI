@@ -38,8 +38,8 @@ product-restricted proposal, not an OSI-approved open-source license.
 ## Getting Started
 
 The project/package is now named `teradataevsui`. The supported CLI commands are
-`teradataevsui-db`, `teradataevsui-ops`, and `teradataevsui-worker`; the old `evsui-*`
-commands remain compatibility aliases. Windows launchers use `scripts/teradataevsui.ps1`.
+`teradataevsui-db` and `teradataevsui-ops`; the old `evsui-db` and `evsui-ops`
+commands remain compatibility aliases.
 Existing `EVSUI_*` environment variables, `data/evsui.db`, its credential key, and
 session cookies retain their names so existing installations keep their configuration
 and encrypted data. No database migration or credential re-entry is needed for this rename.
@@ -49,10 +49,6 @@ For an existing checkout, update its remote with
 After moving or renaming the local project directory, recreate the virtual
 environment and reinstall dependencies: virtualenv launchers and editable installs
 can contain absolute paths. Keep `data/`, its credential key, and `uploads/` intact.
-
-On Windows, after installing dependencies into `.venv`, use `start.cmd`, `stop.cmd`,
-`restart.cmd`, and `status.cmd` to manage the web service and Worker together.
-See [startup/shutdown options and safety behavior](docs/operations.md#windows-unified-start--stop--restart--status).
 
 ### Prerequisites
 
@@ -157,31 +153,16 @@ The legacy `connection` values are imported once as the default database connect
 
 ### 4. Start teradataevsui
 
-Windows (web and Worker together, no virtualenv activation required):
-
-```powershell
-.\start.cmd
-.\status.cmd
-# Later:
-.\stop.cmd
-# Or restart both:
-.\restart.cmd
-```
-
-For manual foreground development or other platforms, activate the virtual
-environment and run:
+Start the web application in a terminal:
 
 ```bash
 python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8010
 ```
 
-For this manual mode, start the durable workflow worker in a second terminal:
-
-```powershell
-python -m app.worker
-```
-
-Document parsing, CSV loading, and Vector Store creation are queued in SQLite and rendered through UI polling, so they continue if the browser request ends.
+The application automatically executes one durable background job at a time.
+Document parsing, CSV loading, and Vector Store creation are queued in SQLite and
+rendered through UI polling, so they continue if the browser request ends. No second
+process or command is required.
 
 Open <http://127.0.0.1:8010> and sign in with the credentials configured in the previous step. The `--reload` option is intended for local development.
 
@@ -473,7 +454,7 @@ Section construction uses Unstructured structure metadata where available, with 
 - No auto-list on connect; list execution is manual.
 - Vector Store Creation submit validation blocks create unless `vector_store_name`, `doc_pipeline_mode`, `embeddings_model`, and a document source are present. Uploaded files and `document_files` both satisfy this check.
 - For uploaded-file create flow, `object_names` is not auto-filled by the UI.
-- Vector Store Creation does not report success when `VectorStore.create()` merely returns. The worker polls every 5 seconds by default (`EVS_VECTORSTORE_READY_POLL_SECONDS`) until `VectorStore.status()` reaches `Ready` or `Failed`, with a two-hour default timeout (`EVS_VECTORSTORE_READY_TIMEOUT_SECONDS`). A timeout fails the durable job and records diagnostics but cannot cancel work already accepted by the remote service; operators should check the remote status before retrying.
+- Vector Store Creation does not report success when `VectorStore.create()` merely returns. The background job runner polls every 5 seconds by default (`EVS_VECTORSTORE_READY_POLL_SECONDS`) until `VectorStore.status()` reaches `Ready` or `Failed`, with a two-hour default timeout (`EVS_VECTORSTORE_READY_TIMEOUT_SECONDS`). A timeout fails the durable job and records diagnostics but cannot cancel work already accepted by the remote service; operators should check the remote status before retrying.
 - After a loaded BookRAG store reaches `Ready`, the app verifies that the vector index row count matches the non-empty `bnode.content` row count. `EVS_BOOKRAG_INDEX_READY_TIMEOUT_SECONDS` can optionally add a database-visibility grace period; the default is a single immediate verification. An unavailable verification query is a warning; a successfully verified empty or incomplete index is an error.
 - If `create()` reports `already exists`, the app verifies existence with unfiltered `VSManager.list()` and only reuses the store when its current status is `Ready`.
 
@@ -932,7 +913,7 @@ sequenceDiagram
 - `GET /api/bookrag/schema`, `GET|POST /api/bookrag/retrieve`, `GET|POST /api/bookrag/answer`
 - `GET /healthz`
 
-Schema, backup, artifact, and worker commands are documented in [Operations](docs/operations.md). Module dependency rules and the current single-worker constraint are documented in [Architecture](docs/architecture.md).
+Schema, backup, and artifact commands are documented in [Operations](docs/operations.md). Module dependency rules and the single-process runtime are documented in [Architecture](docs/architecture.md).
 
 Browser, HTTP, service, and opt-in read-only live testing commands and their limitations are documented in [Testing](docs/testing.md). Review [Publication checks](docs/publishing.md) before submitting changes. Individual execution reports are not public project documentation.
 

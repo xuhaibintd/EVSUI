@@ -567,7 +567,7 @@ def build_workflow_job_handlers(
                     "artifact_count": artifact_count,
                 }
             if VectorStore is None:
-                raise RuntimeError("VectorStore runtime is unavailable in the worker environment.")
+                raise RuntimeError("VectorStore runtime is unavailable for the background job.")
             if handler.MODE in {"multi_format", "multi_format_bookrag"}:
                 processed_payload = strip_file_based_create_params(processed_payload)
                 processed_payload["nv_ingestor"] = None

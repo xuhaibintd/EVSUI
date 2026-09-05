@@ -62,7 +62,7 @@ then verify actual browser polling and the next form actions.
 | Document relationships | Empty-selection refresh, initialize, add/edit/export/delete | Relation validation, CSV import, persistence/schema rules, permissions |
 | JSON Inspector | Filtering, no-result detail clearing/restoration | Allowed roots, path traversal rejection, malformed documents |
 | Layout/security | Desktop/laptop/tablet widths, disabled/hidden controls, CSP-safe confirmation and row selection | Origin validation, secret redaction, role downgrade taking effect immediately |
-| Persistence/operations | SQLite job progress and cancellation in browser | Migrations/backup, worker claim races, stale-attempt fencing, artifact lifecycle, wheel exclusions |
+| Persistence/operations | SQLite job progress and cancellation in browser | Migrations/backup, job claim races, stale-attempt fencing, artifact lifecycle, wheel exclusions |
 
 ## Read-only live check
 
@@ -90,7 +90,8 @@ are not changed. The helper itself has opt-in, snapshot, timeout and output-safe
 - CSV rows are validated before the first write, but this does not guarantee an
   all-or-nothing remote transaction if SQL fails midway.
 - Job recovery is not universal external-operation resumption. Inspect interrupted
-  CSV loads; do not restart a second loader blindly. Run one workflow worker.
+  CSV loads; do not start another load blindly. The application runs one background
+  job at a time.
 - Python coverage does not measure HTML/JavaScript coverage. Browser scenarios do
   not constitute load testing, penetration testing, or every browser/device combination.
 

@@ -10,13 +10,17 @@ FORBIDDEN_RUNTIME_CONFIGS = {
     "app/config/local_dev.json",
     "app/config/unstructured.json",
     "app/config/unstructured_models.json",
-}
-REQUIRED_RUNTIME_FILES = {
-    "app/routers/jobs.py",
-    "app/templates/partials/job_progress.html",
+    "app/core/process_lock.py",
     "app/worker.py",
 }
-FORBIDDEN_RUNTIME_PREFIXES = (".run/", "data/", "local-notes/", "pem_runtime/", "test-results/", "uploads/")
+REQUIRED_RUNTIME_FILES = {
+    "app/main.py",
+    "app/core/single_instance.py",
+    "app/routers/jobs.py",
+    "app/services/job_worker.py",
+    "app/templates/partials/job_progress.html",
+}
+FORBIDDEN_RUNTIME_PREFIXES = ("data/", "local-notes/", "pem_runtime/", "test-results/", "uploads/")
 
 
 def verify_wheel(path: Path) -> None:

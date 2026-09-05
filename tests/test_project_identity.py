@@ -20,15 +20,21 @@ class ProjectIdentityTests(unittest.TestCase):
         self.assertRegex(project, r'(?m)^name = "teradataevsui"$')
         scripts = metadata.split("[project.scripts]\n", 1)[1].split("\n[", 1)[0]
         entries = dict(re.findall(r'(?m)^([\w-]+) = "([^"]+)"$', scripts))
-        for command in ("db", "ops", "worker"):
+        for command in ("db", "ops"):
             self.assertEqual(entries[f"teradataevsui-{command}"], entries[f"evsui-{command}"])
+        self.assertNotIn("teradataevsui-worker", entries)
+        self.assertNotIn("evsui-worker", entries)
 
-    def test_windows_launchers_use_new_entry_point(self):
-        self.assertTrue((ROOT / "scripts/teradataevsui.ps1").is_file())
-        for action in ("start", "stop", "restart", "status"):
-            content = (ROOT / f"{action}.cmd").read_text(encoding="utf-8")
-            self.assertIn(f'scripts\\teradataevsui.ps1" {action} %*', content)
-        self.assertIn("teradataevsui.ps1", (ROOT / "scripts/evsui.ps1").read_text(encoding="utf-8"))
+    def test_custom_windows_lifecycle_wrappers_are_not_shipped(self):
+        obsolete = [
+            *(ROOT / f"{action}.cmd" for action in ("start", "stop", "restart", "status")),
+            ROOT / "scripts/evsui.ps1",
+            ROOT / "scripts/teradataevsui.ps1",
+            ROOT / "scripts/service_control.py",
+            ROOT / "app/worker.py",
+            ROOT / "app/core/process_lock.py",
+        ]
+        self.assertFalse([path for path in obsolete if path.exists()])
 
     def test_existing_database_key_and_cookie_names_are_preserved(self):
         with patch.dict(os.environ, {}, clear=True):
