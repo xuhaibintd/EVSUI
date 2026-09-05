@@ -44,6 +44,22 @@ async def save_document_uploads(
     now_ts: Callable[[], str],
     max_upload_bytes: int = 100 * 1024 * 1024,
 ) -> tuple[list[dict], list[str]]:
+    try:
+        return await _write_document_uploads(files, document_upload_dir, project_dir, now_ts, max_upload_bytes)
+    finally:
+        for upload in files:
+            close = getattr(upload, "close", None)
+            if callable(close):
+                await close()
+
+
+async def _write_document_uploads(
+    files: list[UploadFile],
+    document_upload_dir: Path,
+    project_dir: Path,
+    now_ts: Callable[[], str],
+    max_upload_bytes: int,
+) -> tuple[list[dict], list[str]]:
     uploaded_items: list[dict] = []
     notices: list[str] = []
     seen_names: set[str] = set()

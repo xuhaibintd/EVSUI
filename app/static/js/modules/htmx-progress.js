@@ -166,6 +166,32 @@
     }
     document.body.dataset.afterSwapBound = "1";
 
+    document.body.addEventListener("htmx:beforeSwap", (event) => {
+      const xhr = event.detail && event.detail.xhr;
+      if (!xhr || xhr.status !== 422) {
+        return;
+      }
+      const contentType = xhr.getResponseHeader("Content-Type") || "";
+      if (contentType.includes("application/json")) {
+        let message = "Check the submitted fields and try again.";
+        try {
+          const detail = JSON.parse(xhr.responseText).detail;
+          if (typeof detail === "string") {
+            message = detail;
+          } else if (Array.isArray(detail)) {
+            message = detail.map((item) => String(item.msg || "Invalid value")).join(" ");
+          }
+        } catch (_error) {
+          // Keep the generic message; never inject an unparsed response.
+        }
+        event.detail.serverResponse = `<div class="status err" role="status">${app.escapeHtml(message)}</div>`;
+      } else if (!contentType.includes("text/html")) {
+        return;
+      }
+      event.detail.shouldSwap = true;
+      event.detail.isError = false;
+    });
+
     document.body.addEventListener("htmx:afterSwap", (event) => {
       const target = event.target;
       if (target && target.id === "chat-messages") {

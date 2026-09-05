@@ -30,10 +30,6 @@
   }
 
   function renderSelection(viewer, item, mode) {
-    if (!item) {
-      return;
-    }
-    const data = parseItemJson(item);
     const activeMode = mode || viewer.dataset.activeJsonViewerTab || "json";
     viewer.dataset.activeJsonViewerTab = activeMode;
     setActiveTab(viewer, activeMode);
@@ -46,6 +42,15 @@
     const subtitle = viewer.querySelector("[data-json-viewer-subtitle]");
     const path = viewer.querySelector("[data-json-viewer-path]");
     const code = viewer.querySelector("[data-json-viewer-code]");
+
+    if (!item) {
+      if (title) title.textContent = "No matching elements";
+      if (subtitle) subtitle.textContent = "Change the filters to view an element.";
+      if (path) path.textContent = "";
+      if (code) code.textContent = "";
+      return;
+    }
+    const data = parseItemJson(item);
 
     if (title) {
       title.textContent = `#${item.dataset.index || ""} ${item.dataset.type || "UNKNOWN"}`;
@@ -94,7 +99,7 @@
     });
 
     const selected = viewer.querySelector("[data-json-viewer-item].is-selected:not([hidden])");
-    if (!selected && firstVisible) {
+    if (!selected) {
       renderSelection(viewer, firstVisible, viewer.dataset.activeJsonViewerTab || "json");
     }
   }
@@ -116,7 +121,7 @@
       const tab = event.target.closest("[data-json-viewer-tab]");
       if (tab && viewer.contains(tab)) {
         event.preventDefault();
-        const selected = viewer.querySelector("[data-json-viewer-item].is-selected") || viewer.querySelector("[data-json-viewer-item]:not([hidden])");
+        const selected = viewer.querySelector("[data-json-viewer-item].is-selected:not([hidden])") || viewer.querySelector("[data-json-viewer-item]:not([hidden])");
         renderSelection(viewer, selected, tab.dataset.jsonViewerTab || "json");
       }
     });

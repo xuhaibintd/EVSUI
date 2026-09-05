@@ -47,7 +47,7 @@ class CreatePanelBookRAGToggleTests(unittest.TestCase):
         app_js = (TEMPLATES_DIR.parent / "static" / "js" / "app.js").read_text(encoding="utf-8")
 
         self.assertIn('type="module"', source)
-        self.assertIn('./modules/create-uploads.js?v=20260827-1', app_js)
+        self.assertIn('./modules/create-uploads.js?v=20260905-2', app_js)
 
     def test_bookrag_mandatory_stages_do_not_render_optional_controls(self):
         source = (TEMPLATES_DIR / "partials" / "create_panel.html").read_text(encoding="utf-8")

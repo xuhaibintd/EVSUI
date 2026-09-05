@@ -14,3 +14,7 @@ app/config/local_dev.json
 app/config/unstructured.json
 app/config/unstructured_models.json
 data/
+test-results/
+.coverage
+htmlcov/
+.run/

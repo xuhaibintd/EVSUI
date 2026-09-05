@@ -9,12 +9,12 @@ WORKDIR /app
 COPY . /app
 RUN python -m pip install --no-cache-dir --upgrade pip \
     && python -m pip install --no-cache-dir . \
-    && addgroup --system --gid 10001 evsui \
-    && adduser --system --uid 10001 --ingroup evsui evsui \
+    && addgroup --system --gid 10001 teradataevsui \
+    && adduser --system --uid 10001 --ingroup teradataevsui teradataevsui \
     && mkdir -p /app/data /app/uploads /app/pem_runtime \
-    && chown -R evsui:evsui /app
+    && chown -R teradataevsui:teradataevsui /app
 
-USER evsui
+USER teradataevsui
 EXPOSE 8010
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \

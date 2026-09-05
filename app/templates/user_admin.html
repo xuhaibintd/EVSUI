@@ -95,7 +95,7 @@
               <label class="system-connection-default"><input type="checkbox" name="is_default" value="true" {% if connection_config.is_default %}checked{% endif %} /> <span>Use as default connection</span></label>
               <div class="connection-profile-editor-buttons">
                 {% if connection_config.id %}
-                <button type="submit" class="ghost connection-delete-button" formaction="/admin/connections/{{ connection_config.id }}/delete" formnovalidate onclick="return confirm('Delete this connection?');">Delete</button>
+                <button type="submit" class="ghost connection-delete-button" formaction="/admin/connections/{{ connection_config.id }}/delete" formnovalidate data-confirm-message="Delete this connection?">Delete</button>
                 {% endif %}
                 <button type="submit">{% if connection_config.id %}Save changes{% else %}Create connection{% endif %}</button>
               </div>

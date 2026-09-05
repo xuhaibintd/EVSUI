@@ -6,6 +6,7 @@ import os
 import time
 
 from app.core.security import redact_sensitive_data
+from app.core.form_fields import validate_create_field
 from app.services.create_config import (
     CORE_CREATE_FIELDS,
     CREATE_FIELDS,
@@ -199,7 +200,7 @@ async def handle_upload_and_prepare_create(
     app.state.document_upload_notices = upload_notices
 
     create_values: dict[str, str] = default_create_values()
-    vector_store_name = str(form.get("vector_store_name", "")).strip()
+    vector_store_name = validate_create_field("vector_store_name", str(form.get("vector_store_name", "")).strip())
     requested_preset = str(form.get("create_preset", "auto")).strip().lower() or "auto"
     create_mode = str(form.get("create_mode", "core")).strip().lower() or "core"
     selected_search_algorithm = str(form.get("search_algorithm", "")).strip().upper()
@@ -316,9 +317,8 @@ async def handle_upload_and_prepare_create(
         field_name = field["name"]
         posted = field_name in form
         raw = str(form.get(field_name, "")).strip() if posted else create_values.get(field_name, "")
-        if posted and len(raw) > CREATE_FIELD_MAX_LEN:
-            raw = raw[:CREATE_FIELD_MAX_LEN]
-            warnings.append(f"Field [{field_name}] exceeded {CREATE_FIELD_MAX_LEN} chars and was truncated.")
+        if posted:
+            raw = validate_create_field(field_name, raw)
         create_values[field_name] = raw
         if (not posted) or field_name not in allowed_fields or not raw:
             continue

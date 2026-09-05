@@ -1,4 +1,4 @@
-"""Stable EVSUI boundary for the Unstructured Pipeline API."""
+"""Stable teradataevsui boundary for the Unstructured Pipeline API."""
 
 from app.integrations.unstructured.contracts import validate_workflow_nodes
 from app.integrations.unstructured.gateway import (

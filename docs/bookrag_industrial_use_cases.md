@@ -6,7 +6,7 @@
 
 This is a decision document for product owners, sales teams, solution architects, delivery teams, and domain reviewers. It answers five practical questions:
 
-1. What can the current EVSUI BookRAG implementation honestly deliver?
+1. What can the current teradataevsui BookRAG implementation honestly deliver?
 2. Which business workflow should be the first commercial target?
 3. How should a candidate use case be qualified before a pilot?
 4. What must be measured for a go/no-go decision?
@@ -25,7 +25,7 @@ Secondary targets are policy/control review, regulated quality investigations, a
 This recommendation is a product hypothesis to validate, not a market-size claim. It is supported by two observable conditions:
 
 - Public filing systems such as [SEC EDGAR](https://www.sec.gov/search-filings) expose recurring, date- and issuer-scoped disclosure corpora, making the workflow reproducible and testable.
-- The [NIST AI Risk Management Framework](https://www.nist.gov/itl/ai-risk-management-framework) and its [Generative AI Profile](https://www.nist.gov/publications/artificial-intelligence-risk-management-framework-generative-artificial-intelligence) emphasize risk management and evaluation across the AI lifecycle. EVSUI therefore treats human review, measurable evidence quality, and explicit production controls as design requirements.
+- The [NIST AI Risk Management Framework](https://www.nist.gov/itl/ai-risk-management-framework) and its [Generative AI Profile](https://www.nist.gov/publications/artificial-intelligence-risk-management-framework-generative-artificial-intelligence) emphasize risk management and evaluation across the AI lifecycle. teradataevsui therefore treats human review, measurable evidence quality, and explicit production controls as design requirements.
 
 ## 1. Current Product Contract
 
@@ -125,7 +125,7 @@ When a new annual report, quarterly report, results presentation, correction, or
 | Economic buyer | Research, credit-risk, investor-relations, internal-audit, or data/AI leadership |
 | Primary user | Analyst who locates and interprets disclosure evidence |
 | Reviewer | Senior analyst, committee secretary, audit reviewer, or subject-matter specialist |
-| EVSUI deliverable | Ranked evidence packages with document/date/section/page/source provenance |
+| teradataevsui deliverable | Ranked evidence packages with document/date/section/page/source provenance |
 | Downstream deliverable | Reviewed briefing, variance note, research memo, or issue list |
 
 ### In-scope corpus
@@ -162,7 +162,7 @@ flowchart TD
 - Which document updates, supplements, summarizes, or follows an earlier document?
 - What section/page evidence should be assembled before a period-over-period comparison performed by an analyst or downstream application?
 
-The last question deliberately stops at evidence assembly. EVSUI does not itself perform a complete period-over-period calculation or contradiction analysis.
+The last question deliberately stops at evidence assembly. teradataevsui does not itself perform a complete period-over-period calculation or contradiction analysis.
 
 ### Suggested first-pilot envelope
 
@@ -271,7 +271,7 @@ This taxonomy prevents prompt changes from being used to hide corpus, metadata, 
 
 ## 6. Production Controls and Ownership
 
-| Control area | Current EVSUI support | Required production decision |
+| Control area | Current teradataevsui support | Required production decision |
 |---|---|---|
 | Authentication | SQLite users, Argon2 passwords, expiring/revocable server sessions, API token | Enterprise identity, MFA/SSO, service identity, token lifecycle |
 | Authorization | Admin-enforced user management and request-level UI separation | Corpus/document/row-level access aligned with source permissions |
@@ -298,7 +298,7 @@ High-impact deployments should align evaluation and control design with the orga
 
 ## 8. Related Implementation References
 
-- [EVSUI overall design and setup](../README.md#overall-design)
+- [teradataevsui overall design and setup](../README.md#overall-design)
 - [BookRAG pipeline and data structures](bookrag_pipeline_diagram.md)
 - [Latest-document governance](bookrag_latest_document_governance.md)
 - `GET /api/bookrag/schema` for authoritative physical table names and join contracts

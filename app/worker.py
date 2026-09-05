@@ -7,6 +7,7 @@ import threading
 
 from app.auth_store import AuthStore
 from app.core.settings import Settings
+from app.core.process_lock import ProcessLock
 from app.services.artifact_lifecycle import ArtifactLifecycle
 from app.services.job_worker import PersistentJobWorker
 from app.services.maintenance_jobs import build_maintenance_job_handlers
@@ -46,8 +47,36 @@ def build_worker(settings: Settings) -> PersistentJobWorker:
     return PersistentJobWorker(auth_store.jobs, handlers=handlers)
 
 
+def run_worker(settings: Settings, stop: threading.Event, *, once: bool = False,
+               max_jobs: int = 100, poll_seconds: float = 1.0, on_ready=None) -> int:
+    """Drain the current job on stop; guard manual and managed workers alike."""
+    with ProcessLock(settings.database_path.with_suffix(".worker.lock")):
+        worker = build_worker(settings)
+        recovered = worker.recover_interrupted(stale_seconds=settings.job_stale_seconds)
+        if recovered:
+            logger.warning("Recovered %s interrupted job(s).", recovered)
+        if on_ready is not None:
+            on_ready()
+        logger.info("Worker started with %s registered handler(s).", len(worker.handlers))
+        completed_count = 0
+        while not stop.is_set():
+            completed = worker.run_once()
+            if completed is None:
+                if once:
+                    break
+                stop.wait(max(0.1, poll_seconds))
+            else:
+                completed_count += 1
+                logger.info("Job %s (%s) finished with status %s.",
+                            completed["id"], completed["kind"], completed["status"])
+                if once and completed_count >= max(1, max_jobs):
+                    break
+        logger.info("Worker stopped after processing %s job(s).", completed_count)
+    return 0
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run the EVSUI durable workflow worker.")
+    parser = argparse.ArgumentParser(description="Run the teradataevsui durable workflow worker.")
     parser.add_argument("--once", action="store_true", help="Drain currently queued work and exit.")
     parser.add_argument("--max-jobs", type=int, default=100)
     parser.add_argument("--poll-seconds", type=float, default=1.0)
@@ -55,15 +84,6 @@ def main() -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     settings = Settings.from_env()
-    worker = build_worker(settings)
-    recovered = worker.recover_interrupted(stale_seconds=settings.job_stale_seconds)
-    if recovered:
-        logger.warning("Recovered %s interrupted job(s).", recovered)
-    if args.once:
-        completed = worker.run_until_empty(max_jobs=args.max_jobs)
-        logger.info("Processed %s job(s).", len(completed))
-        return 0
-
     stop = threading.Event()
 
     def request_stop(_signum, _frame) -> None:
@@ -71,20 +91,7 @@ def main() -> int:
 
     signal.signal(signal.SIGINT, request_stop)
     signal.signal(signal.SIGTERM, request_stop)
-    logger.info("Worker started with %s registered handler(s).", len(worker.handlers))
-    while not stop.is_set():
-        completed = worker.run_once()
-        if completed is None:
-            stop.wait(max(0.1, float(args.poll_seconds)))
-        else:
-            logger.info(
-                "Job %s (%s) finished with status %s.",
-                completed["id"],
-                completed["kind"],
-                completed["status"],
-            )
-    logger.info("Worker stopped.")
-    return 0
+    return run_worker(settings, stop, once=args.once, max_jobs=args.max_jobs, poll_seconds=args.poll_seconds)
 
 
 if __name__ == "__main__":

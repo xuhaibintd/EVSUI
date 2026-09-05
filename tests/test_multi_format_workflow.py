@@ -339,8 +339,10 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
                 summary = multi_format.run_bookrag_csv_load(
                     csv_run_id=csv_run_id,
                     execute_sql_fn=execute_mock,
+                    connection_profile_id=7,
+                    connection_target_fingerprint="fixture-target",
                 )
-                ready_summary = multi_format.get_ready_bookrag_csv_load_summary(csv_run_id=csv_run_id)
+                ready_summary = multi_format.get_ready_bookrag_csv_load_summary(csv_run_id=csv_run_id, connection_profile_id=7, connection_target_fingerprint="fixture-target")
 
                 failed_manifest = multi_format.json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
                 failed_manifest["load_status"] = "failed"
@@ -352,6 +354,8 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
                     retry_summary = multi_format.run_bookrag_csv_load(
                         csv_run_id=csv_run_id,
                         execute_sql_fn=execute_mock,
+                        connection_profile_id=7,
+                        connection_target_fingerprint="fixture-target",
                     )
 
             self.assertEqual(summary["status"], "ready")
@@ -363,6 +367,8 @@ class MultiFormatWorkflowDefinitionTests(unittest.TestCase):
             self.assertTrue(any("partial target table" in warning for warning in retry_summary["warnings"]))
             saved_manifest = multi_format.json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(saved_manifest["load_status"], "ready")
+            self.assertEqual(saved_manifest["connection_profile_id"], 7)
+            self.assertEqual(saved_manifest["connection_target_fingerprint"], "fixture-target")
             self.assertEqual(saved_manifest["vector_store_status"], "not_started")
             self.assertEqual(saved_manifest["load_retry_count"], 1)
             self.assertEqual(len(saved_manifest["load_recovered_tables"]), 7)
@@ -1854,8 +1860,13 @@ class MultiFormatStagedPipelineTests(unittest.TestCase):
                     multi_format, "_count_teradata_rows", return_value=2
                 ):
                     loaded = multi_format.run_multi_format_csv_load(
-                        csv_run_id=generated["csv_run_id"], execute_sql_fn=mock.Mock()
+                        csv_run_id=generated["csv_run_id"], execute_sql_fn=mock.Mock(), connection_profile_id=7,
+                        connection_target_fingerprint="fixture-target",
                     )
+                    saved_manifest = multi_format.json.loads(Path(generated["manifest_path"]).read_text(encoding="utf-8"))
+                    self.assertEqual(saved_manifest["connection_profile_id"], 7)
+                    self.assertEqual(loaded["connection_profile_id"], 7)
+                    self.assertEqual(saved_manifest["connection_target_fingerprint"], "fixture-target")
 
             self.assertEqual(loaded["persisted_row_count"], 2)
             self.assertEqual(loaded["qualified_table"], "demo_schema.demo_unstructured")

@@ -6,7 +6,7 @@
 
 本書は、プロダクト責任者、営業、ソリューションアーキテクト、導入チーム、業務審査者のための意思決定資料です。次の5点を明確にします。
 
-1. 現行 EVSUI BookRAG が実際に提供できるもの
+1. 現行 teradataevsui BookRAG が実際に提供できるもの
 2. 最初に狙うべき商用業務
 3. 実証前にユースケースを選別する方法
 4. Go / No-Go のために測定すべき指標
@@ -25,7 +25,7 @@ BookRAG が規制、金融、法務、臨床、安全、技術上の判断を自
 この優先順位は市場規模の断定ではなく、検証すべき製品仮説です。背景となる観察事実は次のとおりです。
 
 - [SEC EDGAR](https://www.sec.gov/search-filings) のような公開制度は、企業・日付で特定できる反復的な開示文書を提供しており、再現可能な評価コーパスを作れます。
-- [NIST AI Risk Management Framework](https://www.nist.gov/itl/ai-risk-management-framework) と [Generative AI Profile](https://www.nist.gov/publications/artificial-intelligence-risk-management-framework-generative-artificial-intelligence) は、AI ライフサイクル全体のリスク管理と評価を重視しています。このため EVSUI でも、人による審査、測定可能な根拠品質、明示的な本番統制を設計条件とします。
+- [NIST AI Risk Management Framework](https://www.nist.gov/itl/ai-risk-management-framework) と [Generative AI Profile](https://www.nist.gov/publications/artificial-intelligence-risk-management-framework-generative-artificial-intelligence) は、AI ライフサイクル全体のリスク管理と評価を重視しています。このため teradataevsui でも、人による審査、測定可能な根拠品質、明示的な本番統制を設計条件とします。
 
 ## 1. 現行製品の契約
 
@@ -125,7 +125,7 @@ flowchart LR
 | 経済的買い手 | リサーチ、与信リスク、IR、内部監査、データ/AI 責任者 |
 | 主利用者 | 開示根拠を検索・解釈するアナリスト |
 | 審査者 | シニアアナリスト、委員会事務局、監査審査者、専門家 |
-| EVSUI 成果物 | 文書・日付・章・ページ・元要素付きの順位付けされた根拠 |
+| teradataevsui 成果物 | 文書・日付・章・ページ・元要素付きの順位付けされた根拠 |
 | 下流成果物 | 審査済みブリーフィング、差異メモ、調査メモ、論点一覧 |
 
 ### 対象文書
@@ -162,7 +162,7 @@ flowchart TD
 - どの文書が以前の文書を更新、補足、要約、後継しているか。
 - アナリストまたは外部アプリが期間比較する前に、どの章・ページ根拠を集めるべきか。
 
-最後の質問は根拠収集までです。EVSUI 単体は、完全な期間比較計算や矛盾分析を行いません。
+最後の質問は根拠収集までです。teradataevsui 単体は、完全な期間比較計算や矛盾分析を行いません。
 
 ### 初回実証の目安
 
@@ -271,7 +271,7 @@ production_owner:
 
 ## 6. 本番統制と責任
 
-| 統制領域 | 現行 EVSUI | 本番で決めること |
+| 統制領域 | 現行 teradataevsui | 本番で決めること |
 |---|---|---|
 | 認証 | SQLite user、Argon2 password、期限・失効付き server session、API token | 企業 ID、MFA/SSO、service identity、token lifecycle |
 | 認可 | admin 限定 user 管理と request 単位の UI 分離 | 元権限と一致する corpus/document/row-level access |
@@ -298,7 +298,7 @@ production_owner:
 
 ## 8. 実装資料
 
-- [EVSUI 全体設計とセットアップ](../README.md#overall-design)
+- [teradataevsui 全体設計とセットアップ](../README.md#overall-design)
 - [BookRAG pipeline とデータ構造](bookrag_pipeline_diagram.md)
 - [最新文書の統制](bookrag_latest_document_governance.md)
 - `GET /api/bookrag/schema`: 正式な物理テーブル名・join contract

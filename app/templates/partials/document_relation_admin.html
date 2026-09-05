@@ -1,4 +1,5 @@
 {% set relation_admin = document_relation_admin|default({}) %}
+{% set can_edit = relation_admin.can_manage_governance|default(true) %}
 <div
   id="document-relation-admin"
   class="document-relation-admin"
@@ -37,14 +38,18 @@
         </select>
       </label>
       <button type="submit" class="wizard-btn">Load</button>
-      <button type="submit" name="refresh" value="true" class="ghost wizard-btn">Refresh Vector Stores</button>
-      {% if relation_admin.selected_vector_store and not relation_admin.table_initialized %}
+      <button type="submit" name="refresh" value="true" formnovalidate class="ghost wizard-btn">Refresh Vector Stores</button>
+      {% if can_edit and relation_admin.selected_vector_store and not relation_admin.table_initialized %}
       <button type="button" class="ghost wizard-btn" hx-post="/ui/admin/document-relations/initialize" hx-vals='{"vector_store_name":"{{ relation_admin.selected_vector_store }}"}' hx-target="#document-relation-admin" hx-swap="outerHTML">Initialize bdrel</button>
       {% endif %}
     </form>
+    {% if not relation_admin.vector_store_options|default([]) %}
+    <p class="muted">Refresh Vector Stores to retrieve the available stores, then select one and load its relationships.</p>
+    {% endif %}
     {% if relation_admin.selected_vector_store and relation_admin.table_initialized %}
     <div class="document-relation-import-export">
       <a class="ghost wizard-btn" href="/ui/admin/document-relations/export?vector_store_name={{ relation_admin.selected_vector_store|urlencode }}">Export CSV</a>
+      {% if can_edit %}
       <form
         enctype="multipart/form-data"
         hx-post="/ui/admin/document-relations/import"
@@ -55,11 +60,12 @@
         <input type="file" name="relation_csv" accept=".csv,text/csv" required />
         <button type="submit" class="ghost wizard-btn">Import CSV</button>
       </form>
+      {% endif %}
     </div>
     {% endif %}
   </section>
 
-  {% if relation_admin.documents|default([]) %}
+  {% if can_edit and relation_admin.documents|default([]) and relation_admin.table_initialized %}
   <section class="admin-rule-card">
     <div class="admin-rule-card-head"><h4>Add Relationship</h4></div>
     <form class="document-relation-admin-form" hx-post="/ui/admin/document-relations/save" hx-target="#document-relation-admin" hx-swap="outerHTML">
@@ -97,7 +103,7 @@
             <td>{{ row.relation_description|default('', true) }}</td>
             <td>{{ row.source_type|default('human', true) }}</td>
             <td>
-              {% if relation_admin.table_initialized %}
+              {% if can_edit and relation_admin.table_initialized %}
               <details class="document-relation-edit-details">
                 <summary>Edit</summary>
                 <form hx-post="/ui/admin/document-relations/save" hx-target="#document-relation-admin" hx-swap="outerHTML">
@@ -127,7 +133,7 @@
                 hx-target="#document-relation-admin"
                 hx-swap="outerHTML"
               >Delete</button>
-              {% else %}Draft{% endif %}
+              {% else %}<span class="muted">Read only</span>{% endif %}
             </td>
           </tr>
         {% endfor %}

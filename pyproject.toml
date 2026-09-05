@@ -3,7 +3,7 @@ requires = ["setuptools>=75", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "evsui"
+name = "teradataevsui"
 version = "0.7.0"
 description = "FastAPI and HTMX interface for Teradata Vector Store workflows"
 readme = "README.md"
@@ -28,6 +28,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+browser = ["playwright>=1.50,<2"]
 dev = [
   "coverage[toml]>=7.6,<8",
   "pytest>=8.3,<9",
@@ -35,6 +36,10 @@ dev = [
 ]
 
 [project.scripts]
+teradataevsui-db = "app.db.__main__:main"
+teradataevsui-ops = "app.ops.__main__:main"
+teradataevsui-worker = "app.worker:main"
+# Compatibility aliases for existing automation.
 evsui-db = "app.db.__main__:main"
 evsui-ops = "app.ops.__main__:main"
 evsui-worker = "app.worker:main"

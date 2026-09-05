@@ -5,7 +5,9 @@
   <aside class="panel left-menu">
     <p class="eyebrow">Vector Store Navigation</p>
     <button class="menu-item active" type="button" data-section="section-connect">Connect &amp; Manage</button>
+    {% if user_role|default('viewer') in ['admin', 'operator'] %}
     <button class="menu-item {% if not evs.connected %}disabled locked{% endif %}" type="button" data-section="section-create" aria-disabled="{% if not evs.connected %}true{% else %}false{% endif %}" {% if not evs.connected %}disabled{% endif %}>Vector Store Creation</button>
+    {% endif %}
     <button class="menu-item {% if not evs.connected %}disabled locked{% endif %}" type="button" data-section="section-chat" aria-disabled="{% if not evs.connected %}true{% else %}false{% endif %}" {% if not evs.connected %}disabled{% endif %}>Vector Store Retrieval</button>
     <button class="menu-item {% if not evs.connected %}disabled locked{% endif %}" type="button" data-section="section-admin" aria-disabled="{% if not evs.connected %}true{% else %}false{% endif %}" {% if not evs.connected %}disabled{% endif %}>BookRAG Governance</button>
     <p id="menu-hint" class="menu-hint muted"></p>
@@ -19,7 +21,11 @@
       </div>
       <div class="wizard-nav">
         <div class="wizard-actions">
+          {% if user_role|default('viewer') in ['admin', 'operator'] %}
           <button type="button" class="wizard-btn" data-target="section-create" data-requires-connected="true" {% if not evs.connected %}disabled{% endif %}>Next: Vector Store Creation</button>
+          {% else %}
+          <button type="button" class="wizard-btn" data-target="section-chat" data-requires-connected="true" {% if not evs.connected %}disabled{% endif %}>Next: Vector Store Retrieval</button>
+          {% endif %}
         </div>
       </div>
     </article>
@@ -42,7 +48,7 @@
       </div>
       <div class="wizard-nav">
         <div class="wizard-actions">
-          <button type="button" class="ghost wizard-btn" data-target="section-create">Back</button>
+          <button type="button" class="ghost wizard-btn" data-target="{% if user_role|default('viewer') in ['admin', 'operator'] %}section-create{% else %}section-connect{% endif %}">Back</button>
           <button type="button" class="wizard-btn" data-target="section-admin" data-requires-connected="true" {% if not evs.connected %}disabled{% endif %}>Next: BookRAG Governance</button>
           <button type="button" class="ghost wizard-btn" data-target="section-connect">Go to Connect</button>
         </div>

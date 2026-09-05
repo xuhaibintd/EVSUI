@@ -29,7 +29,8 @@
   {% elif field.get('kind') == 'textarea' %}
   <textarea name="{{ field.get('name', '') }}"{% if field.get('required') %} required{% endif %}{% if not connected or not enabled %} disabled{% endif %}{{ render_attrs(field.get('input_attrs')) }} placeholder="{{ field.get('placeholder', '') }}">{{ value }}</textarea>
   {% else %}
-  <input type="{{ field.get('kind', 'text') }}" name="{{ field.get('name', '') }}" value="{{ value }}" placeholder="{{ field.get('placeholder', '') }}"{% if field.get('required') %} required{% endif %}{% if not connected or not enabled %} disabled{% endif %}{{ render_attrs(field.get('input_attrs')) }} />
+  {% set is_secret = field.get('name', '').endswith('_api_key') %}
+  <input type="{{ 'password' if is_secret else field.get('kind', 'text') }}" name="{{ field.get('name', '') }}" value="{{ value }}" placeholder="{{ field.get('placeholder', '') }}"{% if is_secret %} autocomplete="new-password"{% endif %}{% if field.get('required') %} required{% endif %}{% if not connected or not enabled %} disabled{% endif %}{{ render_attrs(field.get('input_attrs')) }} />
   {% endif %}
 </label>
 {%- endmacro %}

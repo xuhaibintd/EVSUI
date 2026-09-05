@@ -1,5 +1,8 @@
 ﻿{% import "partials/create_field_macros.html" as fields %}
 
+{% if user_role|default('viewer') not in ['admin', 'operator'] %}
+<p class="muted">Your account has read-only access. Contact an administrator to create vector stores.</p>
+{% else %}
 <form
   class="stack {% if not evs.connected %}disabled-block{% endif %}"
   hx-post="/ui/create/upload"
@@ -158,4 +161,5 @@
 <div id="create-result">
   {% include "partials/create_result.html" %}
 </div>
+{% endif %}
 

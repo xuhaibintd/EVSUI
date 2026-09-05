@@ -51,7 +51,7 @@ class CredentialVault:
             if not self.allow_generated_key:
                 raise RuntimeError(
                     f"Credential key file does not exist: {key_path}. "
-                    "Create it before starting EVSUI in production."
+                    "Create it before starting teradataevsui in production."
                 )
             generated = Fernet.generate_key()
             try:

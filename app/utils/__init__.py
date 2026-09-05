@@ -1,1 +1,1 @@
-"""Utility helpers for EVSUI."""
+"""Utility helpers for teradataevsui."""

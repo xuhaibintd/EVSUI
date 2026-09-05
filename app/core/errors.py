@@ -3,11 +3,13 @@ from __future__ import annotations
 import logging
 import traceback
 import uuid
+from html import escape
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 from app.core.security import redact_sensitive_text
+from app.core.form_fields import CreateFieldValidationError
 
 
 logger = logging.getLogger("evsui.errors")
@@ -22,6 +24,14 @@ def _request_id(request: Request) -> str:
 
 def configure_error_handlers(application: FastAPI) -> None:
     """Return stable public errors while logging a redacted diagnostic trace."""
+
+    @application.exception_handler(CreateFieldValidationError)
+    async def invalid_creation_field(request: Request, exception: CreateFieldValidationError):
+        if request.headers.get("HX-Request", "").lower() == "true":
+            return HTMLResponse(
+                f'<div class="status err" role="status">{escape(str(exception))}</div>', status_code=422,
+            )
+        return JSONResponse({"detail": str(exception)}, status_code=422)
 
     @application.exception_handler(Exception)
     async def unexpected_error(request: Request, exception: Exception):

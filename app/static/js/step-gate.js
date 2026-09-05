@@ -10,6 +10,8 @@
     const wizardNoteSelector = options.wizardNoteSelector || "#section-connect .wizard-note";
     const noteConnectedText = options.noteConnectedText || "Step 1 completed. Continue to Step 2.";
     const noteDisconnectedText = options.noteDisconnectedText || "Complete Step 1 to continue.";
+    const connectionDisabled = new WeakMap();
+    const connectionBlocks = new WeakSet();
 
     function menuLayout() {
       return document.querySelector(".menu-layout");
@@ -85,9 +87,17 @@
         section.classList.toggle("locked", locked);
 
 
-        section
-          .querySelectorAll(".panel-content .disabled-block")
-          .forEach((block) => block.classList.toggle("disabled-block", locked));
+        section.querySelectorAll(".panel-content .disabled-block, .panel-content [data-connection-block]")
+          .forEach((block) => {
+            if (locked) {
+              connectionBlocks.add(block);
+              block.setAttribute("data-connection-block", "");
+              block.classList.add("disabled-block");
+            } else if (connectionBlocks.has(block)) {
+              block.classList.remove("disabled-block");
+              connectionBlocks.delete(block);
+            }
+          });
 
         section
           .querySelectorAll(".panel-content input, .panel-content textarea, .panel-content select, .panel-content button")
@@ -98,7 +108,15 @@
               control instanceof HTMLSelectElement ||
               control instanceof HTMLButtonElement
             ) {
-              control.disabled = locked;
+              if (locked) {
+                if (!connectionDisabled.has(control)) {
+                  connectionDisabled.set(control, control.disabled);
+                }
+                control.disabled = true;
+              } else if (connectionDisabled.has(control)) {
+                control.disabled = connectionDisabled.get(control);
+                connectionDisabled.delete(control);
+              }
             }
           });
       });

@@ -132,6 +132,7 @@
       return;
     }
     if (createForm.dataset.validationBound === "1") {
+      createForm.dispatchEvent(new CustomEvent("evsui:refresh-create-rules"));
       return;
     }
     createForm.dataset.validationBound = "1";
@@ -227,6 +228,9 @@
     };
 
     const syncConditionalRules = () => {
+      if (typeof app.syncCreateParameters === "function") {
+        app.syncCreateParameters(createForm);
+      }
       clearValidity(vectorStoreName);
       clearValidity(getBookragLoadedRunSelect());
       clearValidity(getMultiFormatLoadedRunSelect());
@@ -243,7 +247,7 @@
       const isMultiFormat = docPipelineMode instanceof HTMLSelectElement && docPipelineMode.value === "multi_format";
       const loadedRunSelect = getBookragLoadedRunSelect();
       const multiFormatLoadedRunSelect = getMultiFormatLoadedRunSelect();
-      const formLocked = createForm.classList.contains("disabled-block");
+      const formLocked = createForm.classList.contains("disabled-block") || createForm.dataset.readOnly === "true";
       if (loadedRunSelect instanceof HTMLSelectElement) {
         loadedRunSelect.disabled = formLocked || !isBookrag;
       }
@@ -271,14 +275,14 @@
       }
       if (csvButton instanceof HTMLButtonElement && !csvButton.classList.contains("is-loading")) {
         const hasParseRun = parseRunSelect instanceof HTMLSelectElement && Boolean(parseRunSelect.value.trim());
-        csvButton.disabled = !hasParseRun;
+        csvButton.disabled = formLocked || !isBookrag || !hasParseRun;
       }
       if (multiFormatParseButton instanceof HTMLButtonElement && !multiFormatParseButton.classList.contains("is-loading")) {
         multiFormatParseButton.disabled = formLocked || !isMultiFormat || isUploadInProgress() || uploadedCount === 0;
       }
       if (multiFormatCsvButton instanceof HTMLButtonElement && !multiFormatCsvButton.classList.contains("is-loading")) {
         const hasParseRun = multiFormatParseRunSelect instanceof HTMLSelectElement && Boolean(multiFormatParseRunSelect.value.trim());
-        multiFormatCsvButton.disabled = !hasParseRun;
+        multiFormatCsvButton.disabled = formLocked || !isMultiFormat || !hasParseRun;
       }
       if (objectNames instanceof HTMLInputElement) {
         objectNames.required = false;
@@ -464,6 +468,7 @@
 
     createForm.addEventListener("evsui:uploaded-files-updated", syncConditionalRules);
     createForm.addEventListener("evsui:upload-state-changed", syncConditionalRules);
+    createForm.addEventListener("evsui:refresh-create-rules", syncConditionalRules);
     if (uploadedPreview instanceof HTMLElement && uploadedPreview.dataset.validationObserverBound !== "1") {
       uploadedPreview.dataset.validationObserverBound = "1";
       const observer = new MutationObserver(() => {
@@ -479,54 +484,11 @@
     syncConditionalRules();
   }
 
-  function enforceCreateInputLength(scope = document) {
-    const fields = scope.querySelectorAll("#section-create input:not([type='file']):not([type='hidden']), #section-create textarea");
-    const clamp = (field) => {
-      if (!(field instanceof HTMLInputElement) && !(field instanceof HTMLTextAreaElement)) {
-        return;
-      }
-      if (field.value.length > 50) {
-        field.value = field.value.slice(0, 50);
-      }
-    };
-
-    fields.forEach((field) => {
-      if (!(field instanceof HTMLInputElement) && !(field instanceof HTMLTextAreaElement)) {
-        return;
-      }
-      if (!(field instanceof HTMLInputElement && field.type === "number")) {
-        field.maxLength = 50;
-      }
-      clamp(field);
-      if (field.dataset.lengthBound === "1") {
-        return;
-      }
-      field.dataset.lengthBound = "1";
-      field.addEventListener("input", () => clamp(field));
-      field.addEventListener("paste", () => setTimeout(() => clamp(field), 0));
-    });
-
-    const createForm = scope.querySelector("#section-create form[hx-post='/ui/create/upload']");
-    if (createForm instanceof HTMLFormElement && createForm.dataset.lengthBound !== "1") {
-      createForm.dataset.lengthBound = "1";
-      createForm.addEventListener(
-        "submit",
-        () => {
-          const submitFields = createForm.querySelectorAll("input:not([type='file']):not([type='hidden']), textarea");
-          submitFields.forEach((item) => clamp(item));
-        },
-        true
-      );
-    }
-  }
-
   app.bindCreateFileUpload = bindCreateFileUpload;
   app.bindCustomFileInputs = bindCustomFileInputs;
-  app.enforceCreateInputLength = enforceCreateInputLength;
   app.bindCreateValidation = bindCreateValidation;
 
   app.registerBinder(bindCreateFileUpload);
   app.registerBinder(bindCustomFileInputs);
-  app.registerBinder(enforceCreateInputLength);
   app.registerBinder(bindCreateValidation);
 })(window);

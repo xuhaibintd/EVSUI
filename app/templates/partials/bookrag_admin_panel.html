@@ -29,12 +29,7 @@
         >
           <label class="field">
             <span>JSON File</span>
-            <select id="json-inspector-file" name="json_file">
-              <option value="">Select a JSON file</option>
-              {% for file in inspector.files %}
-              <option value="{{ file.value }}" {% if inspector.selected_file == file.value %}selected{% endif %}>{{ file.label }}</option>
-              {% endfor %}
-            </select>
+            {% include "partials/json_inspector_file_select.html" %}
           </label>
           <button type="submit" class="wizard-btn">Open</button>
           <button type="submit" class="ghost wizard-btn">Refresh</button>

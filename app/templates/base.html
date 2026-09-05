@@ -3,21 +3,22 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Teradata Vector Store</title>
+  <title>teradataevsui</title>
   <link rel="stylesheet" href="{{ url_for('static', path='css/app.css') }}?v=20260905-6" />
+  <script defer src="{{ url_for('static', path='js/confirm-actions.js') }}?v=20260905-1"></script>
   {% if load_app_scripts|default(false) %}
   <script src="https://unpkg.com/htmx.org@2.0.10/dist/htmx.min.js"></script>
-  <script type="module" src="{{ url_for('static', path='js/app.js') }}?v=20260905-1"></script>
+  <script type="module" src="{{ url_for('static', path='js/app.js') }}?v=20260905-2"></script>
   {% endif %}
 </head>
 <body>
   <header class="topbar">
     <div class="brand-block">
-      <a class="brand-home-link" href="/" aria-label="Go to Teradata Vector Store home">
+      <a class="brand-home-link" href="/" aria-label="Go to teradataevsui home">
         <div class="brand-name">
           <img class="brand-logo-img" src="{{ url_for('static', path='img/teradata-logo-2024.png') }}" alt="Teradata" />
         </div>
-        <p class="brand-sub">Enterprise AI Platform</p>
+        <p class="brand-sub">teradataevsui</p>
       </a>
     </div>
     <div class="title-block">

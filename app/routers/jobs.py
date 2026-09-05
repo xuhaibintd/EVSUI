@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from app.core.security import is_sensitive_key
@@ -79,6 +79,8 @@ def queue_workflow_job(request: Request, *, kind: str, payload: dict) -> dict:
     principal = _session_principal(request)
     if repository is None or principal is None:
         raise RuntimeError("The authenticated persistent job service is unavailable.")
+    if principal.role not in {"operator", "admin"}:
+        raise HTTPException(status_code=403, detail="Operator or administrator access is required.")
     public_payload, secret_payload = split_sensitive_job_payload(payload)
     return repository.create(
         kind=kind,
@@ -201,7 +203,7 @@ async def workflow_job_status(request: Request, job_id: str):
         return HTMLResponse("Unauthorized", status_code=401)
     if job is None:
         return HTMLResponse("Job not found", status_code=404)
-    if job.get("status") == "succeeded":
+    if job.get("status") == "succeeded" or (job.get("status") == "failed" and (job.get("result") or {}).get("summary")):
         return _render_completed_workflow_job(request, job)
     return render_job_progress(request, job)
 
@@ -216,6 +218,8 @@ async def cancel_workflow_job(request: Request, job_id: str):
         return HTMLResponse("Unauthorized", status_code=401)
     if job is None:
         return HTMLResponse("Job not found", status_code=404)
+    if principal.role not in {"operator", "admin"}:
+        return HTMLResponse("Operator or administrator access is required.", status_code=403)
     owner_filter = None if principal.role == "admin" else principal.user_id
     request.app.state.job_repository.cancel(job_id, owner_user_id=owner_filter)
     return render_job_progress(request, request.app.state.job_repository.get(job_id) or job)

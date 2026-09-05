@@ -10,7 +10,7 @@ from app.db.migrations import migrate_database, migration_status
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Manage the EVSUI SQLite schema.")
+    parser = argparse.ArgumentParser(description="Manage the teradataevsui SQLite schema.")
     parser.add_argument("command", choices=("migrate", "status", "backup"), nargs="?", default="migrate")
     parser.add_argument("--output", type=Path, help="Backup destination; defaults below data/backups.")
     args = parser.parse_args()

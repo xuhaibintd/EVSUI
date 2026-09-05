@@ -139,6 +139,7 @@
         {% set disconnected_empty_text = "Not connected. Click Connect first." %}
         {% include "partials/vector_store_list_body.html" %}
       </div>
+      {% if user_role|default('viewer') in ['admin', 'operator'] %}
       <div class="vs-destroy-panel" data-vs-destroy-panel>
         <div class="vs-destroy-head">Destroy Selected Vector Store</div>
         <div class="vs-destroy-current">Selected: <strong data-destroy-selected-name>{% if evs.selected_vs_name %}{{ evs.selected_vs_name }}{% else %}(none){% endif %}</strong></div>
@@ -182,6 +183,7 @@
           </section>
         </div>
       </div>
+      {% endif %}
     </article>
     </fieldset>
   </aside>

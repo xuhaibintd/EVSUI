@@ -692,6 +692,7 @@ def _build_home_context(request: Request, app) -> dict:
         "multi_format_csv_runs": multi_format_csv_runs,
         "multi_format_loaded_csv_runs": multi_format_loaded_csv_runs,
         "document_relation_admin": {
+            "can_manage_governance": principal is not None and principal.role in {"admin", "operator"},
             "vector_store_options": list(state.get("chat_vs_options") or []),
             "selected_vector_store": str(
                 state.get("last_created_vs_name") or state.get("selected_vs_name") or ""
@@ -716,6 +717,7 @@ def _build_home_context(request: Request, app) -> dict:
             "auto_refresh": False,
         },
         "document_metadata_admin": {
+            "can_manage_governance": principal is not None and principal.role in {"admin", "operator"},
             "vector_store_options": list(state.get("chat_vs_options") or []),
             "selected_vector_store": str(
                 state.get("last_created_vs_name") or state.get("selected_vs_name") or ""

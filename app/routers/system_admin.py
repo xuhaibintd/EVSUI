@@ -127,14 +127,19 @@ async def system_connection_config_save(
     if principal is None:
         return HTMLResponse("Forbidden", status_code=403)
     try:
-        existing = request.app.state.auth_store.get_connection_profile(connection_id) or {}
+        existing = (
+            request.app.state.auth_store.get_connection_profile(connection_id) or {}
+            if connection_id is not None else {}
+        )
         pem_payload = None
         pem_filename = str(existing.get("pem_filename") or "").strip()
         if pem_file is not None and pem_file.filename:
             suffix = Path(pem_file.filename).suffix.lower()
             if suffix not in {".pem", ".key", ".crt"}:
                 raise ValueError("Only .pem, .key, and .crt files are allowed.")
-            pem_payload = await pem_file.read()
+            pem_payload = await pem_file.read(1024 * 1024 + 1)
+            if len(pem_payload) > 1024 * 1024:
+                raise ValueError("PEM file exceeds 1 MiB.")
             pem_filename = Path(pem_file.filename).name
         values = {
             "name": connection_name.strip(),
@@ -347,7 +352,7 @@ async def user_admin_export(request: Request):
     return Response(
         content=json.dumps(payload, ensure_ascii=False, indent=2),
         media_type="application/json",
-        headers={"Content-Disposition": 'attachment; filename="evsui-users.json"'},
+        headers={"Content-Disposition": 'attachment; filename="teradataevsui-users.json"'},
     )
 
 
@@ -356,13 +361,21 @@ async def user_admin_import(request: Request, users_file: UploadFile = File(...)
     if _admin_principal(request) is None:
         return HTMLResponse("Forbidden", status_code=403)
     try:
-        raw = await users_file.read()
+        raw = await users_file.read(2 * 1024 * 1024 + 1)
         if len(raw) > 2 * 1024 * 1024:
             raise ValueError("User import file exceeds 2 MiB.")
         payload = json.loads(raw.decode("utf-8"))
         if not isinstance(payload, dict):
             raise ValueError("User import file must contain a JSON object.")
         imported = request.app.state.auth_store.import_users(payload)
+        request.app.state.user_sessions = {
+            sid: scope for sid, scope in request.app.state.user_sessions.items()
+            if request.app.state.auth_store.get_session(sid, touch=False) is not None
+        }
+        if _admin_principal(request) is None:
+            response = RedirectResponse(url="/login", status_code=303)
+            response.delete_cookie(SESSION_COOKIE_NAME)
+            return response
         return _render_user_admin(
             request,
             status={"kind": "ok", "detail": f"Imported {imported} user(s)."},

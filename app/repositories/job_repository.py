@@ -65,6 +65,8 @@ class JobRepository:
         return [self._row_to_dict(row) for row in rows]
 
     def claim_next(self, *, kinds: set[str] | None = None) -> dict[str, Any] | None:
+        if kinds is not None and not kinds:
+            return None
         with self.database.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             sql = "SELECT id FROM jobs WHERE status='queued'"
@@ -87,37 +89,66 @@ class JobRepository:
             if updated.rowcount != 1:
                 return None
             claimed = connection.execute("SELECT * FROM jobs WHERE id=?", (str(row["id"]),)).fetchone()
-            return self._row_to_dict(claimed, decrypt_secrets=True)
+            try:
+                return self._row_to_dict(claimed, decrypt_secrets=True)
+            except Exception:
+                # One unreadable payload must not roll back its claim and block every later job.
+                safe_json = {}
+                for field in ("payload_json", "result_json"):
+                    try:
+                        value = json.loads(str(claimed[field] or "{}"))
+                        safe_json[field] = json.dumps(value if isinstance(value, dict) else {})
+                    except (TypeError, ValueError):
+                        safe_json[field] = "{}"
+                connection.execute(
+                    """UPDATE jobs SET status='failed', secret_payload_ciphertext='',
+                              error='Stored job credentials or payload could not be read. Resubmit this operation.',
+                              payload_json=?, result_json=?, finished_at=?, updated_at=? WHERE id=?""",
+                    (safe_json["payload_json"], safe_json["result_json"], now, now, str(row["id"])),
+                )
+                failed = dict(claimed)
+                failed.update(
+                    status="failed", secret_payload_ciphertext="", **safe_json,
+                    error="Stored job credentials or payload could not be read. Resubmit this operation.",
+                    finished_at=now, updated_at=now,
+                )
+                return self._row_to_dict(failed)
 
-    def heartbeat(self, job_id: str, *, progress: int) -> None:
+    def heartbeat(self, job_id: str, *, progress: int, expected_attempt: int | None = None) -> bool:
         now = int(time.time())
         with self.database.connect() as connection:
-            connection.execute(
+            cursor = connection.execute(
                 """UPDATE jobs SET heartbeat_at=?, updated_at=?, progress=?
-                   WHERE id=? AND status='running'""",
-                (now, now, max(0, min(int(progress), 99)), str(job_id)),
+                   WHERE id=? AND status='running' AND (? IS NULL OR attempt=?)""",
+                (now, now, max(0, min(int(progress), 99)), str(job_id), expected_attempt, expected_attempt),
             )
+            return cursor.rowcount == 1
 
-    def succeed(self, job_id: str, result: dict[str, Any] | None = None) -> None:
+    def succeed(self, job_id: str, result: dict[str, Any] | None = None, *, expected_attempt: int | None = None) -> bool:
         now = int(time.time())
         with self.database.connect() as connection:
-            connection.execute(
+            cursor = connection.execute(
                 """UPDATE jobs SET status='succeeded', result_json=?, error='', progress=100,
                           secret_payload_ciphertext='',
                           heartbeat_at=?, finished_at=?, updated_at=?
-                   WHERE id=? AND status='running'""",
-                (json.dumps(result or {}, ensure_ascii=False, default=str), now, now, now, str(job_id)),
+                   WHERE id=? AND status='running' AND (? IS NULL OR attempt=?)""",
+                (json.dumps(result or {}, ensure_ascii=False, default=str), now, now, now, str(job_id), expected_attempt, expected_attempt),
             )
+            return cursor.rowcount == 1
 
-    def fail(self, job_id: str, error: str) -> None:
+    def fail(
+        self, job_id: str, error: str, *, result: dict[str, Any] | None = None,
+        expected_attempt: int | None = None,
+    ) -> bool:
         now = int(time.time())
         with self.database.connect() as connection:
-            connection.execute(
-                """UPDATE jobs SET status='failed', error=?, secret_payload_ciphertext='',
+            cursor = connection.execute(
+                """UPDATE jobs SET status='failed', error=?, result_json=?, secret_payload_ciphertext='',
                           heartbeat_at=?, finished_at=?, updated_at=?
-                   WHERE id=? AND status='running'""",
-                (str(error or "")[:4000], now, now, now, str(job_id)),
+                   WHERE id=? AND status='running' AND (? IS NULL OR attempt=?)""",
+                (str(error or "")[:4000], json.dumps(result or {}, ensure_ascii=False, default=str), now, now, now, str(job_id), expected_attempt, expected_attempt),
             )
+            return cursor.rowcount == 1
 
     def cancel(self, job_id: str, *, owner_user_id: int | None = None) -> bool:
         """Cancel a queued job without interrupting an operation already running."""
@@ -137,7 +168,7 @@ class JobRepository:
         now = int(time.time())
         with self.database.connect() as connection:
             cursor = connection.execute(
-                """UPDATE jobs SET status='queued', started_at=NULL, heartbeat_at=NULL,
+                """UPDATE jobs SET status='queued', started_at=NULL, heartbeat_at=NULL, progress=0,
                           error='Recovered after worker interruption.', updated_at=?
                    WHERE status='running' AND COALESCE(heartbeat_at, started_at, updated_at)<?""",
                 (now, int(stale_before)),

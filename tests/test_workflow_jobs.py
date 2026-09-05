@@ -28,13 +28,23 @@ class WorkflowJobTests(unittest.TestCase):
             },
         ):
             app = create_app(Settings.from_env(project_dir=Path(tmpdir)))
-            owner = app.state.auth_store.create_user(username="job-owner", password="owner-password")
+            owner = app.state.auth_store.create_user(username="job-owner", password="owner-password", role="operator")
             other = app.state.auth_store.create_user(username="other-user", password="other-password")
             owner_session = app.state.auth_store.create_session(owner)
             other_session = app.state.auth_store.create_session(other)
 
             with TestClient(app) as client:
                 client.cookies.set("evsui_sid", owner_session)
+                # Parsing now correctly requires an uploaded document. Seed a
+                # real isolated file; this test focuses on queue encryption and
+                # ownership, while browser/upload suites exercise multipart IO.
+                self.assertEqual(client.get("/").status_code, 200)
+                document = Path(tmpdir) / "fixture.txt"
+                document.write_text("Workflow queue fixture", encoding="utf-8")
+                app.state.user_sessions[owner_session]["document_uploads"] = [{
+                    "doc_id": "queue-fixture", "filename": document.name,
+                    "saved_path": str(document), "size": document.stat().st_size,
+                }]
                 response = client.post(
                     "/ui/create/parse-documents",
                     data={
@@ -175,7 +185,9 @@ class WorkflowJobTests(unittest.TestCase):
         @contextmanager
         def activated(_auth_store, profile_id):
             self.assertEqual(profile_id, 12)
-            yield {"execute_sql": object()}
+            yield {"execute_sql": object(), "profile": {
+                "host": "fixture.invalid", "username": "fixture", "ues_url": "https://ues.invalid/open-analytics",
+            }}
 
         class Mode:
             MODE = "text_core"
@@ -203,7 +215,9 @@ class WorkflowJobTests(unittest.TestCase):
 
         with mock.patch.object(workflow_jobs, "activated_connection", side_effect=activated), mock.patch.object(
             workflow_jobs, "get_doc_pipeline_handler", return_value=Mode
-        ), mock.patch.object(workflow_jobs, "VectorStore", VectorStore):
+        ), mock.patch.object(workflow_jobs, "VectorStore", VectorStore), mock.patch.object(
+            workflow_jobs, "_vector_store_exists", return_value=False
+        ):
             handler = workflow_jobs.build_workflow_job_handlers(AuthStore())[
                 workflow_jobs.VECTOR_STORE_CREATE_JOB
             ]

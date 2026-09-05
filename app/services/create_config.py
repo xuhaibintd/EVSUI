@@ -5,6 +5,7 @@ from copy import deepcopy
 from typing import Any
 
 from app.core.security import redact_sensitive_data
+from app.core.form_fields import DEFAULT_CREATE_FIELD_MAX_LENGTH
 from app.services.doc_modes.constants import DOC_PIPELINE_UI_DEFAULTS
 
 
@@ -211,7 +212,7 @@ _TEXT_CORE_WRAPPER_CLASS = {
 }
 
 _BOOL_FIELDS = {"optimized_chunking", "delay_jitter", "ignore_embedding_errors", "batch", "apply_heuristics"}
-CREATE_FIELD_MAX_LEN = 50
+CREATE_FIELD_MAX_LEN = DEFAULT_CREATE_FIELD_MAX_LENGTH
 ALLOWED_VALIDATION_TARGETS = {"vectorstore.ask", "vectorstore.similarity_search"}
 _INT_FIELDS = {
     "chunk_size",

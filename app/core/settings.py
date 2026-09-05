@@ -118,5 +118,5 @@ class Settings:
     def validate_runtime(self) -> None:
         if self.web_concurrency != 1:
             raise RuntimeError(
-                "EVSUI currently requires WEB_CONCURRENCY=1 because Teradata SDK context and UI session state are process-local."
+                "teradataevsui currently requires WEB_CONCURRENCY=1 because Teradata SDK context and UI session state are process-local."
             )

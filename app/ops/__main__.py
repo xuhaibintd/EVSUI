@@ -13,7 +13,7 @@ from app.services.maintenance_jobs import ARTIFACT_CLEANUP_JOB, build_maintenanc
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="EVSUI operational maintenance.")
+    parser = argparse.ArgumentParser(description="teradataevsui operational maintenance.")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("inventory")
     cleanup = subparsers.add_parser("cleanup-artifacts")

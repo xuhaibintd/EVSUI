@@ -12,6 +12,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Callable
 
+from app.core.security import redact_sensitive_text, sensitive_values
 from app.services.multi_format_config import (
     BOOKRAG_COMPLETE_TABLE_CONTRACT,
     BOOKRAG_CSV_LOAD_WORKERS_DEFAULT,
@@ -1446,6 +1447,7 @@ def run_multi_format_document_parsing(
 
     workers = _resolve_multi_format_unstructured_workers(len(source_items))
     runtime_settings = _load_unstructured_runtime_settings()
+    error_secrets = [api_key, *sensitive_values(create_values), *sensitive_values(connection_params), *sensitive_values(runtime_settings)]
     submission_lock = Lock()
     last_job_submitted_at: float | None = None
 
@@ -1545,7 +1547,7 @@ def run_multi_format_document_parsing(
                         "element_count": 0,
                         "elapsed_seconds": 0.0,
                         "status": "failed",
-                        "error": _sanitize_teradata_text(str(ex))[:2000],
+                        "error": _sanitize_teradata_text(redact_sensitive_text(ex, secrets=error_secrets))[:2000],
                     }
                 )
     results.sort(key=lambda item: int(item["source_index"]))
@@ -1800,10 +1802,40 @@ def run_multi_format_json_to_csv(
     }
 
 
+def _validate_load_connection(
+    manifest: dict[str, Any], connection_profile_id: int | None, connection_target_fingerprint: str | None,
+) -> None:
+    if connection_profile_id is None:
+        return
+    if not connection_target_fingerprint:
+        raise RuntimeError("The selected database connection target fingerprint is unavailable.")
+    stored_profile = manifest.get("connection_profile_id")
+    stored_target = str(manifest.get("connection_target_fingerprint") or "")
+    if stored_profile is not None:
+        if int(stored_profile) != int(connection_profile_id):
+            raise RuntimeError(
+                "This CSV run is bound to a different database connection. Select its original connection "
+                "or generate a new CSV run for the selected connection. No target tables were changed."
+            )
+    if stored_target and stored_target != connection_target_fingerprint:
+        raise RuntimeError(
+            "This database connection now points to a different target than the saved CSV load. "
+            "Generate a new CSV run for the current target. No target tables were changed."
+        )
+    if (stored_profile is None or not stored_target) and str(manifest.get("load_status") or "not_started") != "not_started":
+        raise RuntimeError(
+            "This legacy CSV load has no verified database connection target. Inspect its target tables "
+            "and generate a new CSV run for the selected connection before loading or creating a Vector Store. "
+            "The saved load result cannot verify this connection."
+        )
+
+
 def run_multi_format_csv_load(
     *,
     csv_run_id: str,
     execute_sql_fn: ExecuteSqlFn | None,
+    connection_profile_id: int | None = None,
+    connection_target_fingerprint: str | None = None,
 ) -> dict[str, Any]:
     """Load a ready standard Multi-Format CSV run into one unstructured table."""
     if execute_sql_fn is None:
@@ -1811,13 +1843,18 @@ def run_multi_format_csv_load(
     manifest_path, manifest = _resolve_multi_format_csv_manifest(csv_run_id)
     if str(manifest.get("status") or "") != "ready":
         raise RuntimeError("Database loading requires a Multi-Format CSV run in ready status.")
+    _validate_load_connection(manifest, connection_profile_id, connection_target_fingerprint)
     if str(manifest.get("load_status") or "not_started") == "ready":
         summary = manifest.get("load_summary")
         if not isinstance(summary, dict):
             raise RuntimeError("Multi-Format CSV manifest has no completed load summary.")
         return {**summary, "already_loaded": True}
     if str(manifest.get("load_status") or "") == "loading":
-        raise RuntimeError("This Multi-Format CSV run is already being loaded.")
+        raise RuntimeError(
+            "This Multi-Format CSV run is already marked as loading. If its worker was interrupted, "
+            "inspect the target table and confirm no loader is active before explicitly starting a new CSV load run. "
+            "Automatic retry did not clear or overwrite any target table."
+        )
 
     target_database = _sanitize_teradata_identifier(
         str(manifest.get("target_database") or "").strip(), fallback="", allow_empty=True
@@ -1867,6 +1904,9 @@ def run_multi_format_csv_load(
         raise RuntimeError("Multi-Format CSV run contains no loadable unstructured rows.")
 
     manifest["load_status"] = "loading"
+    if connection_profile_id is not None:
+        manifest["connection_profile_id"] = int(connection_profile_id)
+        manifest["connection_target_fingerprint"] = connection_target_fingerprint
     manifest["load_started_at"] = _now_ts()
     manifest["load_error"] = ""
     _write_json_atomic(manifest_path, manifest)
@@ -1916,6 +1956,8 @@ def run_multi_format_csv_load(
         summary = {
             "status": "ready",
             "csv_run_id": csv_run_id,
+            "connection_profile_id": connection_profile_id,
+            "connection_target_fingerprint": connection_target_fingerprint,
             "vector_store_name": vector_store_name,
             "target_database": target_database,
             "table_name": table_name,
@@ -1943,12 +1985,16 @@ def run_multi_format_csv_load(
         raise
 
 
-def get_ready_multi_format_csv_load_summary(*, csv_run_id: str) -> dict[str, Any]:
+def get_ready_multi_format_csv_load_summary(
+    *, csv_run_id: str, connection_profile_id: int | None = None,
+    connection_target_fingerprint: str | None = None,
+) -> dict[str, Any]:
     _, manifest = _resolve_multi_format_csv_manifest(csv_run_id)
     if str(manifest.get("status") or "") != "ready":
         raise RuntimeError("Vector Store creation requires a ready Multi-Format CSV run.")
     if str(manifest.get("load_status") or "not_started") != "ready":
         raise RuntimeError("Load the Multi-Format CSV run before creating the Vector Store.")
+    _validate_load_connection(manifest, connection_profile_id, connection_target_fingerprint)
     summary = manifest.get("load_summary")
     if not isinstance(summary, dict):
         raise RuntimeError("Multi-Format CSV manifest contains no completed load summary.")
@@ -2016,6 +2062,7 @@ def run_bookrag_document_parsing(
         source_items.append((index, src, doc_id or uuid.uuid4().hex))
 
     workers = _resolve_bookrag_unstructured_workers(len(source_items))
+    error_secrets = [api_key, *sensitive_values(create_values), *sensitive_values(connection_params), *sensitive_values(request_parameters)]
     submission_lock = Lock()
     last_job_submitted_at: float | None = None
 
@@ -2080,7 +2127,7 @@ def run_bookrag_document_parsing(
                         "element_count": 0,
                         "elapsed_seconds": 0.0,
                         "status": "failed",
-                        "error": _sanitize_teradata_text(str(ex))[:2000],
+                        "error": _sanitize_teradata_text(redact_sensitive_text(ex, secrets=error_secrets))[:2000],
                     }
                 )
     results.sort(key=lambda item: int(item["source_index"]))
@@ -2444,6 +2491,8 @@ def run_bookrag_csv_load(
     *,
     csv_run_id: str,
     execute_sql_fn: ExecuteSqlFn | None,
+    connection_profile_id: int | None = None,
+    connection_target_fingerprint: str | None = None,
 ) -> dict[str, Any]:
     """Load every verified CSV in one ready generation run, without creating a Vector Store."""
     if execute_sql_fn is None:
@@ -2453,6 +2502,7 @@ def run_bookrag_csv_load(
         raise RuntimeError("Database loading requires a CSV generation run in ready status.")
     if manifest.get("complete_table_contract") != BOOKRAG_COMPLETE_TABLE_CONTRACT:
         raise RuntimeError("Regenerate CSV: this run does not contain the mandatory Graph and bdrel contract.")
+    _validate_load_connection(manifest, connection_profile_id, connection_target_fingerprint)
     load_status = str(manifest.get("load_status") or "not_started")
     if load_status == "ready":
         stored_summary = manifest.get("load_summary")
@@ -2460,7 +2510,11 @@ def run_bookrag_csv_load(
             raise RuntimeError("CSV manifest says loading is ready but contains no load summary.")
         return {**stored_summary, "already_loaded": True}
     if load_status == "loading":
-        raise RuntimeError("This CSV generation run is already being loaded.")
+        raise RuntimeError(
+            "This CSV generation run is already marked as loading. If its worker was interrupted, "
+            "inspect the target tables and confirm no loader is active before explicitly starting a new CSV load run. "
+            "Automatic retry did not clear or overwrite any target table."
+        )
     recover_failed_load = load_status == "failed"
 
     vector_store_name = str(manifest.get("vector_store_name") or "").strip()
@@ -2615,6 +2669,9 @@ def run_bookrag_csv_load(
             )
 
     manifest["load_status"] = "loading"
+    if connection_profile_id is not None:
+        manifest["connection_profile_id"] = int(connection_profile_id)
+        manifest["connection_target_fingerprint"] = connection_target_fingerprint
     manifest["load_started_at"] = _now_ts()
     manifest["load_error"] = ""
     _write_json_atomic(manifest_path, manifest)
@@ -2704,6 +2761,8 @@ def run_bookrag_csv_load(
             "vector_store_name": vector_store_name,
             "target_database": target_database,
             "table_targets": expected_table_targets,
+            "connection_profile_id": connection_profile_id,
+            "connection_target_fingerprint": connection_target_fingerprint,
             "qualified_table_targets": {
                 key: f"{target_database}.{value}" for key, value in expected_table_targets.items()
             },
@@ -2733,13 +2792,17 @@ def run_bookrag_csv_load(
         raise
 
 
-def get_ready_bookrag_csv_load_summary(*, csv_run_id: str) -> dict[str, Any]:
+def get_ready_bookrag_csv_load_summary(
+    *, csv_run_id: str, connection_profile_id: int | None = None,
+    connection_target_fingerprint: str | None = None,
+) -> dict[str, Any]:
     """Read a verified table-load result without loading CSV or creating a Vector Store."""
     _, manifest = _resolve_bookrag_csv_manifest(csv_run_id)
     if str(manifest.get("status") or "") != "ready":
         raise RuntimeError("Vector Store creation requires a CSV generation run in ready status.")
     if str(manifest.get("load_status") or "not_started") != "ready":
         raise RuntimeError("Load the CSV run into database tables before creating the Vector Store.")
+    _validate_load_connection(manifest, connection_profile_id, connection_target_fingerprint)
     summary = manifest.get("load_summary")
     if not isinstance(summary, dict):
         raise RuntimeError("CSV manifest says table loading is ready but contains no load summary.")

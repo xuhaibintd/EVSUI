@@ -1,13 +1,13 @@
-# EVSUI — Teradata Vector Store UI
+# teradataevsui — Teradata Vector Store UI
 
 Teradata Vector Store provides vector-search and retrieval capabilities on top of Teradata data. It stores document chunks and embeddings as managed vector stores, then exposes operations for creation, health checks, listing, deletion, semantic similarity search, and grounded Q&A through `VectorStore` and `VSManager`.
 
-EVSUI is a `FastAPI + Jinja2 + HTMX` interface for working with Teradata Vector Store. It helps users select reusable Teradata connections, create vector stores from uploaded or configured sources, validate retrieval, govern BookRAG document metadata, and manage encrypted shared service credentials.
+teradataevsui is a `FastAPI + Jinja2 + HTMX` interface for working with Teradata Vector Store. It helps users select reusable Teradata connections, create vector stores from uploaded or configured sources, validate retrieval, govern BookRAG document metadata, and manage encrypted shared service credentials.
 
 ## Contents
 
 - [Getting Started](#getting-started)
-- [Using EVSUI](#using-evsui)
+- [Using teradataevsui](#using-teradataevsui)
 - [Overall Design](#overall-design)
 - [Feature Overview](#overview)
 - [Runtime Dependencies](#runtime-dependencies)
@@ -23,9 +23,21 @@ EVSUI is a `FastAPI + Jinja2 + HTMX` interface for working with Teradata Vector 
 
 ## Getting Started
 
+The project/package is now named `teradataevsui`. The supported CLI commands are
+`teradataevsui-db`, `teradataevsui-ops`, and `teradataevsui-worker`; the old `evsui-*`
+commands remain compatibility aliases. Windows launchers use `scripts/teradataevsui.ps1`.
+Existing `EVSUI_*` environment variables, `data/evsui.db`, its credential key, and
+session cookies retain their names so existing installations keep their configuration
+and encrypted data. No database migration or credential re-entry is needed for this rename.
+The GitHub repository URL is unchanged.
+
+On Windows, after installing dependencies into `.venv`, use `start.cmd`, `stop.cmd`,
+`restart.cmd`, and `status.cmd` to manage the web service and Worker together.
+See [startup/shutdown options and safety behavior](docs/operations.md#windows-unified-start--stop--restart--status).
+
 ### Prerequisites
 
-Before installing EVSUI, make sure you have:
+Before installing teradataevsui, make sure you have:
 
 - Python 3.10 or later. Python 3.11.8 is verified for this repository.
 - Git, if you are cloning the repository.
@@ -39,8 +51,8 @@ Before installing EVSUI, make sure you have:
 ### 1. Get the code
 
 ```bash
-git clone https://github.com/xuhaibintd/EVSUI.git
-cd EVSUI
+git clone https://github.com/xuhaibintd/EVSUI.git teradataevsui
+cd teradataevsui
 ```
 
 If you already have the repository, run the remaining commands from its root directory (the directory containing `requirements.txt`).
@@ -74,7 +86,7 @@ python -m pip install -r requirements.txt
 
 ### 3. Configure the first administrator
 
-EVSUI stores users and server-side sessions in SQLite. The database is created automatically at `data/evsui.db`; Python's built-in SQLite driver requires no separate database installation. Set the bootstrap administrator only for the first start.
+teradataevsui stores users and server-side sessions in SQLite. The database is created automatically at `data/evsui.db`; Python's built-in SQLite driver requires no separate database installation. Set the bootstrap administrator only for the first start.
 
 Windows PowerShell:
 
@@ -124,15 +136,27 @@ The legacy `connection` values are imported once as the default database connect
 
 `data/evsui.db` is also intentionally ignored: it contains environment-specific users, encrypted credentials, sessions, and operational state. A fresh checkout creates the complete schema from versioned migrations. Back up and deploy the database as runtime data, not source code; see [Operations](docs/operations.md).
 
-### 4. Start EVSUI
+### 4. Start teradataevsui
 
-With the virtual environment active, run:
+Windows (web and Worker together, no virtualenv activation required):
+
+```powershell
+.\start.cmd
+.\status.cmd
+# Later:
+.\stop.cmd
+# Or restart both:
+.\restart.cmd
+```
+
+For manual foreground development or other platforms, activate the virtual
+environment and run:
 
 ```bash
 python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8010
 ```
 
-In a second terminal, start the durable workflow worker:
+For this manual mode, start the durable workflow worker in a second terminal:
 
 ```powershell
 python -m app.worker
@@ -154,13 +178,13 @@ Windows PowerShell can use:
 Invoke-RestMethod http://127.0.0.1:8010/healthz
 ```
 
-The expected response is `{"status":"ok"}`. This endpoint checks the EVSUI process only; use **Vector Store Health check** after connecting to verify Teradata Vector Store access.
+The expected response is `{"status":"ok"}`. This endpoint checks the teradataevsui process only; use **Vector Store Health check** after connecting to verify Teradata Vector Store access.
 
-## Using EVSUI
+## Using teradataevsui
 
 ### Connect to Teradata
 
-1. Sign in to EVSUI and open **Connect & Manage**.
+1. Sign in to teradataevsui and open **Connect & Manage**.
 2. Enter the database **Host**, **Username**, and **Password**.
 3. Enter the **UES URL** and **PAT Token**. Both are required by the connection workflow.
 4. Upload a `.pem`, `.key`, or `.crt` file when your environment requires one.
@@ -189,15 +213,15 @@ For the uploaded-file `Text PDF Only` flow, the UI does not populate `object_nam
 
 ### Common startup problems
 
-- **Server auth is not configured**: set `EVSUI_BOOTSTRAP_ADMIN` and `EVSUI_BOOTSTRAP_PASSWORD`, then restart EVSUI.
+- **Server auth is not configured**: set `EVSUI_BOOTSTRAP_ADMIN` and `EVSUI_BOOTSTRAP_PASSWORD`, then restart teradataevsui.
 - **PowerShell cannot activate `.venv`**: apply the process-scoped execution-policy command shown above; it affects only the current PowerShell process.
 - **Unstructured API key missing**: configure the key under `unstructured` or save it in **System Configuration** for the active session.
-- **Teradata connection fails**: confirm that Host, Username, Password, UES URL, and PAT Token are populated and reachable from the machine running EVSUI. Add the PEM/certificate file if your environment requires it.
+- **Teradata connection fails**: confirm that Host, Username, Password, UES URL, and PAT Token are populated and reachable from the machine running teradataevsui. Add the PEM/certificate file if your environment requires it.
 - **A vector store does not appear in Retrieval**: select **Run List** on the Retrieval page; the Connect & Manage list does not update it.
 
 ## Overall Design
 
-EVSUI is a server-rendered web application running in one FastAPI process. Jinja2 renders complete pages and HTMX replaces page fragments for interactive operations. Web routes and JSON API routes share the same domain services, while integration modules isolate Teradata and Unstructured calls from UI code.
+teradataevsui is a server-rendered web application running in one FastAPI process. Jinja2 renders complete pages and HTMX replaces page fragments for interactive operations. Web routes and JSON API routes share the same domain services, while integration modules isolate Teradata and Unstructured calls from UI code.
 
 ### Component architecture
 
@@ -208,7 +232,7 @@ flowchart LR
         ApiClient["External API client<br/>Bearer token or API key"]
     end
 
-    subgraph App["EVSUI FastAPI process"]
+    subgraph App["teradataevsui FastAPI process"]
         Web["Web router<br/>HTML and HTMX endpoints"]
         API["API router<br/>BookRAG JSON endpoints"]
         Auth["Authentication and roles<br/>Argon2 + SQLite"]
@@ -493,7 +517,7 @@ Official references:
 - Typical request shape: define persistent `workflow_nodes` once, then submit `input_files` when running it
 - Official position: use when you need a named workflow resource that can be listed, updated, and reused by `workflow_id`
 
-### Current EVSUI Mapping
+### Current teradataevsui Mapping
 
 1. **Unstructured** (`doc_pipeline_mode=multi_format`)
 - Uses the **Workflow Endpoint**.
@@ -501,7 +525,7 @@ Official references:
 - The integration gateway validates the DAG before network I/O and isolates SDK/REST changes from BookRAG orchestration.
 - Failed jobs include best-effort processing details and failed-file diagnostics when the service exposes them.
 - Implemented chain: `Partitioner -> optional Enrichment nodes -> Chunker`
-- Current workflow chunker options in EVSUI:
+- Current workflow chunker options in teradataevsui:
   - `chunk_by_character`
   - `chunk_by_title`
   - `chunk_by_page`
@@ -555,7 +579,7 @@ Official references:
 - `VLM + separate enrichment nodes`: do not add them as a normal design pattern; official workflow guidance says they are not needed or allowed.
 - Image description, table description, table-to-HTML, and generative OCR select their provider through the node `subtype`; current Pipeline API examples use an empty `settings` object. Do not inject Partition Endpoint parameters or speculative `provider_type`/`model` fields into these nodes. NER retains its documented provider/model settings.
 
-### Current EVSUI Defaults
+### Current teradataevsui Defaults
 
 These are **application defaults**, not official Unstructured defaults:
 
@@ -684,7 +708,7 @@ After table loading succeeds, the existing **Basic > Vector Store Name** field b
 
 `bdoc.source_file` stores the original uploaded document path. `page_count` is derived from the maximum extracted block page, `language_hint` records the configured OCR languages when present, and `created_at` records when the document row was built. Raw JSON stage paths remain available in the preprocessing summary/debug artifacts and are not stored as the source document path.
 
-Unstructured processing is concurrent, but job submission is rate-limited separately. EVSUI spaces submissions by 1.35 seconds and, when the service returns HTTP 429, follows `retry_after` with an additional safety margin and retries up to six times. A transient submission limit must not fail the complete multi-file run.
+Unstructured processing is concurrent, but job submission is rate-limited separately. teradataevsui spaces submissions by 1.35 seconds and, when the service returns HTTP 429, follows `retry_after` with an additional safety margin and retries up to six times. A transient submission limit must not fail the complete multi-file run.
 
 If preprocessing fails after BookRAG tables have been created but before any rows are inserted, retrying with the same vector store name reuses each empty table after validating that all columns required by the current table contract are present. A table with existing rows, an unverifiable row count, or incompatible columns is never reused; choose a new vector store name in those cases.
 
@@ -692,7 +716,7 @@ CSV loading uses native Teradata driver protocols. A CSV with fewer than `BOOKRA
 
 ### Retrieval Contract
 
-For applications that use the EVSUI retrieval API:
+For applications that use the teradataevsui retrieval API:
 
 1. Vector similarity returns a composite `(doc_id, node_id)` match from `bnode`.
 2. Retrieval loads the matched node and its ancestor nodes from `bnode` using document-scoped keys.
@@ -753,7 +777,7 @@ client_rules:
 - On first startup only, `app/config/local_dev.json` can bootstrap the shared configuration when no database row exists. Later UI changes are authoritative and do not echo the saved key.
 - Supported API key fields: `api_key`, `key_id`, `UNSTRUCTURED_API_KEY`, `UNSTRUCTURED_API_KEY_AUTH`
 - Supported API URL fields: `api_url`, `UNSTRUCTURED_API_URL`, `UNSTRUCTURED_PLATFORM_URL`
-- Unstructured does not currently expose a public Workflow models-list endpoint in the documented API or Python SDK. EVSUI ships with an internal fallback model catalog and can load overrides from `app/config/unstructured_models.json` or `UNSTRUCTURED_MODEL_CATALOG_PATH`.
+- Unstructured does not currently expose a public Workflow models-list endpoint in the documented API or Python SDK. teradataevsui ships with an internal fallback model catalog and can load overrides from `app/config/unstructured_models.json` or `UNSTRUCTURED_MODEL_CATALOG_PATH`.
 - To update UI model choices without code changes, copy `app/config/unstructured_models.example.json` to `app/config/unstructured_models.json` and edit the `partitioner_vlm`, `enrichment`, or `table_to_html` sections.
 
 Example:
@@ -789,7 +813,7 @@ Notes:
 - `GET /api/bookrag/answer?question=...&vector_store_name=...` retrieves governed evidence and generates an answer from the locked final node set.
 - `POST /api/bookrag/answer` accepts a JSON body, retrieves governed evidence, and returns the answer, evidence packages, LLM input, and rank-based citations.
 - Answer citations identify the evidence list used for generation; they are not verified claim-to-source alignments.
-- API access accepts either the normal EVSUI login session cookie or `Authorization: Bearer <token>` / `x-api-key: <token>`.
+- API access accepts either the normal teradataevsui login session cookie or `Authorization: Bearer <token>` / `x-api-key: <token>`.
 - External token access is disabled by default. Enable it explicitly with `EVSUI_EXTERNAL_API_ENABLED=true` and set a strong `EVSUI_API_TOKEN`; there is no built-in fallback token. Browser-session API access remains available to signed-in users.
 
 Example:
@@ -826,7 +850,7 @@ Only an `admin` can open `GET /admin/users`. The page supports:
 - enabling and disabling accounts;
 - resetting a password and revoking that user's existing sessions.
 
-Do not edit `evsui.db` manually while EVSUI is running. Use `python -m app.db backup` for a transactionally consistent live backup and retain the credential key with it. SQLite is appropriate for one EVSUI application instance. Move the control plane and Teradata execution to separately isolated services before running multiple replicas.
+Do not edit `evsui.db` manually while teradataevsui is running. Use `python -m app.db backup` for a transactionally consistent live backup and retain the credential key with it. SQLite is appropriate for one teradataevsui application instance. Move the control plane and Teradata execution to separately isolated services before running multiple replicas.
 
 ```mermaid
 sequenceDiagram
@@ -890,6 +914,8 @@ sequenceDiagram
 - `GET /healthz`
 
 Schema, backup, artifact, and worker commands are documented in [Operations](docs/operations.md). Module dependency rules and the current single-worker constraint are documented in [Architecture](docs/architecture.md).
+
+Actual browser, HTTP, service and read-only live testing commands are documented in [Testing](docs/testing.md). The [2026-09-05 acceptance report](docs/testing-2026-09-05.md) distinguishes tested local workflows from remote mutation paths that require a disposable test environment.
 
 ## Health Check
 

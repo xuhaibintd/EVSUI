@@ -30,9 +30,10 @@ def verify_wheel(path: Path) -> None:
 
 
 def main() -> int:
-    candidates = sorted(Path("dist").glob("*.whl"))
+    # Ignore old evsui wheels retained locally after the project rename.
+    candidates = sorted(Path("dist").glob("teradataevsui-*.whl"))
     if len(candidates) != 1:
-        raise RuntimeError(f"Expected exactly one wheel in dist/, found {len(candidates)}.")
+        raise RuntimeError(f"Expected exactly one teradataevsui wheel in dist/, found {len(candidates)}.")
     verify_wheel(candidates[0])
     print(f"Verified safe wheel: {candidates[0].name}")
     return 0

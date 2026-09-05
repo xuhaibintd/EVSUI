@@ -1,8 +1,8 @@
-# EVSUI Architecture
+# teradataevsui Architecture
 
 ## Design constraints
 
-EVSUI is a server-rendered FastAPI application around Teradata Vector Store. The Teradata Python SDK uses process-global context, so this release intentionally supports one web worker per application instance. `TeradataRuntimeManager` serializes interactive SDK operations and reactivates the selected connection profile before work. Long document and vector workflows run in a separate, single-concurrency worker process, which owns its own SDK context. Increasing `WEB_CONCURRENCY` is rejected at startup instead of silently mixing user contexts.
+teradataevsui is a server-rendered FastAPI application around Teradata Vector Store. The Teradata Python SDK uses process-global context, so this release intentionally supports one web worker per application instance. `TeradataRuntimeManager` serializes interactive SDK operations and reactivates the selected connection profile before work. Long document and vector workflows run in a separate, single-concurrency worker process, which owns its own SDK context. Increasing `WEB_CONCURRENCY` is rejected at startup instead of silently mixing user contexts.
 
 SQLite is the application control-plane database. It stores identity, server sessions, encrypted connection profiles, encrypted external-service credentials, durable job state, artifact metadata, and audit records. Vector data and BookRAG tables remain in Teradata; large documents and generated artifacts remain on the filesystem.
 
@@ -39,3 +39,7 @@ Dependencies point inward: routers call workflows/services, which call repositor
 ## Durable workflow boundary
 
 Document parsing, JSON-to-CSV generation, CSV table loading, and Vector Store creation use stable JSON command payloads and browser polling. Payloads contain connection-profile IDs, not passwords, PATs, PEM contents, or external API keys. The worker decrypts credentials only when a handler needs them. Queued/running/succeeded/failed/cancelled state and progress survive web restarts; stale running jobs are recovered on worker startup.
+
+Recovery reclaims a job; it does **not** guarantee transactionally resumable external operations. An interrupted CSV load must be inspected after confirming its previous loader has stopped; the application refuses automatic destructive retry. Start a new run explicitly after resolving the target tables. A monitoring timeout does not cancel a remote Vector Store operation; subsequent creation first checks the existing store and verifies its index.
+
+CSV load manifests bind to the selected connection-profile ID and a non-secret target fingerprint (host, username, UES URL). Cached load success cannot be reused for a different profile or a changed target on the same profile; password/PAT/PEM rotation alone does not invalidate it. Legacy load records without that binding must be inspected and replaced with an explicit new run, since their database identity cannot be proven. Continue to run **one workflow worker**: atomic job claims and stale-attempt fencing protect a job, but do not provide a distributed lock across different jobs targeting the same CSV run or remote table.

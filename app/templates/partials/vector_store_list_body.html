@@ -34,7 +34,7 @@
         {% if _selectable and row_vs_name %}data-vs-name="{{ row_vs_name }}"{% endif %}
         {% if _selectable and row_vs_name %}
         hx-post="/ui/evs/select"
-        hx-vals='js:{vs_name: this.dataset.vsName}'
+        hx-vals='{{ {"vs_name": row_vs_name}|tojson }}'
         hx-target="#section-connect-content"
         hx-swap="innerHTML"
         {% endif %}

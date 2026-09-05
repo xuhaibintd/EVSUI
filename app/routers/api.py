@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from app.core.security import redact_sensitive_text
 from app.services.bookrag_adaptive_retrieval import (
     lock_similarity_result_to_evidence,
     retrieve_adaptive_bookrag_evidence,
@@ -351,11 +352,11 @@ def _resolve_external_token_context(request: Request) -> dict[str, str] | None:
     bearer = str(request.headers.get("authorization", "")).strip()
     if bearer.lower().startswith("bearer "):
         token = bearer[7:].strip()
-        if token and hmac.compare_digest(token, configured):
+        if token and hmac.compare_digest(token.encode("utf-8"), configured.encode("utf-8")):
             return {"mode": "bearer", "principal": "external_api"}
 
     api_key = str(request.headers.get("x-api-key", "")).strip()
-    if api_key and hmac.compare_digest(api_key, configured):
+    if api_key and hmac.compare_digest(api_key.encode("utf-8"), configured.encode("utf-8")):
         return {"mode": "api_key", "principal": "external_api"}
     return None
 
@@ -380,10 +381,30 @@ def _require_api_access(request: Request) -> dict[str, str]:
 
 
 def _ensure_api_runtime(request: Request, auth_context: dict[str, str]) -> None:
-    if auth_context.get("mode") == "session":
-        _ensure_connected_runtime_for_session(request, request.app)
-    else:
-        _ensure_external_api_runtime(request.app)
+    session_mode = auth_context.get("mode") == "session"
+    if session_mode and not request.app.state.evs_state.get("connected"):
+        raise HTTPException(status_code=409, detail="Connect to a database before retrieval.")
+    try:
+        if session_mode:
+            _ensure_connected_runtime_for_session(request, request.app)
+        else:
+            _ensure_external_api_runtime(request.app)
+    except HTTPException:
+        raise
+    except Exception as ex:
+        raise HTTPException(
+            status_code=503,
+            detail="Database connection is unavailable. Check the system connection configuration.",
+        ) from ex
+
+
+def _validate_retrieval_inputs(question: object, vector_store_name: object) -> None:
+    question_value = _normalize_optional_text(question)
+    vector_store_value = _normalize_optional_text(vector_store_name)
+    if not question_value or not vector_store_value:
+        raise HTTPException(status_code=422, detail="question and vector_store_name are required")
+    if len(question_value) > 4000 or len(vector_store_value) > 256:
+        raise HTTPException(status_code=422, detail="question or vector_store_name exceeds the supported length")
 
 
 def _request_id_from_request(request: Request) -> str:
@@ -431,7 +452,7 @@ def _retrieve_bookrag_evidence_or_raise(
     try:
         vector_store = VectorStore(vector_store_value)
     except Exception as ex:
-        raise HTTPException(status_code=400, detail=f"cannot open VectorStore('{vector_store_value}'): {ex}") from ex
+        raise HTTPException(status_code=400, detail=f"cannot open VectorStore('{vector_store_value}'): {redact_sensitive_text(ex)}") from ex
 
     try:
         evidence, candidate_similarity_result = retrieve_adaptive_bookrag_evidence(
@@ -445,7 +466,7 @@ def _retrieve_bookrag_evidence_or_raise(
     except Exception as ex:
         raise HTTPException(
             status_code=500,
-            detail=f"Adaptive BookRAG retrieval failed for '{vector_store_value}': {ex}",
+            detail=f"Adaptive BookRAG retrieval failed for '{vector_store_value}': {redact_sensitive_text(ex)}",
         ) from ex
     governed_scope = evidence.get("retrieval_scope") or {}
     if not list(governed_scope.get("allowed_doc_ids") or []):
@@ -470,7 +491,7 @@ def _retrieve_bookrag_evidence_or_raise(
                 status_code=500,
                 detail=(
                     f"Final BookRAG evidence locking failed on "
-                    f"'{vector_store_value}': {ex}"
+                    f"'{vector_store_value}': {redact_sensitive_text(ex)}"
                 ),
             ) from ex
     return question_value, vector_store_value, evidence, response_similarity_result
@@ -619,7 +640,7 @@ def _build_bookrag_llm_input(
             "Keep the response concise and JSON-ready for external API consumers.",
         ],
         "retrieval_scope": payload.get("retrieval_scope"),
-        "query_plan": payload.get("query_plan"),
+        "query_plan": payload.get("query_plan") or {},
         "evidence": evidence_items,
     }
 
@@ -799,7 +820,7 @@ def _build_bookrag_live_answer_or_raise(
     try:
         vector_store = VectorStore(vector_store_name)
     except Exception as ex:
-        raise HTTPException(status_code=400, detail=f"cannot open VectorStore('{vector_store_name}'): {ex}") from ex
+        raise HTTPException(status_code=400, detail=f"cannot open VectorStore('{vector_store_name}'): {redact_sensitive_text(ex)}") from ex
 
     response_prompt = _build_bookrag_llm_prompt(llm_input)
     prepare_response_fn = getattr(vector_store, "prepare_response", None)
@@ -818,7 +839,7 @@ def _build_bookrag_live_answer_or_raise(
             except TypeError:
                 ask_result = prepare_response_fn(similarity_result, question=question)
     except Exception as ex:
-        raise HTTPException(status_code=500, detail=f"VectorStore.prepare_response failed on '{vector_store_name}': {ex}") from ex
+        raise HTTPException(status_code=500, detail=f"VectorStore.prepare_response failed on '{vector_store_name}': {redact_sensitive_text(ex)}") from ex
 
     answer_text = _extract_bookrag_answer_text(ask_result)
     if not answer_text:
@@ -839,8 +860,7 @@ async def api_bookrag_schema(
     vector_store_name: str,
     schema_name: str | None = None,
 ):
-    auth_context = _require_api_access(request)
-    _ensure_api_runtime(request, auth_context)
+    _require_api_access(request)
     selected = str(vector_store_name or "").strip()
     if not selected:
         raise HTTPException(status_code=422, detail="vector_store_name is required")
@@ -869,6 +889,7 @@ async def api_bookrag_retrieve_get(
     schema_value = _normalize_optional_text(schema_name)
     top_k_value = _clamp_top_k(top_k)
     auth_context = _require_api_access(request)
+    _validate_retrieval_inputs(question, vector_store_name)
     _ensure_api_runtime(request, auth_context)
     question_value, vector_store_value, evidence, _ = _retrieve_bookrag_evidence_or_raise(
         question=question,
@@ -900,8 +921,7 @@ async def api_bookrag_answer_get(
     schema_value = _normalize_optional_text(schema_name)
     top_k_value = _clamp_top_k(top_k)
     auth_context = _require_api_access(request)
-    if not _normalize_optional_text(question) or not _normalize_optional_text(vector_store_name):
-        raise HTTPException(status_code=422, detail="question and vector_store_name are required")
+    _validate_retrieval_inputs(question, vector_store_name)
     _ensure_api_runtime(request, auth_context)
     question_value, vector_store_value, evidence, similarity_result = _retrieve_bookrag_evidence_or_raise(
         question=question,
@@ -946,6 +966,7 @@ async def api_bookrag_answer_get(
 )
 async def api_bookrag_retrieve(request: Request, payload: BookRAGRetrieveRequest):
     auth_context = _require_api_access(request)
+    _validate_retrieval_inputs(payload.question, payload.vector_store_name)
     _ensure_api_runtime(request, auth_context)
 
     schema_value = _normalize_optional_text(payload.schema_name)
@@ -988,6 +1009,7 @@ async def api_bookrag_retrieve(request: Request, payload: BookRAGRetrieveRequest
 @router.post("/api/bookrag/answer", response_model=BookRAGAnswerResponse)
 async def api_bookrag_answer(request: Request, payload: BookRAGAnswerRequest):
     auth_context = _require_api_access(request)
+    _validate_retrieval_inputs(payload.question, payload.vector_store_name)
     _ensure_api_runtime(request, auth_context)
 
     schema_value = _normalize_optional_text(payload.schema_name)

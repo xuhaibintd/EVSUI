@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.core.form_fields import validate_create_field
+
 DOC_PIPELINE_UI_DEFAULTS = {
     "multi_format_strategy": "auto",
     "multi_format_chunk_strategy": "chunk_by_character",
@@ -93,8 +95,5 @@ def collect_doc_pipeline_ui_values(form, *, field_max_len: int) -> dict[str, str
             values[ui_field] = "true" if any(str(item).strip().lower() == "true" for item in raw_values) else "false"
             continue
         ui_raw = str(form.get(ui_field, default_value)).strip()
-        if ui_field in DOC_PIPELINE_UNTRUNCATED_FIELDS:
-            values[ui_field] = ui_raw
-        else:
-            values[ui_field] = ui_raw[:field_max_len]
+        values[ui_field] = validate_create_field(ui_field, ui_raw, default=field_max_len)
     return values

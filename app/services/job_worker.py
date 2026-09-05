@@ -13,6 +13,18 @@ from app.repositories.job_repository import JobRepository
 JobHandler = Callable[[dict[str, Any], Callable[[int], None]], dict[str, Any] | None]
 
 
+class JobExecutionError(RuntimeError):
+    """A failed workflow may still have per-file results worth showing to its owner."""
+
+    def __init__(self, message: str, *, result: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.result = result
+
+
+class JobClaimLost(RuntimeError):
+    pass
+
+
 def _deep_merge(target: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
     merged = dict(target)
     for key, value in overlay.items():
@@ -44,6 +56,8 @@ class PersistentJobWorker:
         job = self.repository.claim_next(kinds=set(self.handlers))
         if job is None:
             return None
+        if job["status"] != "running":
+            return job
         handler = self.handlers[job["kind"]]
         payload = _deep_merge(job["payload"], job.get("secret_payload") or {})
         payload["_job"] = {
@@ -58,22 +72,32 @@ class PersistentJobWorker:
         def heartbeat(value: int) -> None:
             nonlocal progress
             progress = max(0, min(int(value), 99))
-            self.repository.heartbeat(job["id"], progress=progress)
+            if not self.repository.heartbeat(job["id"], progress=progress, expected_attempt=job["attempt"]):
+                raise JobClaimLost("The job was recovered by another worker.")
 
         def keep_alive() -> None:
             while not heartbeat_stop.wait(30):
-                self.repository.heartbeat(job["id"], progress=progress)
+                if not self.repository.heartbeat(job["id"], progress=progress, expected_attempt=job["attempt"]):
+                    return
 
         keep_alive_thread = threading.Thread(target=keep_alive, name=f"job-heartbeat-{job['id'][:8]}", daemon=True)
         keep_alive_thread.start()
         try:
             result = handler(payload, heartbeat) or {}
+        except JobClaimLost:
+            pass
         except Exception as ex:
-            self.repository.fail(job["id"], redact_sensitive_text(ex, secrets=sensitive_values(payload)))
+            self.repository.fail(
+                job["id"], redact_sensitive_text(ex, secrets=sensitive_values(payload)),
+                result=redact_sensitive_data(ex.result, secrets=sensitive_values(payload))
+                if isinstance(ex, JobExecutionError) else None,
+                expected_attempt=job["attempt"],
+            )
         else:
             self.repository.succeed(
                 job["id"],
                 redact_sensitive_data(result, secrets=sensitive_values(payload)),
+                expected_attempt=job["attempt"],
             )
         finally:
             heartbeat_stop.set()

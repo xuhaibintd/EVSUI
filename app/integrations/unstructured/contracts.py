@@ -21,7 +21,7 @@ ENRICHMENT_NODE_TYPES = {
 
 
 def validate_workflow_nodes(workflow_nodes: list[dict[str, Any]]) -> None:
-    """Validate EVSUI's supported Pipeline API contract before network I/O.
+    """Validate teradataevsui's supported Pipeline API contract before network I/O.
 
     Unstructured's VLM partitioner already performs image/table descriptions,
     table-to-HTML, and generative OCR. Those enrichment nodes are therefore

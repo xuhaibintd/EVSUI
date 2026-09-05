@@ -249,6 +249,35 @@ def _normalize_manual_metadata(values: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def validate_document_metadata_import_rows(
+    rows: list[dict[str, Any]], documents: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Resolve document identities and validate an entire import before writes."""
+    document_ids = {str(item.get("doc_id") or "") for item in documents}
+    filename_map: dict[str, list[str]] = {}
+    for document in documents:
+        filename_map.setdefault(str(document.get("filename") or ""), []).append(
+            str(document.get("doc_id") or "")
+        )
+    normalized_rows = []
+    seen = set()
+    for row in rows:
+        doc_id = str(row.get("doc_id") or "").strip()
+        if not doc_id:
+            filename = str(row.get("filename") or "").strip()
+            matches = filename_map.get(filename, [])
+            if len(matches) != 1:
+                raise ValueError(f"Filename is missing or not unique: {filename!r}.")
+            doc_id = matches[0]
+        if doc_id not in document_ids:
+            raise ValueError(f"Unknown document: {doc_id}.")
+        if doc_id in seen:
+            raise ValueError(f"Duplicate document in CSV: {doc_id}.")
+        seen.add(doc_id)
+        normalized_rows.append({**_normalize_manual_metadata(row), "doc_id": doc_id})
+    return normalized_rows
+
+
 def _update_document_metadata(
     *,
     qualified_documents: str,

@@ -4,7 +4,7 @@ import csv
 import io
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from app.core.security import redact_sensitive_text
@@ -47,6 +47,7 @@ from app.services.bookrag_document_metadata import (
     backfill_document_metadata,
     fetch_document_metadata,
     save_document_metadata,
+    validate_document_metadata_import_rows,
 )
 from app.services.bookrag_schema import ensure_bookrag_retrieval_view
 from app.services.create_config import CREATE_FIELD_MAX_LEN, default_create_values
@@ -102,7 +103,46 @@ from app.workflows.chat_flow import handle_chat_reset, handle_chat_send
 from app.workflows.create_flow import handle_upload_and_prepare_create
 from app.workflows.destroy_flow import handle_destroy_selected
 
-router = APIRouter()
+_BUSINESS_WRITE_PATHS = {
+    "/ui/evs/destroy",
+    "/ui/admin/bookrag-section-rules",
+}
+_GOVERNANCE_PREFIXES = (
+    "/ui/admin/document-metadata",
+    "/ui/admin/document-relations",
+)
+
+
+async def _authorize_business_action(request: Request) -> None:
+    """Enforce role and session connection requirements for browser actions."""
+    path = request.url.path
+    if not path.startswith("/ui/") or path.startswith("/ui/jobs/"):
+        return
+    principal = _session_principal(request)
+    if principal is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    scope = _activate_session_state(request, request.app)
+    scope["role"] = principal.role
+    is_governance = path.startswith(_GOVERNANCE_PREFIXES)
+    writes_shared_data = request.method == "POST" and (
+        path.startswith("/ui/create/") or path in _BUSINESS_WRITE_PATHS or is_governance
+    )
+    if writes_shared_data and principal.role not in {"admin", "operator"}:
+        raise HTTPException(status_code=403, detail="This action requires an operator or administrator.")
+    if is_governance and (request.method == "POST" or path.endswith("/export")):
+        if not scope["evs_state"].get("connected"):
+            raise HTTPException(status_code=409, detail="Connect to a database before managing documents.")
+
+
+async def _close_request_uploads(request: Request):
+    """Close manually parsed multipart uploads on success and every error path."""
+    try:
+        yield
+    finally:
+        await request.close()
+
+
+router = APIRouter(dependencies=[Depends(_close_request_uploads), Depends(_authorize_business_action)])
 router.include_router(auth_router)
 router.include_router(system_admin_router)
 router.include_router(jobs_router)
@@ -113,6 +153,29 @@ def _session_principal(request: Request):
     if auth_store is None:
         return None
     return auth_store.get_session(_session_id_from_request(request))
+
+
+def _can_manage_governance(app) -> bool:
+    active_scope = getattr(app.state, "active_session_scope", None)
+    scope = active_scope() if callable(active_scope) else None
+    return (scope or {}).get("role") in {"admin", "operator"}
+
+
+def _render_connection_state(request: Request):
+    """Refresh dependent panels when connection gates change in an HTMX request."""
+    _persist_active_session_state(request, request.app)
+    if getattr(request, "headers", {}).get("HX-Request", "").lower() != "true":
+        return _render_connect_panel(request, request.app)
+    context = _build_home_context(request, request.app)
+    context["is_htmx"] = True
+    return request.app.state.templates.TemplateResponse(
+        request, "partials/evs_reset_response.html", context,
+    )
+
+
+def _validate_document_parse_inputs(documents: list[dict]) -> None:
+    if not documents:
+        raise HTTPException(status_code=422, detail="Upload at least one document before parsing.")
 
 
 def _register_document_artifacts(request: Request, uploaded_items: list[dict]) -> None:
@@ -217,8 +280,14 @@ def _document_relation_admin_context(
         "status": status,
         "source": "database",
         "auto_refresh": auto_refresh,
+        "can_manage_governance": _can_manage_governance(app),
     }
     if not selected:
+        return context
+    if not state.get("connected"):
+        context["status"] = status or {
+            "kind": "warn", "title": "Not Connected", "detail": "Connect to a database before loading documents."
+        }
         return context
     try:
         schema_name = _document_relation_schema_name(app)
@@ -273,8 +342,14 @@ def _document_metadata_admin_context(
         "status_options": BOOKRAG_METADATA_STATUSES,
         "status": status,
         "auto_refresh": auto_refresh,
+        "can_manage_governance": _can_manage_governance(app),
     }
     if not selected:
+        return context
+    if not state.get("connected"):
+        context["status"] = status or {
+            "kind": "warn", "title": "Not Connected", "detail": "Connect to a database before loading documents."
+        }
         return context
     try:
         schema_name = _document_relation_schema_name(app)
@@ -351,7 +426,7 @@ async def evs_connect(request: Request, connection_id: int | None = Form(default
         state["last_success"] = ""
         state["last_error"] = f"System connection configuration could not be loaded: {ex}"
         state["connect_steps"] = [_new_connect_step("Load System Configuration", "error", str(ex))]
-        return _render_connect_panel(request, request.app)
+        return _render_connection_state(request)
 
     resolved_pem_path = str(saved_config.get("pem_file") or "").strip()
     if resolved_pem_path:
@@ -563,7 +638,7 @@ async def evs_connect(request: Request, connection_id: int | None = Form(default
             if runtime_manager is not None:
                 runtime_manager.invalidate()
 
-    return _render_connect_panel(request, request.app)
+    return _render_connection_state(request)
 
 
 @router.post("/ui/evs/reset", response_class=HTMLResponse)
@@ -601,16 +676,7 @@ async def evs_reset(request: Request):
     request.app.state.document_upload_notices = []
     request.app.state.chat_history = []
     _persist_active_session_state(request, request.app)
-    headers = getattr(request, "headers", {})
-    if headers.get("HX-Request", "").lower() != "true":
-        return _render_connect_panel(request, request.app)
-    context = _build_home_context(request, request.app)
-    context["is_htmx"] = True
-    return request.app.state.templates.TemplateResponse(
-        request,
-        "partials/evs_reset_response.html",
-        context,
-    )
+    return _render_connection_state(request)
 
 
 @router.post("/ui/create/upload-documents", response_class=HTMLResponse)
@@ -659,7 +725,7 @@ async def parse_documents_for_create(request: Request):
     create_values = default_create_values()
     create_values.update(collect_doc_pipeline_ui_values(form, field_max_len=CREATE_FIELD_MAX_LEN))
     vector_store_name = str(form.get("vector_store_name") or "").strip()
-
+    _validate_document_parse_inputs(uploaded_documents)
     job = queue_workflow_job(
         request,
         kind=BOOKRAG_PARSE_JOB,
@@ -770,6 +836,7 @@ async def parse_multi_format_documents_for_create(request: Request):
     create_values.update(collect_doc_pipeline_ui_values(form, field_max_len=CREATE_FIELD_MAX_LEN))
     vector_store_name = str(form.get("vector_store_name") or "").strip()
     uploaded_documents = [dict(item) for item in request.app.state.document_uploads]
+    _validate_document_parse_inputs(uploaded_documents)
     job = queue_workflow_job(
         request,
         kind=MULTI_FORMAT_PARSE_JOB,
@@ -1367,32 +1434,25 @@ async def import_document_metadata_admin(
     try:
         if metadata_csv is None or not metadata_csv.filename:
             raise ValueError("Select a document metadata CSV file.")
-        payload = (await metadata_csv.read()).decode("utf-8-sig")
+        raw = await metadata_csv.read(2 * 1024 * 1024 + 1)
+        if len(raw) > 2 * 1024 * 1024:
+            raise ValueError("Metadata CSV exceeds 2 MiB.")
+        payload = raw.decode("utf-8-sig")
         imported = [dict(row) for row in csv.DictReader(io.StringIO(payload))]
+        if not imported:
+            raise ValueError("CSV must contain a header and at least one document row.")
         schema_name = _document_relation_schema_name(request.app)
         documents = fetch_document_metadata(
             vector_store_name=selected,
             schema_name=schema_name,
             execute_sql_fn=execute_sql,
         )
-        filename_map: dict[str, str] = {}
-        duplicate_filenames: set[str] = set()
-        for document in documents:
-            filename = str(document.get("filename") or "")
-            if filename in filename_map:
-                duplicate_filenames.add(filename)
-            filename_map[filename] = str(document.get("doc_id") or "")
-        for row in imported:
-            doc_id = str(row.get("doc_id") or "").strip()
-            if not doc_id:
-                filename = str(row.get("filename") or "").strip()
-                if filename in duplicate_filenames or filename not in filename_map:
-                    raise ValueError(f"Filename is missing or not unique: {filename!r}.")
-                doc_id = filename_map[filename]
+        normalized_rows = validate_document_metadata_import_rows(imported, documents)
+        for row in normalized_rows:
             save_document_metadata(
                 vector_store_name=selected,
                 schema_name=schema_name,
-                doc_id=doc_id,
+                doc_id=row["doc_id"],
                 values=row,
                 execute_sql_fn=execute_sql,
                 username=_current_user(request),
@@ -1659,8 +1719,13 @@ async def import_document_relations_admin(
     try:
         if relation_csv is None or not relation_csv.filename:
             raise ValueError("Select a document relationship CSV file.")
-        payload = (await relation_csv.read()).decode("utf-8-sig")
+        raw = await relation_csv.read(2 * 1024 * 1024 + 1)
+        if len(raw) > 2 * 1024 * 1024:
+            raise ValueError("Relationship CSV exceeds 2 MiB.")
+        payload = raw.decode("utf-8-sig")
         imported = [dict(row) for row in csv.DictReader(io.StringIO(payload))]
+        if not imported:
+            raise ValueError("CSV must contain a header and at least one relationship row.")
         schema_name = _document_relation_schema_name(request.app)
         documents = fetch_bookrag_documents(
             vector_store_name=selected,
@@ -1734,6 +1799,6 @@ async def inspect_unstructured_json_file(
     _activate_session_state(request, request.app)
     return request.app.state.templates.TemplateResponse(
         request,
-        "partials/unstructured_json_inspector_result.html",
+        "partials/unstructured_json_inspector_response.html",
         {"json_inspector": build_unstructured_json_inspector_context(json_file.strip())},
     )

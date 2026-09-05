@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hmac
 import re
 from collections.abc import Iterable
 from urllib.parse import urlsplit
@@ -91,10 +90,13 @@ def redact_sensitive_text(value: object, *, secrets: Iterable[object] = ()) -> s
 
 
 def _origin_tuple(value: str) -> tuple[str, str, int | None] | None:
-    parsed = urlsplit(str(value or "").strip())
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+    try:
+        parsed = urlsplit(str(value or "").strip())
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            return None
+        port = parsed.port
+    except ValueError:
         return None
-    port = parsed.port
     if port is None:
         port = 443 if parsed.scheme == "https" else 80
     return parsed.scheme, parsed.hostname.lower(), port
@@ -106,7 +108,7 @@ def _same_origin(request: Request, candidate: str) -> bool:
     return bool(
         candidate_origin
         and request_origin
-        and hmac.compare_digest(repr(candidate_origin), repr(request_origin))
+        and candidate_origin == request_origin
     )
 
 

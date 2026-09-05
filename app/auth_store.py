@@ -176,6 +176,10 @@ class AuthStore:
                     (str(display_name).strip(), encoded_password, clean_role, int(enabled), now, existing["id"]),
                 )
                 user_id = int(existing["id"])
+                connection.execute(
+                    "UPDATE sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL",
+                    (now, user_id),
+                )
             else:
                 cursor = connection.execute(
                     """INSERT INTO users(username, display_name, password_hash, role, enabled, created_at, updated_at)

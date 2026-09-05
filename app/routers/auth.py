@@ -51,7 +51,7 @@ async def login_submit(request: Request, username: str = Form(default=""), passw
     if not _is_poc_auth_configured(request.app):
         error_message = (
             "Server auth is not configured. Set EVSUI_BOOTSTRAP_ADMIN and "
-            "EVSUI_BOOTSTRAP_PASSWORD, then restart EVSUI."
+            "EVSUI_BOOTSTRAP_PASSWORD, then restart teradataevsui."
         )
     return request.app.state.templates.TemplateResponse(
         request,

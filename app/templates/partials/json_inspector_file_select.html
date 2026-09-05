@@ -1,0 +1,6 @@
+<select id="json-inspector-file" name="json_file" {% if inspector_select_oob|default(false) %}hx-swap-oob="outerHTML"{% endif %}>
+  <option value="">Select a JSON file</option>
+  {% for file in inspector.files %}
+  <option value="{{ file.value }}" {% if inspector.selected_file == file.value %}selected{% endif %}>{{ file.label }}</option>
+  {% endfor %}
+</select>

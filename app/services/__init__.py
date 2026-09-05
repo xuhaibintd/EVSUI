@@ -1,1 +1,1 @@
-"""Service layer modules for EVSUI."""
+"""Service layer modules for teradataevsui."""

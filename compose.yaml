@@ -1,5 +1,5 @@
 services:
-  evsui:
+  teradataevsui:
     build: .
     ports:
       - "8010:8010"
@@ -20,7 +20,7 @@ services:
     build: .
     command: ["python", "-m", "app.worker"]
     depends_on:
-      evsui:
+      teradataevsui:
         condition: service_healthy
     environment:
       EVSUI_ENVIRONMENT: production

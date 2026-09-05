@@ -202,7 +202,7 @@ BOOKRAG_QUERY_TABLE_ROLES: dict[str, str] = {
     "entity_relations": "graph",
 }
 
-# Logical foreign-key contract used by both the EVSUI query chain and MCP clients.
+# Logical foreign-key contract used by both the teradataevsui query chain and MCP clients.
 # Teradata does not need to enforce these as physical FK constraints for the
 # relationship to be mandatory at the application boundary.
 BOOKRAG_RELATIONSHIP_SPECS: tuple[dict[str, Any], ...] = (
