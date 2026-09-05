@@ -3,7 +3,7 @@
 文書 ID：`TD-EVSUI-DD-MOD`
 
 対象：Python 実装、エントリーポイント、保守スクリプト、対応テスト
-関連文書：`01_SYSTEM_ARCHITECTURE.md`、`13_TEST_AND_QUALITY.md`
+関連文書：`01_SYSTEM_ARCHITECTURE.md`、`14_TEST_AND_QUALITY.md`
 
 ## 1. 目的
 
@@ -51,7 +51,7 @@ HTTP / CLI エントリーポイント
 
 | モジュール | 責務 | 変更時の契約 | 主な試験 |
 |---|---|---|---|
-| `app/core/settings.py` | 環境変数、既定値、型変換、起動前検証 | 設定名、型、既定値、必須条件を `02_CONFIGURATION_AND_STARTUP.md` と同期する | `test_settings.py` |
+| `app/core/settings.py` | 環境変数、既定値、型変換、起動前検証 | 設定名、型、既定値、必須条件を `03_CONFIGURATION_AND_STARTUP.md` と同期する | `test_settings.py` |
 | `app/core/security.py` | CSRF、同一生成元判定、セキュリティヘッダー、秘密値の再帰的秘匿 | 失敗時にも秘密値を返さず、安全な GET を破壊しない | `test_security.py` |
 | `app/core/errors.py` | 共通 HTTP 例外処理と要求 ID の関連付け | 本番応答へスタックトレースを出さない | `test_security.py`、ルーターテスト |
 | `app/core/runtime_manager.py` | プロセス共有 Teradata コンテキストの排他制御と要求境界の後始末 | 共有 SDK 状態を同時要求間で混線させない | `test_runtime_manager.py` |
@@ -95,7 +95,7 @@ HTTP / CLI エントリーポイント
 
 - `DD-MOD-HTTP-001`：ルーター関数内の計算が再利用可能、外部 I/O を伴う、または複数経路で共有される場合はサービスへ移す。
 - `DD-MOD-HTTP-002`：POST 成功後は、重複実行を避けるため PRG または明示した HTMX 更新契約を使う。
-- `DD-MOD-HTTP-003`：画面メッセージは `UI_DESIGN.md` の唯一のトップメッセージ領域へ集約する。
+- `DD-MOD-HTTP-003`：画面メッセージは `13_UI_DESIGN.md` の唯一のトップメッセージ領域へ集約する。
 - `DD-MOD-HTTP-004`：入力エラー、権限エラー、競合、外部障害を同じ 500 応答へ潰さない。
 
 ## 7. ワークフロー
@@ -230,7 +230,7 @@ HTTP / CLI エントリーポイント
 | 長時間処理 | JobRepository + handler | heartbeat、cancel、restart、artifact |
 | SQLite 列または表 | migration + repository | backup、旧 DB からの移行試験 |
 | 外部 SDK 仕様差 | integration/service 境界 | 固定バージョン、契約試験 |
-| CSS、HTML、メッセージ | template/static/router context | `UI_DESIGN.md`、browser test |
+| CSS、HTML、メッセージ | template/static/router context | `13_UI_DESIGN.md`、browser test |
 
 ## 15. モジュール分割判断
 

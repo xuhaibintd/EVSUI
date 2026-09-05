@@ -70,7 +70,7 @@ session mode はその session が接続済みであることを要求する。e
 - `llm_input` 相当の下流利用情報
 - UI 用 assistant message と時刻
 
-evidence package の詳細は `08_BOOKRAG.md` に従う。API version は `bookrag-v1` とし、同 version 内で既存 field の意味を変更しない。
+evidence package の詳細は `11_BOOKRAG.md` に従う。API version は `bookrag-v1` とし、同 version 内で既存 field の意味を変更しない。
 
 ## 8. Answer 応答
 

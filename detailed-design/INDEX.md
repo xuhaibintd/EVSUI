@@ -17,25 +17,25 @@
 
 | 文書 | 主な対象 |
 |---|---|
-| `UI_DESIGN.md` | UI、画面状態、メッセージ、レスポンシブ、ブラウザーテスト |
 | `01_SYSTEM_ARCHITECTURE.md` | システム境界、レイヤー、依存方向、状態所有者 |
-| `02_CONFIGURATION_AND_STARTUP.md` | 環境変数、設定検証、アプリ初期化、起動・停止 |
-| `03_IDENTITY_AND_SECURITY.md` | 認証、セッション、ロール、CSRF、暗号化、監査、エラー秘匿 |
+| `02_MODULE_CATALOG.md` | 全 Python モジュールの責務、依存方向、配置先、対応テスト |
+| `03_CONFIGURATION_AND_STARTUP.md` | 環境変数、設定検証、アプリ初期化、起動・停止 |
 | `04_CONTROL_PLANE_DATABASE.md` | SQLite テーブル、マイグレーション、リポジトリ、バックアップ |
-| `05_TERADATA_RUNTIME.md` | SDK コンテキスト、接続プロファイル、直列化、再活性化 |
-| `06_VECTOR_STORE_LIFECYCLE.md` | 一覧、ヘルス、作成、状態確認、検索、削除 |
-| `07_DOCUMENT_PROCESSING.md` | アップロード、3 処理モード、Unstructured、JSON、CSV、ロード |
-| `08_BOOKRAG.md` | テーブル契約、ツリー、統制、検索、整合性、再構築 |
-| `09_RETRIEVAL_AND_API.md` | UI 検索、BookRAG API、認証、応答契約、エラー |
-| `10_JOBS_AND_ARTIFACTS.md` | 永続ジョブ、実行器、ハートビート、復旧、制品管理 |
-| `11_EXTERNAL_INTEGRATIONS.md` | Teradata、Unstructured、ファイルシステムの境界 |
-| `12_OPERATIONS_AND_DELIVERY.md` | CLI、Docker、依存管理、監視、バックアップ、公開物 |
-| `13_TEST_AND_QUALITY.md` | テスト層、CI、回帰、公開検査、完了条件 |
-| `14_MODULE_CATALOG.md` | 全 Python モジュールの責務、依存方向、配置先、対応テスト |
+| `05_IDENTITY_AND_SECURITY.md` | 認証、セッション、ロール、CSRF、暗号化、監査、エラー秘匿 |
+| `06_EXTERNAL_INTEGRATIONS.md` | Teradata、Unstructured、ファイルシステムの境界 |
+| `07_TERADATA_RUNTIME.md` | SDK コンテキスト、接続プロファイル、直列化、再活性化 |
+| `08_JOBS_AND_ARTIFACTS.md` | 永続ジョブ、実行器、ハートビート、復旧、成果物管理 |
+| `09_VECTOR_STORE_LIFECYCLE.md` | 一覧、ヘルス、作成、状態確認、検索、削除 |
+| `10_DOCUMENT_PROCESSING.md` | アップロード、3 処理モード、Unstructured、JSON、CSV、ロード |
+| `11_BOOKRAG.md` | テーブル契約、ツリー、統制、検索、整合性、再構築 |
+| `12_RETRIEVAL_AND_API.md` | UI 検索、BookRAG API、認証、応答契約、エラー |
+| `13_UI_DESIGN.md` | UI、画面状態、メッセージ、レスポンシブ、ブラウザーテスト |
+| `14_TEST_AND_QUALITY.md` | テスト層、CI、回帰、公開検査、完了条件 |
+| `15_OPERATIONS_AND_DELIVERY.md` | CLI、Docker、依存管理、監視、バックアップ、公開物 |
 
 ## 3. 読み方
 
-変更前に `01_SYSTEM_ARCHITECTURE.md` と `14_MODULE_CATALOG.md` を読み、対象機能の設計書を読む。UI を含む場合は `UI_DESIGN.md` も必須とする。複数領域を横断する変更では、次の順に確認する。
+変更前に `01_SYSTEM_ARCHITECTURE.md` と `02_MODULE_CATALOG.md` を読み、対象機能の設計書を読む。UI を含む場合は `13_UI_DESIGN.md` も必須とする。複数領域を横断する変更では、次の順に確認する。
 
 1. 状態の所有者と永続化先
 2. 認証、権限、シークレット境界

@@ -4,7 +4,7 @@
 
 ## 1. 対象
 
-本書は、接続後のヘルス確認、一覧取得、詳細補完、作成、Ready 確認、検索利用、および削除を一つの Vector Store ライフサイクルとして定義する。UI 表示規則は `UI_DESIGN.md`、SDK context は `05_TERADATA_RUNTIME.md` を参照する。
+本書は、接続後のヘルス確認、一覧取得、詳細補完、作成、Ready 確認、検索利用、および削除を一つの Vector Store ライフサイクルとして定義する。UI 表示規則は `13_UI_DESIGN.md`、SDK context は `07_TERADATA_RUNTIME.md` を参照する。
 
 ## 2. モジュール責務
 
@@ -108,7 +108,7 @@ status timeout は remote create の取消を意味しない。結果は pending
 
 ## 9. 検索利用
 
-標準検索は選択した資源を `VectorStore(name)` として開き、許可された `ask` または `similarity_search` だけを実行する。BookRAG は `08_BOOKRAG.md` の証拠再構築を通る。
+標準検索は選択した資源を `VectorStore(name)` として開き、許可された `ask` または `similarity_search` だけを実行する。BookRAG は `11_BOOKRAG.md` の証拠再構築を通る。
 
 質問長、資源名、top_k を検証する。選択時に VectorStore を初期化せず、送信時にのみ runtime を使用する。
 

@@ -82,7 +82,7 @@
 
 ## 5. Browser regression
 
-`UI_DESIGN.md` のシナリオを正本とする。特に次を release gate とする。
+`13_UI_DESIGN.md` のシナリオを正本とする。特に次を release gate とする。
 
 - メッセージは共通 top に一件
 - 表見出しとセル数一致
