@@ -79,9 +79,8 @@ idempotent lifecycle, port conflicts, startup timeout/rollback, configuration
 mismatch, paths with spaces, duplicate workers and graceful draining of an actual
 queued fixture job. No real external work is performed by those tests.
 
-Validation on 2026-09-05: 8 lifecycle tests passed; the full suite with Edge browser
-tests enabled passed **340 tests**, with no skips or failures (143.365 seconds).
-Ruff, Python compilation, wheel build and wheel secret-exclusion checks also passed.
+Use the [testing guide](testing.md) to reproduce validation. Keep results from
+individual runs separate from this maintained operations guide.
 
 ## Local development
 

@@ -291,7 +291,7 @@ class AuthStoreTests(unittest.TestCase):
                     "ues_url": "https://us.example.com/open-analytics",
                     "pat_token": "us-token",
                     "pem_filename": "us-key.pem",
-                    "pem_content": b"-----BEGIN PRIVATE KEY-----\nus-key\n-----END PRIVATE KEY-----\n",
+                    "pem_content": b"synthetic-test-pem-content",
                     "is_default": True,
                 },
             )

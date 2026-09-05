@@ -9,6 +9,15 @@ dist/
 uploads/
 pem_runtime/
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.db
+*.sqlite
+*.sqlite3
 app/config/auth_users.json
 app/config/local_dev.json
 app/config/unstructured.json
@@ -16,5 +25,7 @@ app/config/unstructured_models.json
 data/
 test-results/
 .coverage
+.coverage.*
 htmlcov/
 .run/
+local-notes/

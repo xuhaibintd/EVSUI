@@ -396,7 +396,7 @@ Detailed BookRAG table relationships and transformation rules are documented in 
 - Built-in parameter sets for `VECTORDISTANCE / KMEANS / HNSW`
 - `Multi Format` mode uses Unstructured Workflow Endpoint on-demand jobs and a reusable three-stage flow: shared raw JSON, standard unstructured CSV, then `<Vector Store Name>_unstructured` table loading. BookRAG and Multi Format discover the same raw JSON runs; they diverge only at JSON-to-CSV transformation and table loading. The standard Multi-Format JSON-to-row mapping and table contract remain unchanged.
 - `Multi-Format BookRAG` mode uses Unstructured Workflow Endpoint on-demand jobs with inline `job_nodes`, builds document-scoped Teradata tables, and can optionally run `VectorStore.create()` from `bnode.content` with `(doc_id, node_id)` as the vector key. See [BookRAG Pipeline: Data Structures and Processing Flow](docs/bookrag_pipeline_diagram.md) for the visual pipeline and table model.
-- BookRAG is intended for long, structured documents when retrieved passages need section paths, pages, source blocks, and optional table/image/entity context. It provides traceable evidence candidates for review, but it does not by itself perform graph traversal, cross-document entity resolution, contradiction detection, or citation verification. See the industrial-use-case decision guide in [English](docs/bookrag_industrial_use_cases.md) or [日本語](docs/bookrag_industrial_use_cases_ja.md).
+- BookRAG is intended for long, structured documents when retrieved passages need section paths, pages, source blocks, and optional table/image/entity context. It provides traceable evidence candidates for review, but it does not by itself perform graph traversal, cross-document entity resolution, contradiction detection, or citation verification. See the industrial-use-case decision guide in [English](docs/bookrag_industrial_use_cases.md) or [Japanese](docs/bookrag_industrial_use_cases_ja.md).
 
 ### Vector Store Retrieval
 
@@ -934,7 +934,7 @@ sequenceDiagram
 
 Schema, backup, artifact, and worker commands are documented in [Operations](docs/operations.md). Module dependency rules and the current single-worker constraint are documented in [Architecture](docs/architecture.md).
 
-Actual browser, HTTP, service and read-only live testing commands are documented in [Testing](docs/testing.md). The [2026-09-05 acceptance report](docs/testing-2026-09-05.md) distinguishes tested local workflows from remote mutation paths that require a disposable test environment.
+Browser, HTTP, service, and opt-in read-only live testing commands and their limitations are documented in [Testing](docs/testing.md). Review [Publication checks](docs/publishing.md) before submitting changes. Individual execution reports are not public project documentation.
 
 ## Health Check
 

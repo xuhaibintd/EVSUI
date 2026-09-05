@@ -94,4 +94,6 @@ are not changed. The helper itself has opt-in, snapshot, timeout and output-safe
 - Python coverage does not measure HTML/JavaScript coverage. Browser scenarios do
   not constitute load testing, penetration testing, or every browser/device combination.
 
-See [the acceptance report](testing-2026-09-05.md) for this test run's actual results.
+Keep individual execution reports, screenshots, and environment-specific evidence
+in ignored local directories or explicitly reviewed CI artifacts, not in public
+documentation. See [Publication checks](publishing.md) before submitting changes.

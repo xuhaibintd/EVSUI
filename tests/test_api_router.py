@@ -286,7 +286,7 @@ class BookRAGApiLiveAnswerTests(unittest.TestCase):
 
         evidence = {
             "retrieval_scope": {
-                "view_name": "MUBKWM_bk_retrieval_v",
+                "view_name": "EXAMPLE_STORE_bk_retrieval_v",
                 "allowed_doc_ids": ["latest-doc"],
             },
             "packages": [
@@ -301,8 +301,8 @@ class BookRAGApiLiveAnswerTests(unittest.TestCase):
         ) as adaptive_mock:
             _, _, result, similarity_result = _retrieve_bookrag_evidence_or_raise(
                 question="最新の債券見通しは？",
-                vector_store_name="MUBKWM",
-                schema_name="usecases_japan",
+                vector_store_name="EXAMPLE_STORE",
+                schema_name="example_database",
                 top_k=5,
             )
 
@@ -348,8 +348,8 @@ class BookRAGApiLiveAnswerTests(unittest.TestCase):
         ) as lock_mock:
             _, _, result, similarity_result = _retrieve_bookrag_evidence_or_raise(
                 question="債券の資産別見通しを要約してください",
-                vector_store_name="MUBKWM",
-                schema_name="usecases_japan",
+                vector_store_name="EXAMPLE_STORE",
+                schema_name="example_database",
                 lock_final=True,
             )
 
@@ -378,8 +378,8 @@ class BookRAGApiLiveAnswerTests(unittest.TestCase):
             with self.assertRaises(HTTPException) as ctx:
                 _retrieve_bookrag_evidence_or_raise(
                     question="20260609の債券見通しは？",
-                    vector_store_name="MUBKWM",
-                    schema_name="usecases_japan",
+                    vector_store_name="EXAMPLE_STORE",
+                    schema_name="example_database",
                     top_k=5,
                 )
 

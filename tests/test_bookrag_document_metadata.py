@@ -79,7 +79,7 @@ class BookRAGDocumentMetadataDerivationTests(unittest.TestCase):
 class BookRAGDocumentMetadataPersistenceTests(unittest.TestCase):
     @mock.patch(
         "app.services.bookrag_document_metadata.ensure_bookrag_retrieval_view",
-        return_value="MUBKWM_bk_retrieval_v",
+        return_value="EXAMPLE_STORE_bk_retrieval_v",
     )
     @mock.patch(
         "app.services.bookrag_document_metadata.fetch_document_metadata",
@@ -93,8 +93,8 @@ class BookRAGDocumentMetadataPersistenceTests(unittest.TestCase):
         execute_mock = mock.Mock()
 
         saved = save_document_metadata(
-            vector_store_name="MUBKWM",
-            schema_name="usecases_japan",
+            vector_store_name="EXAMPLE_STORE",
+            schema_name="example_database",
             doc_id="doc-1",
             values={
                 "publication_date": "2026-06-09",
@@ -121,7 +121,7 @@ class BookRAGDocumentScopeTests(unittest.TestCase):
     )
     @mock.patch(
         "app.services.bookrag_document_metadata.ensure_bookrag_retrieval_view",
-        return_value="MUBKWM_bk_retrieval_v",
+        return_value="EXAMPLE_STORE_bk_retrieval_v",
     )
     def test_explicit_month_is_applied_before_vector_retrieval(
         self,
@@ -156,7 +156,7 @@ class BookRAGDocumentScopeTests(unittest.TestCase):
             )
 
         scope = fetch_effective_document_scope(
-            vector_store_name="MUBKWM",
+            vector_store_name="EXAMPLE_STORE",
             schema_name="demo",
             execute_sql_fn=execute,
             temporal_scope=parse_temporal_scope("2026年6月の見通し"),
@@ -174,7 +174,7 @@ class BookRAGDocumentScopeTests(unittest.TestCase):
     )
     @mock.patch(
         "app.services.bookrag_document_metadata.ensure_bookrag_retrieval_view",
-        return_value="MUBKWM_bk_retrieval_v",
+        return_value="EXAMPLE_STORE_bk_retrieval_v",
     )
     def test_latest_quarter_uses_latest_confirmed_publication_date(
         self,
@@ -201,7 +201,7 @@ class BookRAGDocumentScopeTests(unittest.TestCase):
             )
 
         scope = fetch_effective_document_scope(
-            vector_store_name="MUBKWM",
+            vector_store_name="EXAMPLE_STORE",
             schema_name="demo",
             execute_sql_fn=execute,
             temporal_scope=parse_temporal_scope("最新四半期の見通し"),

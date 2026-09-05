@@ -268,7 +268,7 @@ class UserAdminRouteTests(unittest.TestCase):
 
     def test_connect_uses_database_pem_with_its_original_key_id_filename(self) -> None:
         self._login("admin", "admin-password")
-        pem_payload = b"-----BEGIN PRIVATE KEY-----\ntest-private-key\n-----END PRIVATE KEY-----\n"
+        pem_payload = b"synthetic-test-pem-content"
         saved = self.client.post(
             "/admin/connection",
             data={
@@ -304,7 +304,7 @@ class UserAdminRouteTests(unittest.TestCase):
     def test_home_connects_with_the_selected_connection_profile(self) -> None:
         self._login("admin", "admin-password")
         admin = self.store.authenticate("admin", "admin-password")
-        pem_payload = b"-----BEGIN PRIVATE KEY-----\ntest-private-key\n-----END PRIVATE KEY-----\n"
+        pem_payload = b"synthetic-test-pem-content"
         common = {
             "password": "database-password",
             "pat_token": "private-pat-token",

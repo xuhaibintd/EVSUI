@@ -377,7 +377,7 @@ class DocumentMetadataAdminTests(unittest.TestCase):
         html = self.template.render(
             document_metadata_admin={
                 "auto_refresh": True,
-                "selected_vector_store": "MUBKWM",
+                "selected_vector_store": "EXAMPLE_STORE",
                 "documents": [{"doc_id": "doc-1", "filename": "report.pdf"}],
             }
         )
@@ -389,16 +389,16 @@ class DocumentMetadataAdminTests(unittest.TestCase):
 
     def test_bookrag_loaded_run_is_selectable_before_vectorstore_is_ready(self):
         app = SimpleNamespace(state=SimpleNamespace(
-            evs_state={"chat_vs_options": ["MUBKWM"], "selected_vs_name": ""},
-            create_form_values={"target_database": "usecases_japan"},
+            evs_state={"chat_vs_options": ["EXAMPLE_STORE"], "selected_vs_name": ""},
+            create_form_values={"target_database": "example_database"},
         ))
         with mock.patch.object(
             web_router_module,
             "list_bookrag_csv_runs",
             return_value=[
                 {
-                    "vector_store_name": "MUBKWM_0728",
-                    "target_database": "usecases_japan",
+                    "vector_store_name": "EXAMPLE_STORE_0728",
+                    "target_database": "example_database",
                     "load_status": "ready",
                     "vector_store_status": "creating",
                 }
@@ -406,7 +406,7 @@ class DocumentMetadataAdminTests(unittest.TestCase):
         ):
             options = web_router_module._bookrag_admin_vector_store_options(app)
 
-        self.assertEqual(options, ["MUBKWM", "MUBKWM_0728"])
+        self.assertEqual(options, ["EXAMPLE_STORE", "EXAMPLE_STORE_0728"])
 
 
 class DocumentRelationshipAdminTests(unittest.TestCase):

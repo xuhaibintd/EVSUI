@@ -16,12 +16,14 @@ REQUIRED_RUNTIME_FILES = {
     "app/templates/partials/job_progress.html",
     "app/worker.py",
 }
+FORBIDDEN_RUNTIME_PREFIXES = (".run/", "data/", "local-notes/", "pem_runtime/", "test-results/", "uploads/")
 
 
 def verify_wheel(path: Path) -> None:
     with zipfile.ZipFile(path) as archive:
         names = set(archive.namelist())
     forbidden = sorted(names & FORBIDDEN_RUNTIME_CONFIGS)
+    forbidden.extend(sorted(name for name in names if name.startswith(FORBIDDEN_RUNTIME_PREFIXES)))
     missing = sorted(REQUIRED_RUNTIME_FILES - names)
     if forbidden:
         raise RuntimeError(f"Wheel contains local runtime configuration: {', '.join(forbidden)}")

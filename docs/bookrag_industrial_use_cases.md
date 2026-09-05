@@ -1,6 +1,6 @@
 # BookRAG Industrial Use Cases: From Product Claim to Pilot Decision
 
-> [日本語版はこちら](bookrag_industrial_use_cases_ja.md)
+> [Japanese translation](bookrag_industrial_use_cases_ja.md)
 
 ## Purpose
 

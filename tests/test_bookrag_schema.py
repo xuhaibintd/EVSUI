@@ -87,7 +87,7 @@ class BookragTablePreparationTests(unittest.TestCase):
         execute_mock = mock.Mock(side_effect=execute)
         added = migrate_bookrag_document_metadata_columns(
             schema_name="demo",
-            table_name="MUBKWM_bk_bdoc",
+            table_name="EXAMPLE_STORE_bk_bdoc",
             execute_sql_fn=execute_mock,
         )
 
@@ -99,35 +99,35 @@ class BookragTablePreparationTests(unittest.TestCase):
         ]
         self.assertEqual(
             add_sql,
-            ['ALTER TABLE "demo"."MUBKWM_bk_bdoc" ADD "publication_date" DATE'],
+            ['ALTER TABLE "demo"."EXAMPLE_STORE_bk_bdoc" ADD "publication_date" DATE'],
         )
 
     def test_retrieval_view_ranks_effective_documents_by_publication_date(self) -> None:
         execute_mock = mock.Mock()
 
         view_name = prepare_bookrag_retrieval_view(
-            vector_store_name="MUBKWM",
-            schema_name="usecases_japan",
+            vector_store_name="EXAMPLE_STORE",
+            schema_name="example_database",
             execute_sql_fn=execute_mock,
         )
 
-        self.assertEqual(view_name, "MUBKWM_bk_retrieval_v")
+        self.assertEqual(view_name, "EXAMPLE_STORE_bk_retrieval_v")
         sql = execute_mock.call_args.args[0]
         self.assertIn('ORDER BY d."publication_date" DESC', sql)
         self.assertIn('r."relation_type" = \'updates\'', sql)
         self.assertIn('r."to_doc_id" = d."doc_id"', sql)
-        self.assertIn('"usecases_japan"."MUBKWM_bk_bnode"', sql)
+        self.assertIn('"example_database"."EXAMPLE_STORE_bk_bnode"', sql)
 
     def test_existing_retrieval_view_is_not_replaced_on_regular_access(self) -> None:
         execute_mock = mock.Mock()
 
         view_name = ensure_bookrag_retrieval_view(
-            vector_store_name="MUBKWM",
-            schema_name="usecases_japan",
+            vector_store_name="EXAMPLE_STORE",
+            schema_name="example_database",
             execute_sql_fn=execute_mock,
         )
 
-        self.assertEqual(view_name, "MUBKWM_bk_retrieval_v")
+        self.assertEqual(view_name, "EXAMPLE_STORE_bk_retrieval_v")
         self.assertEqual(execute_mock.call_count, 1)
         self.assertIn('SELECT TOP 1 "doc_id", "publication_date"', execute_mock.call_args.args[0])
 
@@ -135,12 +135,12 @@ class BookragTablePreparationTests(unittest.TestCase):
         execute_mock = mock.Mock(side_effect=[RuntimeError("[3807] Object does not exist"), None])
 
         view_name = ensure_bookrag_retrieval_view(
-            vector_store_name="MUBKWM",
-            schema_name="usecases_japan",
+            vector_store_name="EXAMPLE_STORE",
+            schema_name="example_database",
             execute_sql_fn=execute_mock,
         )
 
-        self.assertEqual(view_name, "MUBKWM_bk_retrieval_v")
+        self.assertEqual(view_name, "EXAMPLE_STORE_bk_retrieval_v")
         self.assertIn("REPLACE VIEW", execute_mock.call_args.args[0])
 
 

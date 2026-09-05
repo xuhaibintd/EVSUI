@@ -19,14 +19,14 @@ class DestroyFlowTests(unittest.IsolatedAsyncioTestCase):
             "destroy_preview": "",
             "last_error": "",
             "last_success": "",
-            "params": {"username": "USECASES_JAPAN"},
+            "params": {"username": "EXAMPLE_DATABASE"},
             "list_columns": ["#", "vs_name", "store_type", "description", "database_name", "vs_status"],
             "list_rows": [row],
         }
 
     async def test_bookrag_destroy_drops_vs_before_bookrag_objects(self):
         actions: list[str] = []
-        state = self._base_state(["1", "demo_vs", "file-based", "demo unstructured_bookrag_flg", "USECASES_JAPAN", "READY"])
+        state = self._base_state(["1", "demo_vs", "file-based", "demo unstructured_bookrag_flg", "EXAMPLE_DATABASE", "READY"])
 
         class _VectorStore:
             def __init__(self, name):
@@ -54,15 +54,15 @@ class DestroyFlowTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(actions[0], "vs_destroy")
-        self.assertIn('DROP VIEW "USECASES_JAPAN"."demo_vs_bk_bleaf"', actions)
-        self.assertIn('DROP TABLE "USECASES_JAPAN"."demo_vs_bk_bnode"', actions)
-        self.assertIn('DROP TABLE "USECASES_JAPAN"."demo_vs_bk_brel"', actions)
-        self.assertIn('DROP TABLE "USECASES_JAPAN"."demo_vs_bk_bdrel"', actions)
+        self.assertIn('DROP VIEW "EXAMPLE_DATABASE"."demo_vs_bk_bleaf"', actions)
+        self.assertIn('DROP TABLE "EXAMPLE_DATABASE"."demo_vs_bk_bnode"', actions)
+        self.assertIn('DROP TABLE "EXAMPLE_DATABASE"."demo_vs_bk_brel"', actions)
+        self.assertIn('DROP TABLE "EXAMPLE_DATABASE"."demo_vs_bk_bdrel"', actions)
         self.assertEqual(state["destroy_status"], "ok")
 
     async def test_non_bookrag_destroy_skips_bookrag_cleanup(self):
         actions: list[str] = []
-        state = self._base_state(["1", "demo_vs", "file-based", "plain description", "USECASES_JAPAN", "READY"])
+        state = self._base_state(["1", "demo_vs", "file-based", "plain description", "EXAMPLE_DATABASE", "READY"])
 
         class _VectorStore:
             def __init__(self, name):
