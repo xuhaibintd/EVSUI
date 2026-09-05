@@ -46,10 +46,6 @@ from app.services.multi_format_config import (
     to_bool as _to_bool,
     to_int as _to_int,
 )
-from app.services.multi_format_excel import (
-    is_excel_file as _is_excel_file,
-    partition_excel_chunks as _partition_excel_chunks_impl,
-)
 from app.services.teradata_sql import (
     ExecuteSqlFn,
     _count_teradata_rows,
@@ -1188,20 +1184,6 @@ def _as_int(value: Any) -> int | None:
         return int(value)
     except Exception:
         return None
-
-
-def _partition_excel_chunks(
-    src: Path,
-    *,
-    chunk_size: int,
-    chunk_overlap: int,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
-    return _partition_excel_chunks_impl(
-        src,
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-        element_to_chunk_row=_element_to_chunk_row,
-    )
 
 
 def _element_to_chunk_row(
@@ -3588,8 +3570,6 @@ def apply_multi_format_pipeline(
     used_partition_strategies: set[str] = set()
     used_ocr_languages: set[tuple[str, ...]] = set()
     scan_ocr_fallback_files: list[str] = []
-    excel_structured_files: list[str] = []
-    processing_modes: set[str] = set()
     job_ids: list[str] = []
     workflow_ids: list[str] = []
     workflow_names_seen: list[str] = []
@@ -3687,8 +3667,6 @@ def apply_multi_format_pipeline(
             rows=rows,
             execute_sql_fn=execute_sql_fn,
         )
-        processing_modes.add("workflow-jobs")
-
     flush_wait_seconds = _to_int(
         os.getenv("UNSTRUCTURED_TERADATA_FLUSH_WAIT_SECONDS", str(UNSTRUCTURED_TERADATA_FLUSH_WAIT_SECONDS_DEFAULT)),
         default=UNSTRUCTURED_TERADATA_FLUSH_WAIT_SECONDS_DEFAULT,
@@ -3733,12 +3711,6 @@ def apply_multi_format_pipeline(
         languages_label = ",".join(next(iter(used_ocr_languages)))
     elif used_ocr_languages:
         languages_label = "mixed"
-    processing_mode_label = (
-        next(iter(processing_modes))
-        if len(processing_modes) == 1
-        else ("mixed" if processing_modes else "")
-    )
-
     summary = {
         "table_name": qualified_name,
         "chunk_count": chunk_count,
@@ -3758,8 +3730,6 @@ def apply_multi_format_pipeline(
         "effective_ocr_languages": ocr_languages,
         "effective_partition_strategy_label": strategy_label,
         "effective_ocr_languages_label": languages_label,
-        "processing_mode_label": processing_mode_label,
-        "excel_structured_files": excel_structured_files,
         "scan_ocr_fallback_files": scan_ocr_fallback_files,
         "include_orig_elements": include_orig_elements,
         "overlap_all": overlap_all,

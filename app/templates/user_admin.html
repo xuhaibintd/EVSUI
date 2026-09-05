@@ -7,7 +7,7 @@
       <div>
         <p class="eyebrow">Platform administration</p>
         <h1>System Configuration</h1>
-        <p class="muted">Manage system connections, external service credentials, and user access.</p>
+        <p class="muted">Configure database connections, document processing services, and user accounts.</p>
       </div>
       <a class="chip-btn" href="/">Back to Teradata Vector Store</a>
     </header>
@@ -22,7 +22,7 @@
       <input class="system-config-tab-input" type="radio" name="system-config-tab" id="system-config-tab-users" {% if active_tab == 'users' %}checked{% endif %} />
 
       <nav class="system-config-tab-nav" aria-label="System Configuration">
-        <label for="system-config-tab-connection">System Connection</label>
+        <label for="system-config-tab-connection">Database Connections</label>
         <label for="system-config-tab-unstructured">Unstructured IO</label>
         <label for="system-config-tab-users">User Management</label>
       </nav>
@@ -108,26 +108,38 @@
     <section id="unstructured-configuration" class="system-connection-section system-config-tab-panel system-config-panel-unstructured" aria-labelledby="unstructured-configuration-title">
       <div class="user-section-heading">
         <div>
-          <h2 id="unstructured-configuration-title">Unstructured IO</h2>
-          <p class="muted">Shared by all signed-in users for Multi Format and Multi-Format BookRAG. The API key is encrypted in SQLite.</p>
+          <h2 id="unstructured-configuration-title">Unstructured API</h2>
+          <p class="muted">Shared document processing service for all users. The API key is encrypted in SQLite and is never displayed.</p>
         </div>
         <span class="connection-config-state {% if evs.params.unstructured_api_url and unstructured_api_key_configured %}is-configured{% endif %}">{% if evs.params.unstructured_api_url and unstructured_api_key_configured %}Configured{% else %}Not configured{% endif %}</span>
       </div>
       <form class="unstructured-connection-form" method="post" action="/admin/unstructured-config">
-        <label class="field">
-          <span>API URL</span>
-          <input type="url" name="unstructured_api_url" value="{{ unstructured_config.api_url|default('') }}" placeholder="https://platform.unstructuredapp.io/api/v1" />
-        </label>
-        <label class="field">
-          <span>API Key</span>
-          <input type="password" name="unstructured_api_key" value="" placeholder="{% if unstructured_api_key_configured %}Saved — leave blank to keep{% else %}Unstructured API key{% endif %}" autocomplete="new-password" />
-        </label>
-        {% if unstructured_api_key_configured %}
-        <label class="inline-check"><input type="checkbox" name="clear_unstructured_api_key" value="true" /> Clear saved API key</label>
-        {% endif %}
-        <div class="system-connection-actions">
-          <button type="submit">Save Unstructured IO</button>
+        <div class="unstructured-connection-fields">
+          <label class="field">
+            <span>API URL</span>
+            <input type="url" name="unstructured_api_url" value="{{ unstructured_config.api_url|default('') }}" placeholder="https://platform.unstructuredapp.io/api/v1" autocomplete="url" />
+            <small class="field-help">Base endpoint for the Unstructured Platform API.</small>
+          </label>
+          <label class="field">
+            <span>API Key</span>
+            <input type="password" name="unstructured_api_key" value="" placeholder="{% if unstructured_api_key_configured %}Saved — leave blank to keep{% else %}Enter API key{% endif %}" autocomplete="new-password" />
+            <small class="field-help">{% if unstructured_api_key_configured %}A key is stored. Enter a new key only to replace it.{% else %}Enter the API key issued by Unstructured.{% endif %}</small>
+          </label>
         </div>
+        <footer class="unstructured-connection-actions">
+          {% if unstructured_api_key_configured %}
+          <label class="unstructured-clear-key">
+            <input type="checkbox" name="clear_unstructured_api_key" value="true" />
+            <span>
+              <strong>Remove stored API key</strong>
+              <small>The service will be unavailable until a new key is saved.</small>
+            </span>
+          </label>
+          {% else %}
+          <p class="unstructured-key-status">No API key is currently stored.</p>
+          {% endif %}
+          <button type="submit">Save configuration</button>
+        </footer>
       </form>
     </section>
 

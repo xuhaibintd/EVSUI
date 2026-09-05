@@ -1,5 +1,7 @@
 # BookRAG Pipeline: Data Structures and Processing Flow
 
+> **Language:** English | [日本語](bookrag_pipeline_diagram_ja.md)
+
 This document describes the current `multi_format_bookrag` implementation in teradataevsui. It focuses on the runtime data flow, persisted Teradata structures, and the node-tree construction algorithm used before VectorStore creation.
 
 ## 1. End-to-End Pipeline

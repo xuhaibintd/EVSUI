@@ -1,6 +1,7 @@
 {% set _connected_raw = evs.connected %}
 {% set is_connected = _connected_raw is sameas true or (_connected_raw|string|lower in ['1', 'true', 'yes', 'on']) %}
 {% set config_ready = evs.params.host and evs.params.username and evs.params.password and evs.params.ues_url and evs.params.pat_token and evs.params.pem_file %}
+{% set role = user_role|default('viewer') %}
 <div class="connect-grid" data-step1-connected="{% if is_connected %}true{% else %}false{% endif %}">
   <div class="connect-entry">
     <form id="evs-connect-form" class="stack connect-shell" hx-post="/ui/evs/connect" hx-target="#section-connect-content" hx-swap="innerHTML" hx-indicator="#connect-progress">
@@ -29,7 +30,7 @@
         <div class="connection-config-empty">
           <strong>System connection is not configured.</strong>
           <span>An administrator must save the database and authentication settings before connecting.</span>
-          {% if user_role|default('viewer') == 'admin' %}<a class="chip-btn" href="/admin/users#connection-configuration">Open System Configuration</a>{% endif %}
+          {% if role == 'admin' %}<a class="chip-btn" href="/admin/users#connection-configuration">Open System Configuration</a>{% endif %}
         </div>
         {% endif %}
       </fieldset>
@@ -38,158 +39,114 @@
     <div class="stack-inline connect-actions">
       <button type="submit" form="evs-connect-form" class="connect-submit-btn progress-btn" data-progress-button {% if is_connected or not config_ready %}disabled aria-disabled="true"{% else %}aria-disabled="false"{% endif %}>
         <span class="connect-submit-label progress-btn-label">Connect</span>
-        <span class="connect-submit-loading progress-btn-loading">
-          <span class="progress-btn-spinner" aria-hidden="true"></span>
-          <span>Connecting...</span>
-        </span>
+        <span class="connect-submit-loading progress-btn-loading"><span class="progress-btn-spinner" aria-hidden="true"></span><span>Connecting...</span></span>
       </button>
       <form id="evs-reset-form" class="connect-reset-form" hx-post="/ui/evs/reset" hx-target="#section-connect-content" hx-swap="innerHTML">
         <button type="submit" class="ghost progress-btn" data-progress-button {% if not is_connected %}disabled aria-disabled="true"{% else %}aria-disabled="false"{% endif %}>
           <span class="progress-btn-label">Disconnect</span>
-          <span class="progress-btn-loading">
-            <span class="progress-btn-spinner" aria-hidden="true"></span>
-            <span>Disconnecting...</span>
-          </span>
+          <span class="progress-btn-loading"><span class="progress-btn-spinner" aria-hidden="true"></span><span>Disconnecting...</span></span>
         </button>
       </form>
     </div>
     <div id="connect-progress" class="connect-progress" role="status" aria-live="polite">
-      <span class="connect-progress-spinner" aria-hidden="true"></span>
-      <span>Connecting and authenticating, please wait...</span>
+      <span class="connect-progress-spinner" aria-hidden="true"></span><span>Connecting and authenticating, please wait...</span>
     </div>
   </div>
 
-  <aside class="connect-monitor">
+  <aside class="connect-monitor" aria-label="Enterprise Vector Store management">
     <fieldset class="connect-monitor-group">
       <legend>Management</legend>
-    <article class="monitor-card monitor-card-health">
-      <div class="monitor-actions">
-        <button
-          type="button"
-          class="ghost monitor-btn progress-btn monitor-btn-health"
-          style="border-color:#2d7d57;background:linear-gradient(180deg,#34a56f 0%,#257a52 100%);color:#ffffff;-webkit-text-fill-color:#ffffff;box-shadow:0 6px 16px rgba(37,122,82,0.24);"
-          data-progress-button
-          hx-post="/ui/evs/health"
-          hx-target="#section-connect-content"
-          hx-swap="innerHTML"
-          {% if not is_connected %}disabled aria-disabled="true"{% else %}aria-disabled="false"{% endif %}
-        >
-          <span class="progress-btn-label" style="color:inherit;">Vector Store Health check</span>
-          <span class="progress-btn-loading">
-            <span class="progress-btn-spinner" aria-hidden="true"></span>
-            <span>Running...</span>
-          </span>
+
+      <div class="monitor-toolbar">
+        <div>
+          <h3>Vector stores</h3>
+          <p>Resources available to the active database connection.</p>
+        </div>
+        <button type="button" class="monitor-refresh-btn progress-btn" data-progress-button hx-post="/ui/evs/refresh" hx-target="#section-connect-content" hx-swap="innerHTML" {% if not is_connected %}disabled aria-disabled="true"{% else %}aria-disabled="false"{% endif %}>
+          <span class="progress-btn-label">Refresh management data</span>
+          <span class="progress-btn-loading"><span class="progress-btn-spinner" aria-hidden="true"></span><span>Refreshing...</span></span>
         </button>
       </div>
-      <div class="monitor-status monitor-status-list monitor-status-health {% if not is_connected %}warn{% elif is_connected and evs.health_rows %}ok{% elif is_connected and evs.health_preview and ('error:' in evs.health_preview|lower or 'failed' in evs.health_preview|lower) %}err{% else %}info{% endif %}">
-        {% if is_connected and evs.health_rows %}
-        <div class="monitor-table-wrap monitor-table-wrap-health">
-          <table class="monitor-table">
+
+      <div class="monitor-overview" aria-label="Management status">
+        <div class="monitor-metric"><span>Connection</span><strong class="{% if is_connected %}is-ok{% else %}is-muted{% endif %}">{{ 'Connected' if is_connected else 'Disconnected' }}</strong></div>
+        <div class="monitor-metric">
+          <span>EVS health</span>
+          <strong class="{% if evs.management_health|default('Not checked') == 'Healthy' %}is-ok{% elif evs.management_health|default('Not checked') == 'Unavailable' %}is-error{% else %}is-muted{% endif %}">{{ evs.management_health|default('Not checked') }}</strong>
+          {% if evs.management_health_detail %}<small>{{ evs.management_health_detail }}</small>{% endif %}
+        </div>
+        <div class="monitor-metric"><span>Last checked</span><strong>{{ evs.management_checked_at|default('') or 'Not yet' }}</strong></div>
+      </div>
+
+      {% if evs.management_warnings %}
+      <details class="monitor-warning-summary">
+        <summary>{{ evs.management_warnings|length }} management warning{% if evs.management_warnings|length != 1 %}s{% endif %}</summary>
+        <ul>{% for warning in evs.management_warnings %}<li>{{ warning }}</li>{% endfor %}</ul>
+      </details>
+      {% endif %}
+
+      <section class="resource-inventory" data-resource-inventory>
+        <div class="monitor-section-head">
+          <div><h3>Available vector stores</h3><p>{{ evs.resource_rows|default([])|length }} name{% if evs.resource_rows|default([])|length != 1 %}s{% endif %} for {{ evs.selected_connection_name or evs.params.username }}.</p></div>
+          <label class="resource-search"><span class="sr-only">Filter resources</span><input type="search" placeholder="Filter resources" data-resource-filter {% if not evs.resource_rows %}disabled{% endif %} /></label>
+        </div>
+
+        {% if is_connected and evs.resource_rows %}
+        <div class="resource-selection-bar" data-resource-selection data-user-role="{{ role }}">
+          <div class="resource-selection-value"><span>Selected</span><strong data-destroy-selected-name>{{ evs.selected_resource_name or 'None' }}</strong></div>
+          {% if role in ['admin', 'operator'] %}
+          <div class="vs-destroy-panel" data-vs-destroy-panel>
+            <form hx-post="/ui/evs/destroy" hx-target="#section-connect-content" hx-swap="innerHTML">
+              <input type="hidden" name="vs_name" value="{{ evs.selected_resource_name }}" data-destroy-vs-input />
+              <input type="hidden" name="resource_kind" value="{{ evs.selected_resource_kind }}" data-destroy-kind-input />
+              <button type="submit" class="danger-outline progress-btn" data-progress-button data-destroy-btn {% if not evs.selected_resource_name %}disabled aria-disabled="true"{% else %}aria-disabled="false"{% endif %}>
+                <span class="progress-btn-label">Delete selected</span>
+                <span class="progress-btn-loading"><span class="progress-btn-spinner" aria-hidden="true"></span><span>Deleting...</span></span>
+              </button>
+            </form>
+            <div class="confirm-modal" data-destroy-confirm hidden>
+              <button type="button" class="confirm-modal-backdrop" data-confirm-cancel aria-label="Close"></button>
+              <section class="confirm-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="destroy-confirm-title">
+                <h3 id="destroy-confirm-title" class="confirm-modal-title">Delete vector store</h3>
+                <p class="confirm-modal-body">This will permanently delete <strong data-confirm-vs-name>{{ evs.selected_resource_name or 'None' }}</strong>. This action cannot be undone.</p>
+                <div class="confirm-modal-actions"><button type="button" class="ghost confirm-btn" data-confirm-cancel>Cancel</button><button type="button" class="confirm-btn confirm-btn-danger" data-confirm-ok>Delete</button></div>
+              </section>
+            </div>
+          </div>
+          {% endif %}
+        </div>
+        <div class="monitor-table-wrap resource-table-wrap">
+          <table class="monitor-table resource-table" data-resource-table>
             <thead>
               <tr>
-                {% for col in evs.health_columns %}
-                <th>{{ col }}</th>
-                {% endfor %}
+                <th scope="col">Vector store name</th>
+                <th scope="col">Description</th>
+                <th scope="col">Type</th>
+                <th scope="col">Status</th>
+                <th scope="col">Database</th>
+                <th scope="col">Owner</th>
               </tr>
             </thead>
             <tbody>
-              {% for row in evs.health_rows %}
-              <tr>
-                {% for cell in row %}
-                <td>{{ cell }}</td>
-                {% endfor %}
+              {% for resource in evs.resource_records %}
+              <tr class="monitor-list-row{% if evs.selected_resource_kind == resource.kind and evs.selected_resource_name == resource.name %} is-selected{% endif %}" data-resource-row data-vs-name="{{ resource.name }}" data-resource-kind="{{ resource.kind }}" role="button" tabindex="0" aria-label="Select {{ resource.name }}" aria-selected="{{ 'true' if evs.selected_resource_kind == resource.kind and evs.selected_resource_name == resource.name else 'false' }}">
+                <td>{{ resource.name }}</td>
+                {% set resource_description = resource.description|default('', true) %}
+                <td class="resource-description"{% if resource_description %} title="{{ resource_description }}"{% endif %}>{{ resource_description }}</td>
+                <td>{{ resource.type|default('', true) }}</td><td>{{ resource.status|default('', true) }}</td><td>{{ resource.database|default('', true) }}</td><td>{{ resource.owner|default('', true) }}</td>
               </tr>
               {% endfor %}
             </tbody>
           </table>
         </div>
-        {% elif is_connected and evs.health_preview -%}
-        <pre class="monitor-fallback-text">{{ evs.health_preview }}</pre>
-        {%- elif is_connected -%}
-        Connected. Click Vector Store Health check.
-        {%- else -%}
-        Not connected. Click Connect first.
-        {%- endif %}
-      </div>
-    </article>
-
-    <article class="monitor-card monitor-card-list">
-      <div class="monitor-actions">
-        <button
-          type="button"
-          class="ghost monitor-btn progress-btn monitor-btn-list"
-          style="border-color:#2e5fb1;background:linear-gradient(180deg,#4a8dff 0%,#2f67da 100%);color:#ffffff;-webkit-text-fill-color:#ffffff;box-shadow:0 6px 16px rgba(47,103,218,0.24);"
-          data-progress-button
-          hx-post="/ui/evs/list"
-          hx-target="#section-connect-content"
-          hx-swap="innerHTML"
-          {% if not is_connected %}disabled aria-disabled="true"{% else %}aria-disabled="false"{% endif %}
-        >
-          <span class="progress-btn-label" style="color:inherit;">Get Vector Store List</span>
-          <span class="progress-btn-loading">
-            <span class="progress-btn-spinner" aria-hidden="true"></span>
-            <span>Running...</span>
-          </span>
-        </button>
-      </div>
-      <div class="monitor-status monitor-status-list monitor-status-list-main {% if not is_connected %}warn{% elif is_connected and evs.list_rows %}ok{% elif is_connected and evs.list_preview and ('error:' in evs.list_preview|lower or 'failed' in evs.list_preview|lower) %}err{% else %}info{% endif %}">
-        {% set list_visible_rows = 5 %}
-        {% set selectable = true %}
-        {% set connected_empty_text = "Connected. Click Get Vector Store List." %}
-        {% set disconnected_empty_text = "Not connected. Click Connect first." %}
-        {% include "partials/vector_store_list_body.html" %}
-      </div>
-      {% if user_role|default('viewer') in ['admin', 'operator'] %}
-      <div class="vs-destroy-panel" data-vs-destroy-panel>
-        <div class="vs-destroy-head">Destroy Selected Vector Store</div>
-        <div class="vs-destroy-current">Selected: <strong data-destroy-selected-name>{% if evs.selected_vs_name %}{{ evs.selected_vs_name }}{% else %}(none){% endif %}</strong></div>
-        <form
-          class="vs-destroy-actions"
-          hx-post="/ui/evs/destroy"
-          hx-target="#section-connect-content"
-          hx-swap="innerHTML"
-        >
-          <input type="hidden" name="vs_name" value="{{ evs.selected_vs_name }}" data-destroy-vs-input />
-          <button
-            type="submit"
-            class="monitor-btn progress-btn"
-            data-progress-button
-            data-destroy-btn
-            {% if not is_connected or not evs.selected_vs_name %}disabled aria-disabled="true"{% else %}aria-disabled="false"{% endif %}
-          >
-            <span class="progress-btn-label">Delete</span>
-            <span class="progress-btn-loading">
-              <span class="progress-btn-spinner" aria-hidden="true"></span>
-              <span>Deleting...</span>
-            </span>
-          </button>
-        </form>
-        <p class="vs-destroy-feedback {{ evs.destroy_status|default('neutral') }}" data-destroy-feedback>
-          {% if evs.destroy_preview %}{{ evs.destroy_preview }}{% else %}Click a row in list, then destroy it here.{% endif %}
-        </p>
-        <div class="confirm-modal" data-destroy-confirm hidden>
-          <button type="button" class="confirm-modal-backdrop" data-confirm-cancel aria-label="Close"></button>
-          <section class="confirm-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="destroy-confirm-title">
-            <h3 id="destroy-confirm-title" class="confirm-modal-title">Delete Vector Store</h3>
-            <p class="confirm-modal-body">
-              This will permanently delete
-              <strong data-confirm-vs-name>{% if evs.selected_vs_name %}{{ evs.selected_vs_name }}{% else %}(none){% endif %}</strong>.
-              This action cannot be undone.
-            </p>
-            <div class="confirm-modal-actions">
-              <button type="button" class="ghost confirm-btn" data-confirm-cancel>Cancel</button>
-              <button type="button" class="confirm-btn confirm-btn-danger" data-confirm-ok>Delete</button>
-            </div>
-          </section>
-        </div>
-      </div>
-      {% endif %}
-    </article>
+        <p class="resource-filter-empty" data-resource-filter-empty hidden>No resources match the filter.</p>
+        {% elif is_connected and evs.management_loaded %}<div class="monitor-empty">No vector stores are associated with this database connection.</div>
+        {% elif is_connected %}<div class="monitor-empty">Refresh to load health and resources.</div>
+        {% else %}<div class="monitor-empty">Connect to a database to enable management.</div>{% endif %}
+      </section>
     </fieldset>
   </aside>
 </div>
-{% if is_htmx %}
-<div id="top-op-stack-shell" class="top-op-stack" aria-live="polite" hx-swap-oob="outerHTML">
-  {% include "partials/top_status.html" %}
-</div>
+{% if is_htmx and include_top_status|default(true) %}
+<div id="top-op-stack-shell" class="top-op-stack" aria-live="polite" hx-swap-oob="outerHTML">{% include "partials/top_status.html" %}</div>
 {% endif %}

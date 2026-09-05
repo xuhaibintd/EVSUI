@@ -1,5 +1,7 @@
 # teradataevsui testing
 
+> **Language:** English | [日本語](testing_ja.md)
+
 Tests are split deliberately: unit/service regressions, actual HTTP route contracts,
 actual browser actions, and an **opt-in read-only** external connection check.
 A green unit suite alone is not acceptance of a working browser workflow.
@@ -7,13 +9,17 @@ A green unit suite alone is not acceptance of a working browser workflow.
 ## Run locally (PowerShell)
 
 ```powershell
-.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-.venv\Scripts\python.exe -m pip install -e ".[browser]"
-.venv\Scripts\python.exe -m playwright install chromium
-.venv\Scripts\python.exe -m pip check
-.venv\Scripts\python.exe -m ruff check app tests scripts
-.venv\Scripts\python.exe -m compileall -q app scripts
-.venv\Scripts\python.exe -m unittest discover -s tests -v
+uv lock --check
+uv sync --locked --extra browser
+uv run --locked --no-sync playwright install chromium
+uv pip check
+uv sync --locked --extra browser --check
+uv run --locked --no-sync python scripts/check_dependencies.py
+uv run --locked --no-sync python scripts/check_publication.py
+uv run --locked --no-sync python scripts/check_doc_parity.py
+uv run --locked --no-sync ruff check app tests scripts
+uv run --locked --no-sync python -m compileall -q app scripts
+uv run --locked --no-sync python -m unittest discover -s tests -v
 ```
 
 Browser tests are skipped by default. They **must also be run** for UI changes:
@@ -22,23 +28,22 @@ Browser tests are skipped by default. They **must also be run** for UI changes:
 $env:EVSUI_BROWSER_TESTS = "1"
 # Optional: use installed Microsoft Edge instead of downloaded Chromium.
 $env:EVSUI_BROWSER_CHANNEL = "msedge"
-.venv\Scripts\python.exe -m unittest tests.test_browser_actions tests.test_frontend_parameters -v
-```
-
-For all tests plus Python branch coverage in one process:
-
-```powershell
-$env:EVSUI_BROWSER_TESTS = "1"
-$env:EVSUI_BROWSER_CHANNEL = "msedge"
-.venv\Scripts\python.exe -m coverage run -m unittest discover -s tests -q
-.venv\Scripts\python.exe -m coverage report
-.venv\Scripts\python.exe -m coverage json -o test-results/coverage.json
+uv run --locked --no-sync python -m unittest tests.test_browser_actions tests.test_frontend_parameters -v
+uv build --clear
+uv run --locked --no-sync python scripts/verify_wheel.py
+uv sync --locked --no-dev --no-install-project
+uv pip check
+uv sync --locked --no-dev --no-install-project --check
+# Restore the local test environment after validating the production set.
+uv sync --locked --extra browser
 ```
 
 CI runs both the non-browser suite and browser suites using installed Chromium.
 Browser request status evidence and screenshots are written under `test-results/`
 and uploaded by CI. Runtime data and reports from individual runs are not committed.
 Tests fail on uncaught browser JavaScript errors, including CSP execution failures.
+The lock check plus exact sync prevents undeclared or orphan packages from
+surviving in the project environment.
 
 ## What the browser tests actually exercise
 
@@ -92,7 +97,7 @@ are not changed. The helper itself has opt-in, snapshot, timeout and output-safe
 - Job recovery is not universal external-operation resumption. Inspect interrupted
   CSV loads; do not start another load blindly. The application runs one background
   job at a time.
-- Python coverage does not measure HTML/JavaScript coverage. Browser scenarios do
+- The suite does not calculate a line-coverage percentage. Browser scenarios do
   not constitute load testing, penetration testing, or every browser/device combination.
 
 Keep individual execution reports, screenshots, and environment-specific evidence

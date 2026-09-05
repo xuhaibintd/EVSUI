@@ -1,0 +1,247 @@
+# BookRAG パイプライン：データ構造と処理フロー
+
+> **言語:** [English](bookrag_pipeline_diagram.md) | 日本語
+<!-- Source-SHA256: c24d4da545e79c8653c20c4009071e3a6257d5f94ba85a151fa5b23cccdc404a -->
+
+この文書では、teradataevsui における現在の `multi_format_bookrag` 実装について説明します。VectorStore を作成する前の実行時データフロー、Teradata に永続化される構造、およびノードツリー構築アルゴリズムを中心に扱います。
+
+## 1. エンドツーエンドのパイプライン
+
+```mermaid
+flowchart LR
+    DOC[Document files] --> MODE[Multi-Format BookRAG mode]
+    MODE --> WF[Build Unstructured workflow definition]
+    WF --> PART[Partitioner node<br/>auto / hi_res / vlm / fast]
+
+    PART --> ENRICH{Optional enrichment nodes}
+    ENRICH -->|Image Description| IMG_DESC[Image descriptions]
+    ENRICH -->|Table to HTML| TABLE_HTML[Table HTML]
+    ENRICH -->|Table Description| TABLE_DESC[Table descriptions]
+    ENRICH -->|Generative OCR| GEN_OCR[OCR-enhanced text]
+    ENRICH -->|NER| NER[Entity metadata]
+
+    PART --> JOB[Unstructured on-demand job]
+    IMG_DESC --> JOB
+    TABLE_HTML --> JOB
+    TABLE_DESC --> JOB
+    GEN_OCR --> JOB
+    NER --> JOB
+
+    JOB --> RAW_JSON[Raw Unstructured output<br/>JSON elements]
+    RAW_JSON --> RAW_STAGE[Raw stage file<br/>uploads/bookrag_raw_stage]
+    RAW_STAGE --> RECON[Reconcile elements<br/>normalize parentage and metadata]
+
+    RECON --> RAW_ROWS[Build raw rows]
+    RECON --> BLOCKS[Build BookRAG blocks]
+    BLOCKS --> NODES[Build document node tree]
+    RECON --> ENTITY_GATE{Entity tables enabled?}
+    ENTITY_GATE -->|Yes| GRAPH[Build entities, links, relations]
+    ENTITY_GATE -->|No| SKIP_GRAPH[Skip entity graph]
+
+    RAW_ROWS --> TD[(Teradata BookRAG tables)]
+    BLOCKS --> TD
+    NODES --> TD
+    GRAPH --> TD
+
+    TD --> VS[VectorStore source object<br/>*_bnode]
+    VS --> RETRIEVAL[Retrieval over node content]
+```
+
+## 2. 永続化データモデル
+
+```mermaid
+erDiagram
+    DOCUMENTS ||--o{ RAW : "doc_id"
+    DOCUMENTS ||--o{ BLOCKS : "doc_id"
+    DOCUMENTS ||--o{ NODES : "doc_id"
+    DOCUMENTS ||--o{ ENTITIES : "doc_id"
+    DOCUMENTS ||--o{ DOCUMENT_RELATIONS : "from_doc_id"
+    DOCUMENTS ||--o{ DOCUMENT_RELATIONS : "to_doc_id"
+
+    NODES ||--o{ ENTITY_LINKS : "node_id"
+    NODES ||--o{ ENTITY_RELATIONS : "source_node_id"
+    ENTITIES ||--o{ ENTITY_LINKS : "entity_id"
+    ENTITIES ||--o{ ENTITY_RELATIONS : "from_entity_id"
+    ENTITIES ||--o{ ENTITY_RELATIONS : "to_entity_id"
+
+    DOCUMENTS {
+        string doc_id PK
+        string vector_store_name
+        string workflow_id
+        string workflow_name
+        string job_id
+        string processing_profile
+        string source_file
+        string filename
+        string filetype
+        int filesize_bytes
+    }
+
+    RAW {
+        string doc_id PK,FK
+        int ordinal_raw PK
+        string id
+        string element_id
+        string parent_id
+        string type
+        int page_number
+        int category_depth
+        string text
+        string text_as_html
+        string image_caption
+        string image_context
+    }
+
+    BLOCKS {
+        string doc_id PK,FK
+        string element_id PK
+        string parent_id
+        int category_depth
+        int heading_level
+        int page_number
+        int ordinal
+        string type
+        string text
+        string text_as_html
+        string image_caption
+        string image_context
+    }
+
+    NODES {
+        string doc_id PK,FK
+        string node_id PK
+        string source_element_id
+        string parent_node_id
+        string node_type
+        int level
+        int ordinal
+        string title
+        string content
+        int page_start
+        int page_end
+        string path
+        int is_leaf
+    }
+
+    ENTITIES {
+        string doc_id PK,FK
+        string entity_id PK
+        string canonical_name
+        string display_name
+        string entity_type
+        int mention_count
+        int node_count
+    }
+
+    ENTITY_LINKS {
+        string doc_id PK,FK
+        string link_id PK
+        string entity_id FK
+        string node_id FK
+        string section_node_id
+        string source_field
+        string mention_text
+        int page_start
+        int page_end
+        string section_path
+    }
+
+    ENTITY_RELATIONS {
+        string doc_id PK,FK
+        string relation_id PK
+        string source_element_id
+        string source_node_id FK
+        string section_node_id
+        string from_entity_id FK
+        string from_entity_text
+        string relationship
+        string to_entity_id FK
+        string to_entity_text
+        string section_path
+    }
+
+    DOCUMENT_RELATIONS {
+        string from_doc_id PK,FK
+        string relation_type PK
+        string to_doc_id PK,FK
+        string from_filename
+        string to_filename
+        string relation_description
+        string source_type
+    }
+```
+
+## 3. ノードツリー構築アルゴリズム
+
+```mermaid
+flowchart TD
+    A[Reconciled Unstructured elements] --> B[Iterate elements in source order]
+    B --> C[Read element fields and metadata<br/>element_id, parent_id, page_number,<br/>category_depth, text_as_html]
+
+    C --> D{Classify block kind}
+    D -->|Title or structural section signal| SEC[Section block]
+    D -->|Table type or HTML table| TAB[Table block]
+    D -->|Image, figure, or picture type| IMG[Image block]
+    D -->|Other retained text| TXT[Text block]
+
+    SEC --> LVL[Infer section level<br/>HTML heading, category_depth,<br/>Japanese section rules, numbered headings]
+    LVL --> STACK[Update section stack]
+    STACK --> SEC_NODE[Create section node<br/>is_leaf = 0]
+
+    TAB --> LEAF_CONTENT[Build leaf content]
+    TXT --> LEAF_CONTENT
+    IMG --> IMG_CTX[Attach image caption/context<br/>from nearby compatible blocks]
+    IMG_CTX --> LEAF_CONTENT
+
+    LEAF_CONTENT --> LONG{Content exceeds<br/>embedding segment size?}
+    LONG -->|No| LEAF_NODE[Create one leaf node<br/>is_leaf = 1]
+    LONG -->|Yes| SEGMENT[Split into leaf segments<br/>384 token units, 48 overlap]
+    SEGMENT --> LEAF_NODE
+
+    SEC_NODE --> NODE_TABLE[(NODES table)]
+    LEAF_NODE --> NODE_TABLE
+    NODE_TABLE --> VECTOR[VectorStore retrieval source<br/>key_columns = doc_id, node_id<br/>data_columns = content]
+```
+
+## 4. 実行時オブジェクトフロー
+
+```mermaid
+flowchart LR
+    ELEM[Unstructured element] --> RAW[RAW row]
+    ELEM --> BLK[BookRAG block]
+    BLK --> NODE[BookRAG node]
+    ELEM -->|optional entity metadata| ENT[Entity records]
+
+    RAW --> RAW_TABLE[*_braw]
+    BLK --> BLOCK_TABLE[*_bblk]
+    NODE --> NODE_TABLE[*_bnode]
+    ENT --> ENTITY_TABLES[*_bent / *_belnk / *_brel]
+
+    NODE_TABLE --> VS_SRC[VectorStore object_names]
+```
+
+## 5. テーブル命名規則
+
+`demo` という名前の Vector Store の場合、BookRAG の対象テーブル名はベース名 `<vector_store_name>_bk` から生成されます。
+
+```text
+demo_bk_bdoc   documents
+demo_bk_braw   raw elements
+demo_bk_bblk   normalized blocks
+demo_bk_bnode  document tree nodes
+demo_bk_bdrel  governed document relationships
+demo_bk_bent   entities
+demo_bk_belnk  entity mentions linked to nodes
+demo_bk_brel   entity relations
+demo_bk_retrieval_v  governed retrieval view
+```
+
+現在の BookRAG VectorStore のソースはノードテーブルです。
+
+```text
+object_names = <schema>.<vector_store_name>_bk_bnode
+key_columns  = ["doc_id", "node_id"]
+data_columns = ["content"]
+```
+
+セマンティック検索に有用なのは、検索可能な `content` を持つノードだけです。セクションノードは階層とパスのコンテキストを保持し、リーフノードは VectorStore が使用するテキスト、表、または画像由来のコンテンツを保持します。

@@ -225,23 +225,89 @@ class BrowserActionTests(unittest.TestCase):
     def test_management_health_list_select_and_destroy_cancel_confirm(self):
         self.login()
         self.connect()
-        self.page.get_by_role("button", name="Vector Store Health check", exact=True).click()
-        self.expect(self.page.locator(".monitor-status-health")).to_contain_text("ok")
+        self.assertLessEqual(
+            self.page.locator(".topbar").evaluate("element => element.getBoundingClientRect().height"),
+            96,
+        )
+        self.page.get_by_role("button", name="Refresh management data", exact=True).click()
+        self.expect(self.page.locator(".monitor-overview")).to_contain_text("Healthy")
+        self.expect(self.page.locator("#top-op-stack-shell")).to_have_count(1)
         self.assertIn("health", self.fixture.calls)
-        self.page.get_by_role("button", name="Get Vector Store List", exact=True).click()
-        row = self.page.locator('tr[data-vs-name="e2e_store"]')
+        self.assertIn("collection_health", self.fixture.calls)
+        row = self.page.locator('tr[data-vs-name="e2e_store"][data-resource-kind="v1"]')
         self.expect(row).to_be_visible()
+        resource_filter = self.page.locator("[data-resource-filter]")
+        resource_filter.fill("does-not-exist")
+        self.expect(row).to_be_hidden()
+        self.expect(self.page.locator("[data-resource-filter-empty]")).to_be_visible()
+        resource_filter.fill("e2e_store")
+        self.expect(row).to_be_visible()
+        status_before_selection = self.page.locator("#top-op-stack-shell").inner_text()
+        initializations_before_selection = self.fixture.calls.count("vector_init:e2e_store")
+        select_requests_before = sum(item["path"] == "/ui/evs/select" for item in self.actions)
         row.click()
         self.expect(self.page.locator("[data-destroy-selected-name]")).to_have_text("e2e_store")
+        self.assertEqual(self.fixture.calls.count("vector_init:e2e_store"), initializations_before_selection)
+        self.assertEqual(sum(item["path"] == "/ui/evs/select" for item in self.actions), select_requests_before)
+        self.assertEqual(self.page.locator("#top-op-stack-shell").inner_text(), status_before_selection)
         self.page.locator("[data-destroy-btn]").click()
-        dialog = self.page.get_by_role("dialog", name="Delete Vector Store", exact=True)
+        dialog = self.page.get_by_role("dialog", name="Delete vector store", exact=True)
         self.expect(dialog).to_be_visible()
         dialog.get_by_role("button", name="Cancel", exact=True).click()
         self.assertNotIn("destroy", self.fixture.calls)
         self.page.locator("[data-destroy-btn]").click()
         dialog.get_by_role("button", name="Delete", exact=True).click()
-        self.expect(self.page.locator("[data-destroy-feedback]")).to_contain_text("Deleted 'e2e_store'")
+        self.expect(self.page.locator('tr[data-vs-name="e2e_store"]')).to_have_count(0)
+        self.expect(self.page.locator("#top-op-stack-shell .top-op-line.ok").first).to_contain_text("VectorStore.destroy() completed")
         self.assertEqual(self.fixture.stores, [])
+
+    def test_management_missing_values_are_blank(self):
+        self.fixture.stores = ["empty_store"]
+        self.login()
+        self.connect()
+        self.page.get_by_role("button", name="Refresh management data", exact=True).click()
+
+        cells = self.page.locator('tr[data-vs-name="empty_store"] td')
+        self.expect(cells).to_have_count(6)
+        self.assertEqual(cells.all_text_contents(), ["empty_store", "", "", "", "fixture", ""])
+        self.assertNotIn("—", self.page.locator("[data-resource-table]").inner_text())
+        self.page.locator("[data-resource-table]").screenshot(
+            path=str(self.output / "management-empty-values.png")
+        )
+
+    def test_management_delete_error_stays_in_panel_without_breaking_layout(self):
+        self.fixture.destroy_error = (
+            "[Teradata][teradataml](TDML_2412) Failed to execute destroy. Response Code: 409, "
+            "Message: Vector store 'e2e_store' is currently being created, updated, or destroyed."
+        )
+        self.login()
+        self.connect()
+        self.page.get_by_role("button", name="Refresh management data", exact=True).click()
+        headers = self.page.locator("[data-resource-table] thead th")
+        self.expect(headers).to_have_count(6)
+        self.assertEqual(
+            headers.all_text_contents(),
+            ["Vector store name", "Description", "Type", "Status", "Database", "Owner"],
+        )
+        self.expect(self.page.locator('tr[data-vs-name="e2e_store"] .resource-description')).to_have_text(
+            "Browser BookRAG corpus unstructured_bookrag_flg"
+        )
+        self.expect(self.page.locator("[data-resource-table] .resource-purpose-badge")).to_have_count(0)
+        self.page.locator('tr[data-vs-name="e2e_store"]').click()
+        self.page.locator("[data-destroy-btn]").click()
+        dialog = self.page.get_by_role("dialog", name="Delete vector store", exact=True)
+        dialog.get_by_role("button", name="Delete", exact=True).click()
+
+        self.expect(self.page.locator("[data-destroy-feedback]")).to_have_count(0)
+        self.expect(self.page.locator("[data-destroy-selected-name]")).to_have_text("e2e_store")
+        self.expect(self.page.locator("#top-op-stack-shell .top-op-line.err")).to_contain_text(
+            "another create, update, or delete operation is running"
+        )
+        self.assertLessEqual(
+            self.page.evaluate("document.documentElement.scrollWidth"),
+            self.page.evaluate("document.documentElement.clientWidth"),
+        )
+        self.page.screenshot(path=str(self.output / "management-delete-error.png"))
 
     def test_retrieval_list_ask_similarity_search_and_clear(self):
         self.login()
@@ -284,15 +350,25 @@ class BrowserActionTests(unittest.TestCase):
         self.page.get_by_role("link", name="System Configuration", exact=True).click()
         self.page.locator('label[for="system-config-tab-unstructured"]').click()
         form = self.page.locator(".unstructured-connection-form")
+        checkbox_bounds = form.locator('[name="clear_unstructured_api_key"]').bounding_box()
+        self.assertIsNotNone(checkbox_bounds)
+        self.assertLessEqual(max(checkbox_bounds["width"], checkbox_bounds["height"]), 20)
+        self.assertEqual(
+            form.locator('[name="unstructured_api_url"]').evaluate(
+                "element => getComputedStyle(element).borderRadius"
+            ),
+            "10px",
+        )
+        self.expect(form.locator(".field-help")).to_have_count(2)
         key = "browser-service-key-" + "x" * 80
         form.locator('[name="unstructured_api_key"]').fill(key)
-        form.get_by_role("button", name="Save Unstructured IO", exact=True).click()
+        form.get_by_role("button", name="Save configuration", exact=True).click()
         self.expect(form.locator('[name="unstructured_api_key"]')).to_have_value("")
         self.assertEqual(self.fixture.store.get_unstructured_config()["api_key"], key)
-        form.get_by_role("button", name="Save Unstructured IO", exact=True).click()
+        form.get_by_role("button", name="Save configuration", exact=True).click()
         self.assertEqual(self.fixture.store.get_unstructured_config()["api_key"], key)
         form.locator('[name="clear_unstructured_api_key"]').check()
-        form.get_by_role("button", name="Save Unstructured IO", exact=True).click()
+        form.get_by_role("button", name="Save configuration", exact=True).click()
         self.assertEqual(self.fixture.store.get_unstructured_config()["api_key"], "")
         self.page.locator('label[for="system-config-tab-users"]').click()
         create = self.page.locator(".user-create-form")

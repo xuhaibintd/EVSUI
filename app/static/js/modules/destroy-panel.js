@@ -3,56 +3,6 @@
 
   const app = global.EVSUIApp;
 
-  function bindListRowSelection(scope = document) {
-    const tables = scope.querySelectorAll("[data-vs-select-table]");
-    tables.forEach((table) => {
-      const card = table.closest(".monitor-card-list");
-      const hiddenInput = card ? card.querySelector("[data-destroy-vs-input]") : null;
-      const selectedName = card ? card.querySelector("[data-destroy-selected-name]") : null;
-      const destroyButton = card ? card.querySelector("[data-destroy-btn]") : null;
-      const feedback = card ? card.querySelector("[data-destroy-feedback]") : null;
-
-      const rows = table.querySelectorAll("tbody tr[data-vs-name]");
-      rows.forEach((row) => {
-        if (row.dataset.selectBound === "1") {
-          return;
-        }
-        row.dataset.selectBound = "1";
-        row.addEventListener("click", () => {
-          const vsName = (row.dataset.vsName || "").trim();
-          if (!vsName) {
-            return;
-          }
-          rows.forEach((item) => item.classList.remove("is-selected"));
-          row.classList.add("is-selected");
-          if (hiddenInput instanceof HTMLInputElement) {
-            hiddenInput.value = vsName;
-          }
-          if (selectedName instanceof HTMLElement) {
-            selectedName.textContent = vsName;
-          }
-          if (destroyButton instanceof HTMLButtonElement) {
-            destroyButton.disabled = false;
-          }
-          if (feedback) {
-            feedback.textContent = `Selected '${vsName}'. Click Delete to delete.`;
-            feedback.classList.remove("ok", "warn", "err");
-            feedback.classList.add("neutral");
-          }
-
-          const chatVsField = document.querySelector("[name='selected_vs_name'][data-chat-selected-vs]");
-          if (chatVsField instanceof HTMLInputElement || chatVsField instanceof HTMLSelectElement) {
-            chatVsField.value = vsName;
-          }
-          const chatVsLabel = document.querySelector("[data-chat-selected-vs-label]");
-          if (chatVsLabel instanceof HTMLElement) {
-            chatVsLabel.textContent = vsName;
-          }
-        });
-      });
-    });
-  }
-
   function bindDestroyConfirmModal(scope = document) {
     const panels = scope.querySelectorAll("[data-vs-destroy-panel]");
     panels.forEach((panel) => {
@@ -61,7 +11,6 @@
       const modal = panel.querySelector("[data-destroy-confirm]");
       const modalName = panel.querySelector("[data-confirm-vs-name]");
       const selectedName = panel.querySelector("[data-destroy-selected-name]");
-      const feedback = panel.querySelector("[data-destroy-feedback]");
       const cancelButtons = panel.querySelectorAll("[data-confirm-cancel]");
       const okButton = panel.querySelector("[data-confirm-ok]");
       if (!(triggerButton instanceof HTMLButtonElement) || !(destroyForm instanceof HTMLFormElement) || !(modal instanceof HTMLElement)) {
@@ -108,11 +57,7 @@
         okButton.addEventListener("click", () => {
           const name = currentVsName();
           closeModal();
-          if (feedback instanceof HTMLElement) {
-            feedback.textContent = `Deleting '${name}'...`;
-            feedback.classList.remove("ok", "warn", "err");
-            feedback.classList.add("neutral");
-          }
+          app.setTopMessage(`Deleting '${name}'...`, "info");
           if (typeof destroyForm.requestSubmit === "function") {
             destroyForm.requestSubmit(triggerButton);
             return;
@@ -130,14 +75,10 @@
         if (event.detail && event.detail.successful) {
           return;
         }
-        if (feedback instanceof HTMLElement) {
-          const xhr = event.detail && event.detail.xhr;
-          const status = xhr && typeof xhr.status === "number" ? xhr.status : 0;
-          const suffix = status ? ` (HTTP ${status})` : "";
-          feedback.textContent = `Delete request failed for '${currentVsName()}'.${suffix}`;
-          feedback.classList.remove("ok", "neutral");
-          feedback.classList.add("err");
-        }
+        const xhr = event.detail && event.detail.xhr;
+        const status = xhr && typeof xhr.status === "number" ? xhr.status : 0;
+        const suffix = status ? ` (HTTP ${status})` : "";
+        app.setTopMessage(`Delete request failed for '${currentVsName()}'.${suffix}`, "err");
       });
 
       destroyForm.addEventListener("htmx:sendError", (event) => {
@@ -145,11 +86,7 @@
         if (source !== destroyForm) {
           return;
         }
-        if (feedback instanceof HTMLElement) {
-          feedback.textContent = `Delete request could not be sent for '${currentVsName()}'.`;
-          feedback.classList.remove("ok", "neutral");
-          feedback.classList.add("err");
-        }
+        app.setTopMessage(`Delete request could not be sent for '${currentVsName()}'.`, "err");
       });
 
       destroyForm.addEventListener("htmx:timeout", (event) => {
@@ -157,11 +94,7 @@
         if (source !== destroyForm) {
           return;
         }
-        if (feedback instanceof HTMLElement) {
-          feedback.textContent = `Delete request timed out for '${currentVsName()}'.`;
-          feedback.classList.remove("ok", "neutral");
-          feedback.classList.add("err");
-        }
+        app.setTopMessage(`Delete request timed out for '${currentVsName()}'.`, "err");
       });
 
       panel.addEventListener("keydown", (event) => {
@@ -173,9 +106,7 @@
     });
   }
 
-  app.bindListRowSelection = bindListRowSelection;
   app.bindDestroyConfirmModal = bindDestroyConfirmModal;
 
-  app.registerBinder(bindListRowSelection);
   app.registerBinder(bindDestroyConfirmModal);
 })(window);

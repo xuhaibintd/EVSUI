@@ -33,8 +33,6 @@ def _base_evs(connected):
         "list_columns": [],
         "list_rows": [],
         "selected_vs_name": "",
-        "destroy_status": "neutral",
-        "destroy_preview": "",
         "last_success": "",
         "last_error": "",
         "connected_at": "",
@@ -347,6 +345,51 @@ class ConnectPanelTemplateTests(unittest.TestCase):
         self.assertIn('data-step1-connected="false"', html_false)
         self.assertIn('connect-submit-btn progress-btn" data-progress-button disabled aria-disabled="true"', html_true)
         self.assertIn('<button type="submit" class="ghost progress-btn" data-progress-button disabled aria-disabled="true">', html_false)
+
+    def test_missing_resource_values_render_as_empty_cells(self):
+        evs = _base_evs(True)
+        evs.update(
+            management_loaded=True,
+            resource_rows=[["empty_docs", "", "", "", "fixture", ""]],
+            resource_records=[{
+                "kind": "v1",
+                "name": "empty_docs",
+                "description": "",
+                "type": "",
+                "status": "",
+                "database": "fixture",
+                "owner": "",
+            }],
+        )
+
+        html = self.template.render(evs=evs, is_htmx=False)
+
+        self.assertNotIn("—", html)
+        self.assertNotIn("Not provided", html)
+        self.assertRegex(html, r'<td class="resource-description">\s*</td>')
+        self.assertIn('<td></td><td></td><td>fixture</td><td></td>', html)
+
+    def test_resource_description_is_not_rewritten(self):
+        evs = _base_evs(True)
+        description = "Raw — symbols + unstructured_bookrag_flg"
+        evs.update(
+            management_loaded=True,
+            resource_rows=[["raw_docs", description, "file-based", "READY", "fixture", "owner"]],
+            resource_records=[{
+                "kind": "v1",
+                "name": "raw_docs",
+                "description": description,
+                "type": "file-based",
+                "status": "READY",
+                "database": "fixture",
+                "owner": "owner",
+            }],
+        )
+
+        html = self.template.render(evs=evs, is_htmx=False)
+
+        self.assertIn(f'>{description}</td>', html)
+        self.assertNotIn("resource-purpose-badge", html)
 
 
 class UnstructuredAdminPanelTests(unittest.TestCase):

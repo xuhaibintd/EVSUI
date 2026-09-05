@@ -33,18 +33,19 @@ class TeradataRuntimeManager:
         cleanup: Callable[[], object],
         connect: Callable[[], object],
         authenticate: Callable[[], object],
-    ) -> None:
+    ) -> object:
         with self._thread_lock:
             cleanup()
             self.active_identity = ""
             try:
                 connect()
-                authenticate()
+                auth_data = authenticate()
             except Exception:
                 cleanup()
                 raise
             self.active_identity = str(identity or "")
             self.generation += 1
+            return auth_data
 
     def mark_active(self, identity: str) -> None:
         with self._thread_lock:

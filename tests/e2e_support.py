@@ -45,6 +45,10 @@ class BrowserApplication:
         self.relations = []
         self.initialized = False
         self.stores = ["e2e_store"]
+        self.resource_descriptions = {
+            "e2e_store": "Browser BookRAG corpus unstructured_bookrag_flg",
+        }
+        self.destroy_error = None
         old_uploads = runtime.UPLOAD_DIR
         old_project = runtime.PROJECT_DIR
         # All loaded modules' runtime paths are redirected, while source templates/assets stay real.
@@ -106,7 +110,11 @@ class BrowserApplication:
             @staticmethod
             def list(**kwargs):
                 fixture.calls.append("list")
-                return pd.DataFrame({"VS_Name": fixture.stores, "Username": ["fixture"] * len(fixture.stores)})
+                return pd.DataFrame({
+                    "VS_Name": fixture.stores,
+                    "Username": [""] * len(fixture.stores),
+                    "Database_Name": ["fixture"] * len(fixture.stores),
+                })
 
             @staticmethod
             def health():
@@ -117,14 +125,45 @@ class BrowserApplication:
             def disconnect(**kwargs):
                 return None
 
+            @staticmethod
+            def list_sessions(**kwargs):
+                return {"session_details": [{"username": "fixture", "session_id": "session-v1", "status": "active"}]}
+
+        class CollectionManager:
+            def __init__(self, auth_data=None):
+                self.auth_data = auth_data
+
+            def health(self, **kwargs):
+                fixture.calls.append("collection_health")
+                return {"status": "ok"}
+
+            def list(self, **kwargs):
+                fixture.calls.append("collection_list")
+                return []
+
+            def list_sessions(self, **kwargs):
+                fixture.calls.append("sessions")
+                return {"session_details": [{"username": "fixture", "session_id": "session-v2", "status": "active"}]}
+
+            def disconnect(self, user_names=None):
+                fixture.calls.append("disconnect_sessions")
+                return None
+
         class VectorStore:
             def __init__(self, name):
                 self.name = name
+                fixture.calls.append(f"vector_init:{name}")
 
             def destroy(self, **kwargs):
                 fixture.calls.append("destroy")
+                if fixture.destroy_error is not None:
+                    raise RuntimeError(fixture.destroy_error)
                 fixture.stores = [item for item in fixture.stores if item != self.name]
                 return "Destroyed"
+
+            def get_details(self, **kwargs):
+                fixture.calls.append(f"details:{self.name}")
+                return {"description": fixture.resource_descriptions.get(self.name, "")}
 
             def ask(self, *args, **kwargs):
                 fixture.calls.append("ask")
@@ -138,9 +177,9 @@ class BrowserApplication:
         for name, module in list(sys.modules.items()):
             if name.startswith("app.") and module:
                 for attribute, replacement in {
-                    "VSManager": Manager, "VectorStore": VectorStore,
+                    "VSManager": Manager, "VectorStore": VectorStore, "CollectionManager": CollectionManager,
                     "create_context": lambda **kwargs: self.calls.append("connect"),
-                    "set_auth_token": lambda **kwargs: self.calls.append("authenticate"),
+                    "set_auth_token": lambda **kwargs: self.calls.append("authenticate") or object(),
                     "remove_context": lambda **kwargs: None,
                     "execute_sql": self.sql,
                 }.items():

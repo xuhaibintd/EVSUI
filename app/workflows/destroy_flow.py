@@ -18,6 +18,18 @@ from app.utils.table_state import (
 )
 
 
+def destroy_failure_message(target_name: str, error: object) -> str:
+    detail = str(error).strip() or "The vector store service rejected the request."
+    normalized = detail.casefold()
+    if "409" in normalized and "currently being created, updated, or destroyed" in normalized:
+        message = (
+            f"Cannot delete '{target_name}' while another create, update, or delete operation is running. "
+            "Wait for that operation to finish, refresh the list, and try again."
+        )
+        return message
+    return f"Delete failed for '{target_name}': {detail}"
+
+
 def _qualified_identifier(schema_name: str, object_name: str) -> str:
     if schema_name:
         return f'"{schema_name}"."{object_name}"'
@@ -55,6 +67,7 @@ async def handle_destroy_selected(
     teradata_import_error: str,
     render_connect_panel,
     append_connect_step,
+    after_destroy=None,
 ):
     target_name = vs_name.strip() or str(state.get("selected_vs_name", "")).strip()
     state["selected_vs_name"] = target_name
@@ -75,23 +88,20 @@ async def handle_destroy_selected(
     )
 
     if not state["connected"]:
-        state["destroy_status"] = "warn"
-        state["destroy_preview"] = "Connect in Step 1 first."
         state["last_error"] = "Destroy blocked: connection is not established."
+        state["last_success"] = ""
         append_connect_step(state, "VectorStore.destroy()", "warn", "Blocked: Step 1 is not connected.")
         return render_connect_panel(request)
 
     if not target_name:
-        state["destroy_status"] = "warn"
-        state["destroy_preview"] = "Select a vector store row first."
         state["last_error"] = "Destroy blocked: no vector store selected."
+        state["last_success"] = ""
         append_connect_step(state, "VectorStore.destroy()", "warn", "Blocked: no vector store selected.")
         return render_connect_panel(request)
 
     if vector_store_cls is None:
-        state["destroy_status"] = "err"
-        state["destroy_preview"] = f"Cannot run destroy: {teradata_import_error}"
-        state["last_error"] = "VectorStore runtime is unavailable."
+        state["last_error"] = f"Cannot delete '{target_name}': VectorStore runtime is unavailable."
+        state["last_success"] = ""
         append_connect_step(state, "VectorStore.destroy()", "error", f"Runtime unavailable: {teradata_import_error}")
         return render_connect_panel(request)
 
@@ -154,8 +164,6 @@ async def handle_destroy_selected(
             if post_check_note:
                 reason_parts.append(post_check_note)
             reason = " ".join(reason_parts).strip() or "destroy did not pass verification."
-            state["destroy_status"] = "err"
-            state["destroy_preview"] = f"Delete failed for '{target_name}': {reason}{chunk_drop_note}"
             state["last_error"] = f"VectorStore.destroy() failed for '{target_name}': {reason}"
             state["last_success"] = ""
             append_connect_step(state, "VectorStore.destroy()", "error", f"Verification failed: {reason}")
@@ -236,11 +244,6 @@ async def handle_destroy_selected(
                                 f"Failed to drop chunk table {chunk_table_sql}: {drop_ex}",
                             )
             cleanup_suffix = f" {' '.join(cleanup_notes)}" if cleanup_notes else ""
-            if output_preview and output_preview != "None":
-                state["destroy_preview"] = f"Deleted '{target_name}'. Result: {output_preview}{chunk_drop_note}{cleanup_suffix}"
-            else:
-                state["destroy_preview"] = f"Deleted '{target_name}'.{chunk_drop_note}{cleanup_suffix}"
-            state["destroy_status"] = "ok"
             state["last_error"] = ""
             state["last_success"] = f"VectorStore.destroy() completed for '{target_name}'.{chunk_drop_note}{cleanup_suffix}"
             if should_drop_bookrag_tables:
@@ -266,10 +269,11 @@ async def handle_destroy_selected(
             else:
                 append_connect_step(state, "VectorStore.destroy()", "ok", f"Destroyed vector store '{target_name}'.")
             state["selected_vs_name"] = ""
+            if callable(after_destroy):
+                after_destroy(target_name)
     except Exception as ex:
-        state["destroy_status"] = "err"
-        state["destroy_preview"] = f"Delete failed for '{target_name}': {ex}"
-        state["last_error"] = f"VectorStore.destroy() failed for '{target_name}': {ex}"
+        state["last_error"] = destroy_failure_message(target_name, ex)
+        state["last_success"] = ""
         append_connect_step(state, "VectorStore.destroy()", "error", f"Execution failed: {ex}")
 
     return render_connect_panel(request)

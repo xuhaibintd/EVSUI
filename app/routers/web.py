@@ -56,7 +56,18 @@ from app.services.multi_format import (
     list_bookrag_csv_runs,
     list_multi_format_csv_runs,
 )
+from app.services.vector_management import (
+    clear_management_results,
+    clear_selected_resource,
+    disconnect_sessions,
+    load_sessions,
+    refresh_management,
+    remove_resource,
+    select_resource,
+)
 from app.teradata_runtime import (
+    Collection,
+    CollectionManager,
     TERADATA_IMPORT_ERROR,
     VSManager,
     VectorStore,
@@ -101,11 +112,15 @@ from app.web_support import (
 )
 from app.workflows.chat_flow import handle_chat_reset, handle_chat_send
 from app.workflows.create_flow import handle_upload_and_prepare_create
-from app.workflows.destroy_flow import handle_destroy_selected
+from app.workflows.destroy_flow import destroy_failure_message, handle_destroy_selected
 
 _BUSINESS_WRITE_PATHS = {
     "/ui/evs/destroy",
     "/ui/admin/bookrag-section-rules",
+}
+_ADMIN_ONLY_PATHS = {
+    "/ui/evs/sessions",
+    "/ui/evs/sessions/disconnect",
 }
 _GOVERNANCE_PREFIXES = (
     "/ui/admin/document-metadata",
@@ -129,6 +144,8 @@ async def _authorize_business_action(request: Request) -> None:
     )
     if writes_shared_data and principal.role not in {"admin", "operator"}:
         raise HTTPException(status_code=403, detail="This action requires an operator or administrator.")
+    if request.method == "POST" and path in _ADMIN_ONLY_PATHS and principal.role != "admin":
+        raise HTTPException(status_code=403, detail="This action requires an administrator.")
     if is_governance and (request.method == "POST" or path.endswith("/export")):
         if not scope["evs_state"].get("connected"):
             raise HTTPException(status_code=409, detail="Connect to a database before managing documents.")
@@ -415,6 +432,8 @@ async def evs_connect(request: Request, connection_id: int | None = Form(default
         return HTMLResponse("Unauthorized", status_code=401)
     _activate_session_state(request, request.app)
     state = request.app.state.evs_state
+    state.pop("_sdk_auth_data", None)
+    clear_management_results(state)
     steps: list[dict[str, str]] = []
     actual_params: dict = {}
     try:
@@ -588,7 +607,7 @@ async def evs_connect(request: Request, connection_id: int | None = Form(default
                     "normalized": Path(str(normalized_pem_for_auth or "")).name,
                 },
             }
-            set_auth_token(**auth_kwargs)
+            state["_sdk_auth_data"] = set_auth_token(**auth_kwargs)
             steps.append(_new_connect_step("set_auth_token", "ok", "VS authentication token set successfully with selected PEM."))
 
             state["connected"] = True
@@ -600,6 +619,7 @@ async def evs_connect(request: Request, connection_id: int | None = Form(default
             _clear_chat_list_result(state)
             state["selected_vs_name"] = ""
             _clear_destroy_result(state)
+            clear_management_results(state)
             state["actual_params"] = actual_params
             runtime_manager = getattr(request.app.state, "teradata_runtime_manager", None)
             if runtime_manager is not None:
@@ -624,6 +644,7 @@ async def evs_connect(request: Request, connection_id: int | None = Form(default
                 )
             )
             state["connected"] = False
+            state.pop("_sdk_auth_data", None)
             state["connected_at"] = ""
             state["last_success"] = ""
             state["last_error"] = f"Connection/auth failed: {safe_error}"
@@ -969,6 +990,67 @@ async def evs_run_health(request: Request):
     return _render_connect_panel(request, request.app)
 
 
+def _redact_management_messages(state: dict) -> None:
+    params = state.get("params") or {}
+    secrets = (params.get("password"), params.get("pat_token"))
+    for key in (
+        "management_health_detail",
+        "resource_detail_preview",
+        "resource_status_preview",
+        "resource_file_preview",
+        "resource_permission_preview",
+        "session_preview",
+    ):
+        if state.get(key):
+            state[key] = redact_sensitive_text(state[key], secrets=secrets)
+    state["management_warnings"] = [
+        redact_sensitive_text(message, secrets=secrets)
+        for message in state.get("management_warnings") or []
+    ]
+
+
+@router.post("/ui/evs/refresh", response_class=HTMLResponse)
+async def evs_refresh_management(request: Request):
+    if not _is_logged_in(request, request.app):
+        return HTMLResponse("Unauthorized", status_code=401)
+    _activate_session_state(request, request.app)
+    state = request.app.state.evs_state
+    _clear_destroy_result(state)
+    if not state.get("connected"):
+        clear_management_results(state)
+        state["last_success"] = ""
+        state["last_error"] = "Connect to a database before refreshing management data."
+        return _render_connect_panel(request, request.app)
+
+    refresh_management(
+        state,
+        auth_data=state.get("_sdk_auth_data"),
+        vs_manager_class=VSManager,
+        collection_manager_class=CollectionManager,
+        connection_username=str((state.get("params") or {}).get("username") or ""),
+        table_from_result=_table_from_result,
+        format_preview=_format_preview,
+        now=_now_ts,
+        vector_store_class=VectorStore,
+        collection_class=Collection,
+    )
+    _redact_management_messages(state)
+    resource_count = len(state.get("resource_rows") or [])
+    warning_count = len(state.get("management_warnings") or [])
+    state["last_error"] = ""
+    state["last_success"] = (
+        f"Management data refreshed. {resource_count} resource(s) loaded"
+        + (f" with {warning_count} warning(s)." if warning_count else ".")
+    )
+    _append_connect_step(
+        state,
+        "EVS management refresh",
+        "warn" if warning_count else "ok",
+        f"Loaded {resource_count} resource name(s) for the active database connection; warnings={warning_count}.",
+    )
+    return _render_connect_panel(request, request.app)
+
+
 @router.post("/ui/evs/list", response_class=HTMLResponse)
 async def evs_run_list(request: Request):
     if not _is_logged_in(request, request.app):
@@ -1095,39 +1177,147 @@ async def chat_run_list(request: Request):
 
 
 @router.post("/ui/evs/select", response_class=HTMLResponse)
-async def evs_select_from_list(request: Request, vs_name: str = Form(default="")):
+async def evs_select_from_list(
+    request: Request,
+    vs_name: str = Form(default=""),
+    resource_kind: str = Form(default="v1"),
+):
     if not _is_logged_in(request, request.app):
         return HTMLResponse("Unauthorized", status_code=401)
     _activate_session_state(request, request.app)
 
     state = request.app.state.evs_state
     selected_name = (vs_name or str(request.query_params.get("vs_name", ""))).strip()
-    state["selected_vs_name"] = selected_name
-    state["destroy_status"] = "neutral"
+    selected_kind = (resource_kind or str(request.query_params.get("resource_kind", "v1"))).strip().lower()
+    if selected_kind not in {"v1", "v2"}:
+        return HTMLResponse("Invalid resource API generation.", status_code=422)
     if selected_name:
-        state["destroy_preview"] = f"Selected '{selected_name}'. Click Delete to delete."
-        _append_connect_step(state, "Vector Store selection", "ok", f"Selected '{selected_name}'.")
-    else:
-        state["destroy_preview"] = "Click a row in list, then destroy it here."
-        _append_connect_step(state, "Vector Store selection", "warn", "Selection payload was empty.")
+        if not select_resource(state, kind=selected_kind, name=selected_name):
+            return HTMLResponse("The selected resource is not available for this database connection.", status_code=404)
+    return _render_connect_panel(request, request.app, include_top_status=False)
+
+
+@router.post("/ui/evs/sessions", response_class=HTMLResponse)
+async def evs_load_sessions(request: Request):
+    _activate_session_state(request, request.app)
+    state = request.app.state.evs_state
+    if not state.get("connected"):
+        state["last_success"] = ""
+        state["last_error"] = "Connect to a database before loading active sessions."
+        return _render_connect_panel(request, request.app)
+    try:
+        load_sessions(
+            state,
+            auth_data=state.get("_sdk_auth_data"),
+            vs_manager_class=VSManager,
+            collection_manager_class=CollectionManager,
+            format_preview=_format_preview,
+            now=_now_ts,
+        )
+        state["last_error"] = ""
+        state["last_success"] = f"Loaded {len(state.get('session_rows') or [])} active session(s)."
+    except Exception as ex:
+        state["sessions_loaded"] = True
+        state["session_rows"] = []
+        state["session_preview"] = f"Unable to load active sessions: {ex}"
+        state["last_success"] = ""
+        state["last_error"] = state["session_preview"]
+    _redact_management_messages(state)
+    return _render_connect_panel(request, request.app)
+
+
+@router.post("/ui/evs/sessions/disconnect", response_class=HTMLResponse)
+async def evs_disconnect_sessions(request: Request, username: list[str] = Form(default=[])):
+    _activate_session_state(request, request.app)
+    state = request.app.state.evs_state
+    if not state.get("connected"):
+        state["last_success"] = ""
+        state["last_error"] = "Connect to a database before disconnecting sessions."
+        return _render_connect_panel(request, request.app)
+    try:
+        disconnect_sessions(
+            usernames=username,
+            auth_data=state.get("_sdk_auth_data"),
+            collection_manager_class=CollectionManager,
+        )
+        load_sessions(
+            state,
+            auth_data=state.get("_sdk_auth_data"),
+            vs_manager_class=VSManager,
+            collection_manager_class=CollectionManager,
+            format_preview=_format_preview,
+            now=_now_ts,
+        )
+        disconnected = ", ".join(sorted(set(username)))
+        state["last_error"] = ""
+        state["last_success"] = f"Disconnected EVS session(s) for: {disconnected}."
+    except Exception as ex:
+        state["last_success"] = ""
+        state["last_error"] = f"Session disconnect failed: {ex}"
+    _redact_management_messages(state)
     return _render_connect_panel(request, request.app)
 
 
 @router.post("/ui/evs/destroy", response_class=HTMLResponse)
-async def evs_destroy_selected(request: Request, vs_name: str = Form(default="")):
+async def evs_destroy_selected(
+    request: Request,
+    vs_name: str = Form(default=""),
+    resource_kind: str = Form(default="v1"),
+):
     if not _is_logged_in(request, request.app):
         return HTMLResponse("Unauthorized", status_code=401)
     _activate_session_state(request, request.app)
+    state = request.app.state.evs_state
+    selected_kind = str(resource_kind or state.get("selected_resource_kind") or "v1").strip().lower()
+    selected_name = str(vs_name or state.get("selected_resource_name") or "").strip()
+    if selected_name and selected_kind in {"v1", "v2"}:
+        select_resource(state, kind=selected_kind, name=selected_name)
+    if selected_kind == "v2":
+        principal = _session_principal(request)
+        if principal is None or principal.role != "admin":
+            return HTMLResponse("Collection deletion requires an administrator.", status_code=403)
+        if not selected_name:
+            return HTMLResponse("Select a Collection to delete.", status_code=422)
+        if Collection is None:
+            return HTMLResponse("The collection service is unavailable.", status_code=503)
+        try:
+            try:
+                collection = Collection(name=selected_name, auth_data=state.get("_sdk_auth_data"))
+            except TypeError:
+                collection = Collection(name=selected_name)
+            result = collection.destroy()
+            state["last_error"] = ""
+            state["last_success"] = f"Deletion requested for Collection '{selected_name}'. Refresh to track status."
+            clear_selected_resource(state)
+            state["selected_vs_name"] = ""
+            remove_resource(state, kind="v2", name=selected_name)
+            _append_connect_step(
+                state,
+                "Collection.destroy()",
+                "ok",
+                f"Deletion request accepted for '{selected_name}': {_format_preview(result, max_chars=200)}",
+            )
+        except Exception as ex:
+            safe_error = redact_sensitive_text(
+                ex,
+                secrets=((state.get("params") or {}).get("password"), (state.get("params") or {}).get("pat_token")),
+            )
+            state["last_success"] = ""
+            state["last_error"] = destroy_failure_message(selected_name, safe_error)
+        return _render_connect_panel(request, request.app)
+    if selected_kind != "v1":
+        return HTMLResponse("Invalid resource API generation.", status_code=422)
     return await handle_destroy_selected(
         request,
-        request.app.state.evs_state,
-        vs_name,
+        state,
+        selected_name,
         vector_store_cls=VectorStore,
         vs_manager=VSManager,
         execute_sql_fn=execute_sql,
         teradata_import_error=TERADATA_IMPORT_ERROR,
         render_connect_panel=lambda req: _render_connect_panel(req, request.app),
         append_connect_step=_append_connect_step,
+        after_destroy=lambda name: remove_resource(state, kind="v1", name=name),
     )
 
 

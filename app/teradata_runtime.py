@@ -31,3 +31,12 @@ try:
     from teradatagenai import VectorStore
 except Exception:
     VectorStore = None
+
+try:
+    from teradatagenai import Collection, CollectionManager, Ingestor
+    from teradatagenai.common.constants import CollectionType
+except Exception:  # pragma: no cover - depends on the installed SDK generation.
+    Collection = None
+    CollectionManager = None
+    CollectionType = None
+    Ingestor = None

@@ -1,8 +1,9 @@
 import "./step-gate.js?v=20260905-2";
-import "./modules/core.js?v=20260827-1";
+import "./modules/core.js?v=20260905-2";
 import "./modules/create-uploads.js?v=20260905-2";
 import "./modules/create-params.js?v=20260905-2";
-import "./modules/destroy-panel.js?v=20260414-3";
+import "./modules/destroy-panel.js?v=20260905-2";
+import "./modules/management-panel.js?v=20260905-2";
 import "./modules/htmx-progress.js?v=20260905-2";
 import "./modules/navigation.js?v=20260409-3";
 import "./modules/chat-retrieval.js?v=20260331-1";

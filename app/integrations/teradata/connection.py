@@ -64,8 +64,8 @@ def activated_connection(auth_store, profile_id: int | None) -> Iterator[dict[st
             username=str(profile["username"]),
             password=str(profile["password"]),
         )
-        set_auth_token(**auth_kwargs)
-        yield {"profile": profile, "execute_sql": execute_sql}
+        auth_data = set_auth_token(**auth_kwargs)
+        yield {"profile": profile, "execute_sql": execute_sql, "auth_data": auth_data}
     except Exception as ex:
         raise RuntimeError(
             redact_sensitive_text(ex, secrets=sensitive_values(profile))

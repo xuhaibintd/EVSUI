@@ -1,5 +1,7 @@
 # teradataevsui Architecture
 
+> **Language:** English | [日本語](architecture_ja.md)
+
 ## Design constraints
 
 teradataevsui is a server-rendered FastAPI application around Teradata Vector Store. The Teradata Python SDK uses process-global context, so the application intentionally runs as one process. `TeradataRuntimeManager` serializes interactive and background SDK operations and reactivates the selected connection profile before work. A FastAPI-managed background runner executes durable jobs one at a time. Increasing `WEB_CONCURRENCY` is rejected, and a database-scoped application lock also prevents multiple server processes from sharing the same runtime database.

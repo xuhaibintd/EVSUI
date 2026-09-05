@@ -28,16 +28,17 @@ class TeradataRuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
         manager = TeradataRuntimeManager()
         calls: list[str] = []
 
-        manager.reactivate(
+        auth_data = manager.reactivate(
             identity="session:one:connection:7",
             cleanup=lambda: calls.append("cleanup"),
             connect=lambda: calls.append("connect"),
-            authenticate=lambda: calls.append("authenticate"),
+            authenticate=lambda: calls.append("authenticate") or "auth-data",
         )
 
         self.assertEqual(calls, ["cleanup", "connect", "authenticate"])
         self.assertEqual(manager.active_identity, "session:one:connection:7")
         self.assertEqual(manager.generation, 1)
+        self.assertEqual(auth_data, "auth-data")
 
     async def test_failed_reactivation_cleans_partial_context(self) -> None:
         manager = TeradataRuntimeManager()

@@ -478,8 +478,10 @@ def clear_health_result(state: dict) -> None:
 
 
 def clear_destroy_result(state: dict) -> None:
-    state["destroy_preview"] = ""
-    state["destroy_status"] = "neutral"
+    # Compatibility cleanup for sessions created before operation messages
+    # were centralized in the global top status area.
+    state.pop("destroy_preview", None)
+    state.pop("destroy_status", None)
 
 
 def apply_list_output_to_state(state: dict, list_output: Any, sync_chat_options: bool = False) -> tuple[int, int | None, str]:

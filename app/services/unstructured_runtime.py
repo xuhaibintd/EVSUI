@@ -34,11 +34,6 @@ BOOKRAG_PDF_IMAGE_EXTENSIONS = {
     ".webp",
 }
 UNSTRUCTURED_FAST_UNSAFE_IMAGE_EXTENSIONS = BOOKRAG_PDF_IMAGE_EXTENSIONS - {".pdf"}
-EXCEL_OPENXML_EXTENSIONS = {".xlsx", ".xlsm", ".xltx", ".xltm"}
-EXCEL_LEGACY_EXTENSIONS = {".xls"}
-EXCEL_EXTENSIONS = EXCEL_OPENXML_EXTENSIONS | EXCEL_LEGACY_EXTENSIONS
-
-
 def _to_bounded_int(raw: Any, default: int, minimum: int = 0, maximum: int | None = None) -> int:
     try:
         value = int(str(raw).strip())

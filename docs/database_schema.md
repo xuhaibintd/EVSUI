@@ -1,5 +1,7 @@
 # SQLite Control-Plane Schema
 
+> **Language:** English | [日本語](database_schema_ja.md)
+
 teradataevsui schema version 9 is created and upgraded from `app/db/migrations.py`. The runtime file `data/evsui.db` is intentionally not committed: source control contains the reproducible schema, while each environment owns its users, sessions, encrypted credentials, jobs, and audit history.
 
 | Table | Primary key | Main relationships and purpose |

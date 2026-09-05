@@ -371,16 +371,17 @@ def _ensure_connected_runtime_for_session(
     if manager is None:
         _cleanup_context()
         create_context(host=host, username=username, password=password)
-        set_auth_token(**auth_kwargs)
+        auth_data = set_auth_token(**auth_kwargs)
     else:
         profile_id = state.get("selected_connection_id") or "default"
         session_id = _session_id_from_request(request) or "anonymous"
-        manager.reactivate(
+        auth_data = manager.reactivate(
             identity=f"session:{session_id}:connection:{profile_id}",
             cleanup=_cleanup_context,
             connect=lambda: create_context(host=host, username=username, password=password),
             authenticate=lambda: set_auth_token(**auth_kwargs),
         )
+    state["_sdk_auth_data"] = auth_data
     if not was_connected:
         state["connected"] = True
         state["connected_at"] = _now_ts()
@@ -743,7 +744,7 @@ def _build_home_context(request: Request, app) -> dict:
     }
 
 
-def _render_connect_panel(request: Request, app):
+def _render_connect_panel(request: Request, app, *, include_top_status: bool = True):
     _persist_active_session_state(request, app)
     is_htmx = request.headers.get("HX-Request", "").lower() == "true"
     principal = app.state.auth_store.get_session(_session_id_from_request(request), touch=False)
@@ -753,6 +754,7 @@ def _render_connect_panel(request: Request, app):
         {
             "evs": app.state.evs_state,
             "is_htmx": is_htmx,
+            "include_top_status": include_top_status,
             "user_role": principal.role if principal is not None else "viewer",
             "connection_profiles": app.state.auth_store.list_connection_profiles(),
         },

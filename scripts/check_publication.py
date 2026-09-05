@@ -22,6 +22,13 @@ PRIVATE_PREFIXES = ("data/", "local-notes/", "pem_runtime/", "test-results/", "u
 PRIVATE_SUFFIXES = (".app.lock", ".db", ".key", ".p12", ".pem", ".pfx", ".sqlite", ".sqlite3")
 DATED_INTERNAL_REPORT = re.compile(r"(?:^|/)(?:audit|review|report|testing)[-_]\d{4}", re.IGNORECASE)
 CJK = re.compile(r"[\u3040-\u30ff\u3400-\u9fff]")
+ENGLISH_LANGUAGE_SWITCH = re.compile(
+    r"^> \*\*Language:\*\* English \| \[日本語\]\("
+    r"(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+_ja\.md"
+    r"(?:#[A-Za-z0-9._%-]+)?"
+    r"\)[ \t]*\r?$",
+    re.MULTILINE,
+)
 MACHINE_PATH = re.compile(r"(?i)[A-Z]:[\\/]+(?:Documents and Settings|Users)[\\/]+")
 SECRET_PATTERNS = {
     "private key": re.compile(rb"-----BEGIN (?:EC |OPENSSH |RSA )?PRIVATE KEY-----"),
@@ -64,6 +71,12 @@ def is_primary_document(path: str) -> bool:
     return path.startswith("docs/") and path.endswith(".md") and not re.search(
         r"_(?:ja|ko|zh(?:_[A-Za-z]+)?)\.md$", path, re.IGNORECASE
     )
+
+
+def has_non_english_primary_content(text: str) -> bool:
+    """Ignore only the standard Japanese language link in an English document."""
+    content = ENGLISH_LANGUAGE_SWITCH.sub("", text)
+    return CJK.search(content) is not None
 
 
 def collect_json_values(value, *, key: str = "") -> set[bytes]:
@@ -173,7 +186,7 @@ def main() -> int:
             continue
         if MACHINE_PATH.search(text):
             problems.append(f"machine-specific user path in tracked file: {normalized}")
-        if is_primary_document(normalized) and CJK.search(text):
+        if is_primary_document(normalized) and has_non_english_primary_content(text):
             problems.append(f"primary documentation is not English-only: {normalized}")
 
     dockerignore = {

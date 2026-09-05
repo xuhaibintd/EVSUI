@@ -886,7 +886,7 @@
   min-height: 100%;
   display: grid;
   align-content: start;
-  gap: 1rem;
+  gap: 0.85rem;
 }
 
 .user-admin-header {
@@ -903,7 +903,7 @@
 .system-config-tab-shell {
   position: relative;
   display: grid;
-  gap: 1rem;
+  gap: 0.85rem;
 }
 
 .system-config-tab-input {
@@ -913,18 +913,20 @@
 }
 
 .system-config-tab-nav {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.35rem;
-  padding: 0.3rem;
-  border: 1px solid #dbe6f4;
-  border-radius: 16px;
-  background: #f6f9fd;
+  display: flex;
+  align-items: flex-end;
+  gap: 0.25rem;
+  padding: 0 0.25rem;
+  border-bottom: 1px solid #dbe4ef;
+  overflow-x: auto;
 }
 
 .system-config-tab-nav label {
-  padding: 0.72rem 1rem;
-  border-radius: 12px;
+  flex: 0 0 auto;
+  min-width: 11rem;
+  padding: 0.68rem 0.9rem 0.62rem;
+  border-bottom: 3px solid transparent;
+  border-radius: 8px 8px 0 0;
   color: #61738c;
   font-weight: 700;
   text-align: center;
@@ -934,9 +936,10 @@
 #system-config-tab-connection:checked ~ .system-config-tab-nav label[for="system-config-tab-connection"],
 #system-config-tab-unstructured:checked ~ .system-config-tab-nav label[for="system-config-tab-unstructured"],
 #system-config-tab-users:checked ~ .system-config-tab-nav label[for="system-config-tab-users"] {
-  background: linear-gradient(180deg, #2d7df6 0%, #1d63db 100%);
-  color: #ffffff;
-  box-shadow: 0 8px 16px rgba(37, 99, 235, 0.18);
+  border-bottom-color: #1a73e8;
+  background: #eaf2ff;
+  color: #174ea6;
+  box-shadow: none;
 }
 
 .system-config-tab-shell > .system-config-tab-panel {
@@ -1131,17 +1134,30 @@
 
 .unstructured-connection-form {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: end;
-  gap: 0.75rem;
+  gap: 1rem;
+  max-width: 72rem;
+}
+
+.unstructured-connection-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(18rem, 0.85fr);
+  align-items: start;
+  gap: 1rem;
 }
 
 .system-connection-form input,
 .system-connection-form button,
-.unstructured-connection-form input,
-.unstructured-connection-form button {
+.unstructured-connection-form input[type="url"],
+.unstructured-connection-form input[type="password"] {
   width: 100%;
   min-height: 2.55rem;
+}
+
+.field-help {
+  display: block;
+  color: #66758d;
+  font-size: 0.76rem;
+  line-height: 1.35;
 }
 
 .system-connection-wide {
@@ -1162,6 +1178,54 @@
 
 .system-connection-actions button {
   width: auto;
+}
+
+.unstructured-connection-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #e5ebf3;
+}
+
+.unstructured-connection-actions button {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 10rem;
+  min-height: 2.55rem;
+}
+
+.unstructured-clear-key {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  cursor: pointer;
+}
+
+.unstructured-clear-key input {
+  flex: 0 0 auto;
+  width: 1rem !important;
+  min-height: 1rem !important;
+  height: 1rem;
+  margin: 0.18rem 0 0;
+}
+
+.unstructured-clear-key > span {
+  display: grid;
+  gap: 0.08rem;
+}
+
+.unstructured-clear-key strong {
+  color: #29364a;
+  font-size: 0.84rem;
+}
+
+.unstructured-clear-key small,
+.unstructured-key-status {
+  margin: 0;
+  color: #66758d;
+  font-size: 0.76rem;
 }
 
 .connection-profile-editor-actions {
@@ -1394,10 +1458,6 @@
   .connection-profile-list {
     grid-template-columns: 1fr;
   }
-  .system-config-tab-nav {
-    grid-template-columns: 1fr;
-  }
-
   .user-admin-header,
   .user-section-heading {
     align-items: flex-start;
@@ -1413,8 +1473,12 @@
   }
 
   .system-connection-fields,
-  .unstructured-connection-form {
+  .unstructured-connection-fields {
     grid-template-columns: 1fr;
+  }
+
+  .system-config-tab-nav label {
+    min-width: max-content;
   }
 
   .connection-profile-editor {
@@ -1428,8 +1492,14 @@
 
   .connection-profile-editor-buttons,
   .connection-profile-editor-buttons button,
-  .system-connection-actions button {
+  .system-connection-actions button,
+  .unstructured-connection-actions button {
     width: 100%;
+  }
+
+  .unstructured-connection-actions {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 

@@ -13,41 +13,61 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
-          cache: pip
-      - name: Install dependencies
-        run: python -m pip install --upgrade pip build && python -m pip install -r requirements-dev.txt
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.10"
+          enable-cache: true
+      - name: Validate dependency lock
+        run: uv lock --check
+      - name: Validate dependency policy
+        run: python scripts/check_dependencies.py
+      - name: Exact-sync test dependencies
+        run: uv sync --locked --extra browser
       - name: Validate installed dependency graph
-        run: python -m pip check
+        run: uv pip check
+      - name: Validate exact environment state
+        run: uv sync --locked --extra browser --check
       - name: Validate publishable repository contents
-        run: python scripts/check_publication.py
+        run: uv run --locked --no-sync python scripts/check_publication.py
+      - name: Validate English and Japanese documentation parity
+        run: uv run --locked --no-sync python scripts/check_doc_parity.py
       - name: Compile Python sources
-        run: python -m compileall -q app scripts
+        run: uv run --locked --no-sync python -m compileall -q app scripts
       - name: Static correctness checks
-        run: python -m ruff check app tests scripts
+        run: uv run --locked --no-sync ruff check app tests scripts
       - name: Unit and route tests
-        run: python -m unittest discover -s tests -q
+        run: uv run --locked --no-sync python -m unittest discover -s tests -q
       - name: Install browser regression dependencies
-        run: python -m pip install -e ".[browser]" && python -m playwright install chromium
+        run: uv run --locked --no-sync playwright install chromium
       - name: Browser action regressions
         env:
           EVSUI_BROWSER_TESTS: "1"
-        run: python -m unittest discover -s tests -p "test_*browser*.py" -v
+        run: uv run --locked --no-sync python -m unittest discover -s tests -p "test_*browser*.py" -v
       - name: Browser parameter regressions
         env:
           EVSUI_BROWSER_TESTS: "1"
-        run: python -m unittest tests.test_frontend_parameters -v
+        run: uv run --locked --no-sync python -m unittest tests.test_frontend_parameters -v
       - name: Upload browser evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: browser-action-evidence
           path: test-results/
           if-no-files-found: ignore
+      - name: Exact-sync production dependencies
+        run: uv sync --locked --no-dev --no-install-project
+      - name: Validate production dependency graph
+        run: uv pip check
+      - name: Validate exact production environment state
+        run: uv sync --locked --no-dev --no-install-project --check
       - name: Build distributable wheel
-        run: python -m build --wheel
-      - name: Verify wheel excludes local runtime secrets
-        run: python scripts/verify_wheel.py
+        # Building the wheel from a fresh sdist prevents stale build/lib files
+        # from surviving after a source module is deleted.
+        run: uv build --clear
+      - name: Verify wheel matches current source and excludes local runtime secrets
+        run: uv run --locked --no-sync python scripts/verify_wheel.py

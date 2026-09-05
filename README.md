@@ -1,5 +1,7 @@
 # teradataevsui — Teradata Vector Store UI
 
+> **Language:** English | [日本語](README_ja.md)
+
 Teradata Vector Store provides vector-search and retrieval capabilities on top of Teradata data. It stores document chunks and embeddings as managed vector stores, then exposes operations for creation, health checks, listing, deletion, semantic similarity search, and grounded Q&A through `VectorStore` and `VSManager`.
 
 teradataevsui is a `FastAPI + Jinja2 + HTMX` interface for working with Teradata Vector Store. It helps users select reusable Teradata connections, create vector stores from uploaded or configured sources, validate retrieval, govern BookRAG document metadata, and manage encrypted shared service credentials.
@@ -7,6 +9,7 @@ teradataevsui is a `FastAPI + Jinja2 + HTMX` interface for working with Teradata
 ## License and ownership
 
 The proposed [Teradata Product-Restricted Source-Available License](LICENSE)
+has a [Japanese reference translation](LICENSE_ja.md). The English proposal
 declares Teradata ownership of the covered project materials and limits use,
 modification, and redistribution to solutions based on or used with Teradata
 products. Standalone use or adaptation for non-Teradata products requires
@@ -35,6 +38,10 @@ product-restricted proposal, not an OSI-approved open-source license.
 - [Operations](docs/operations.md)
 - [SQLite schema](docs/database_schema.md)
 
+Every public document is maintained as an English source and a complete Japanese
+counterpart. Use the language switch at the top of a document; CI rejects missing,
+structurally divergent, or stale translations.
+
 ## Getting Started
 
 The project/package is now named `teradataevsui`. The supported CLI commands are
@@ -46,15 +53,21 @@ and encrypted data. No database migration or credential re-entry is needed for t
 The GitHub repository is now `https://github.com/xuhaibintd/teradataevsui`.
 For an existing checkout, update its remote with
 `git remote set-url origin https://github.com/xuhaibintd/teradataevsui.git`.
-After moving or renaming the local project directory, recreate the virtual
-environment and reinstall dependencies: virtualenv launchers and editable installs
-can contain absolute paths. Keep `data/`, its credential key, and `uploads/` intact.
+After moving or renaming the local project directory, run
+`uv venv --clear --python 3.11 --no-python-downloads` followed by the appropriate
+locked sync: virtual-environment launchers and editable
+installs can contain absolute paths. Keep `data/`, its credential key, and `uploads/` intact.
 
 ### Prerequisites
 
 Before installing teradataevsui, make sure you have:
 
-- Python 3.10 or later. Python 3.11.8 is verified for this repository.
+- Windows AMD64 or Linux x86-64. Other operating systems and CPU architectures
+  are not part of the locked, tested support matrix.
+- Python 3.11. The supported range is intentionally limited to Python 3.11 so
+  local development, CI, and the production image use the same interpreter series.
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) 0.12.10 for
+  locked, exact dependency synchronization.
 - Git, if you are cloning the repository.
 - Network access to a Teradata system and these Teradata credentials:
   - database host, username, and password;
@@ -70,34 +83,25 @@ git clone https://github.com/xuhaibintd/teradataevsui.git
 cd teradataevsui
 ```
 
-If you already have the repository, run the remaining commands from its root directory (the directory containing `requirements.txt`).
+If you already have the repository, run the remaining commands from its root directory (the directory containing `pyproject.toml` and `uv.lock`).
 
-### 2. Create a virtual environment and install dependencies
+### 2. Synchronize the locked runtime environment
 
 Windows PowerShell:
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+uv sync --locked --no-dev
 ```
 
-If PowerShell blocks the activation script, allow it for the current terminal only, then activate again:
-
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\.venv\Scripts\Activate.ps1
-```
-
-Linux or macOS:
+Linux x86-64:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+uv sync --locked --no-dev
 ```
+
+`uv` creates `.venv` when necessary and performs an exact synchronization. Any
+package that is not part of the selected lock-file dependency set is removed,
+so repeated maintenance does not accumulate orphan packages.
 
 ### 3. Configure the first administrator
 
@@ -110,7 +114,7 @@ $env:EVSUI_BOOTSTRAP_ADMIN = "admin"
 $env:EVSUI_BOOTSTRAP_PASSWORD = "replace-with-a-strong-password"
 ```
 
-Linux or macOS:
+Linux x86-64:
 
 ```bash
 export EVSUI_BOOTSTRAP_ADMIN=admin
@@ -145,7 +149,7 @@ For optional Teradata and Unstructured defaults, copy `app/config/local_dev.exam
 
 On an empty SQLite database, legacy users from `app/config/local_dev.json`, `app/config/auth_users.json`, `POC_AUTH_FILE`, or the old `POC_ADMIN_USER`/`POC_ADMIN_PASSWORD` variables are imported once. The first imported user becomes `admin`; later imported users become `operator`. New installations should use the `EVSUI_BOOTSTRAP_*` variables instead.
 
-The legacy `connection` values are imported once as the default database connection profile when no system configuration exists. After verifying the imported values, remove them from the JSON file. Administrators can create, edit, delete, and select a default profile under **System Configuration → System Connection**. The home page lets users select one of these profiles before connecting. The `unstructured.api_key` may remain blank unless you use a multi-format mode.
+The legacy `connection` values are imported once as the default database connection profile when no system configuration exists. After verifying the imported values, remove them from the JSON file. Administrators can create, edit, delete, and select a default profile under **System Configuration → Database Connections**. The home page lets users select one of these profiles before connecting. The `unstructured.api_key` may remain blank unless you use a multi-format mode.
 
 `app/config/local_dev.json` is ignored by Git. Keep real passwords, PAT tokens, API keys, and certificate files out of version control.
 
@@ -156,7 +160,7 @@ The legacy `connection` values are imported once as the default database connect
 Start the web application in a terminal:
 
 ```bash
-python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8010
+uv run --locked --no-sync python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8010
 ```
 
 The application automatically executes one durable background job at a time.
@@ -178,18 +182,18 @@ Windows PowerShell can use:
 Invoke-RestMethod http://127.0.0.1:8010/healthz
 ```
 
-The expected response is `{"status":"ok"}`. This endpoint checks the teradataevsui process only; use **Vector Store Health check** after connecting to verify Teradata Vector Store access.
+The expected response is `{"status":"ok"}`. This endpoint checks the teradataevsui process only; use **Refresh management data** after connecting to verify Teradata Vector Store access.
 
 ## Using teradataevsui
 
 ### Connect to Teradata
 
 1. Sign in to teradataevsui and open **Connect & Manage**.
-2. Enter the database **Host**, **Username**, and **Password**.
-3. Enter the **UES URL** and **PAT Token**. Both are required by the connection workflow.
-4. Upload a `.pem`, `.key`, or `.crt` file when your environment requires one.
-5. Select **Connect**. A successful result confirms both database context creation and Vector Store authentication.
-6. Run **Vector Store Health check**, then **Get Vector Store List**. The list does not run automatically after connecting.
+2. An administrator creates the reusable profile once under **System Configuration → Database Connections**, including the database, UES, and certificate credentials required by the environment. Secrets and PEM contents are encrypted in SQLite.
+3. Select a saved **Database connection** profile. The page shows a read-only summary without exposing its secrets.
+4. Select **Connect**. A successful result confirms both database context creation and Vector Store authentication.
+5. Select **Refresh management data** to load Vector Store health, the installed `teradatagenai` version, compatibility warnings, and the combined V1 Vector Store/V2 Collection inventory. This refresh does not run automatically after connecting.
+6. Filter or select a resource to inspect its details and available actions. Administrators can also load active EVS sessions and disconnect all active EVS sessions for the selected users.
 
 ### Create a vector store
 
@@ -209,14 +213,14 @@ For the uploaded-file `Text PDF Only` flow, the UI does not populate `object_nam
 1. Open **Vector Store Retrieval**.
 2. Select **Run List** to refresh the retrieval-specific list, then choose a vector store. The management and retrieval lists refresh independently.
 3. Choose `VectorStore.ask`, `VectorStore.similarity_search`, or **BookRAG API**, enter a question, and select **Send**.
-5. Use **System Configuration** to manage shared encrypted Teradata and Unstructured credentials. For BookRAG stores, use **BookRAG Governance** to manage document metadata and relationships.
+4. Use **System Configuration** to manage shared encrypted Teradata and Unstructured credentials. For BookRAG stores, use **BookRAG Governance** to manage document metadata and relationships.
 
 ### Common startup problems
 
 - **Server auth is not configured**: set `EVSUI_BOOTSTRAP_ADMIN` and `EVSUI_BOOTSTRAP_PASSWORD`, then restart teradataevsui.
-- **PowerShell cannot activate `.venv`**: apply the process-scoped execution-policy command shown above; it affects only the current PowerShell process.
-- **Unstructured API key missing**: configure the key under `unstructured` or save it in **System Configuration** for the active session.
-- **Teradata connection fails**: confirm that Host, Username, Password, UES URL, and PAT Token are populated and reachable from the machine running teradataevsui. Add the PEM/certificate file if your environment requires it.
+- **`uv` is not available**: run `uv --version` and install `uv` or correct `PATH` before using the launch command. The documented `uv run` flow does not require manual virtual-environment activation.
+- **Unstructured API key missing**: an administrator must save the shared endpoint and API key under **System Configuration → Unstructured IO**.
+- **Teradata connection fails**: ask an administrator to verify the selected saved profile's Host, Username, Password, UES URL, PAT Token, and any required PEM/certificate data, then reconnect with that profile.
 - **A vector store does not appear in Retrieval**: select **Run List** on the Retrieval page; the Connect & Manage list does not update it.
 
 ## Overall Design
@@ -253,9 +257,9 @@ flowchart LR
     end
 
     subgraph Local["Local runtime data"]
-        AuthDB["data/evsui.db<br/>users / sessions / roles / audit"]
-        Config["Ignored local config<br/>connection / Unstructured defaults"]
-        Files["uploads/<br/>documents / PEM / JSON / CSV / manifests"]
+        StateDB["data/evsui.db<br/>users / sessions / roles / jobs / audit<br/>encrypted connection and service credentials"]
+        Files["uploads/<br/>documents / JSON / CSV / manifests"]
+        Pem["pem_runtime/<br/>restricted temporary PEM materialization"]
     end
 
     subgraph External["External services"]
@@ -265,10 +269,11 @@ flowchart LR
 
     Browser --> Web
     ApiClient --> API
-    AuthDB <--> Auth
-    Config -.-> Session
-    Config -.-> Service
+    StateDB <--> Auth
+    StateDB <--> Session
+    StateDB <--> Service
     Files <--> Service
+    Pem <--> TDAdapter
     TDAdapter <--> TD
     USAdapter <--> US
 ```
@@ -442,16 +447,18 @@ Section construction uses Unstructured structure metadata where available, with 
 
 ### System Configuration and Admin Rules
 
-- **System Connection** manages reusable Teradata profiles that users select before connecting.
+- **Database Connections** manages reusable Teradata profiles that users select before connecting.
 - **Unstructured IO** stores one shared API endpoint and encrypted API key for Multi Format and Multi-Format BookRAG.
 - **User Management** controls accounts and roles. **BookRAG Governance** on the home page is separate and manages corpus metadata, document relationships, and JSON inspection.
 
 ## Current Behavior
 
-- Connect & Manage `Run List` and Vector Store Retrieval `Run List` are decoupled (no cross-update).
+- Connect & Manage uses one **Refresh management data** action to load connection status, Vector Store health, the `teradatagenai` runtime version, compatibility warnings, and a combined V1 Vector Store/V2 Collection inventory.
+- Selecting a managed resource loads its identity, configuration, status, file-ingestion information, permissions, and the actions allowed for the signed-in role.
+- The management refresh and Vector Store Retrieval `Run List` are independent. Refreshing or deleting a management resource does not implicitly change the retrieval dropdown.
+- Management data is not loaded automatically on connect; the explicit refresh keeps remote SDK calls under user control.
+- Administrators can inspect active EVS connection sessions and disconnect all active EVS sessions for the selected users without affecting other users.
 - In Vector Store Retrieval, clicking `Run List` loads real vector stores and displays an available item by default.
-- Connect & Manage `destroy` refreshes only the management list data, not the retrieval dropdown.
-- No auto-list on connect; list execution is manual.
 - Vector Store Creation submit validation blocks create unless `vector_store_name`, `doc_pipeline_mode`, `embeddings_model`, and a document source are present. Uploaded files and `document_files` both satisfy this check.
 - For uploaded-file create flow, `object_names` is not auto-filled by the UI.
 - Vector Store Creation does not report success when `VectorStore.create()` merely returns. The background job runner polls every 5 seconds by default (`EVS_VECTORSTORE_READY_POLL_SECONDS`) until `VectorStore.status()` reaches `Ready` or `Failed`, with a two-hour default timeout (`EVS_VECTORSTORE_READY_TIMEOUT_SECONDS`). A timeout fails the durable job and records diagnostics but cannot cancel work already accepted by the remote service; operators should check the remote status before retrying.
@@ -460,13 +467,52 @@ Section construction uses Unstructured structure metadata where available, with 
 
 ## Runtime Dependencies
 
-All Python dependencies are installed by `python -m pip install -r requirements.txt`. The file currently includes:
+`pyproject.toml` is the only direct-dependency declaration and `uv.lock` fixes
+the complete transitive graph. Install only runtime dependencies with
+`uv sync --locked --no-dev`. The direct runtime dependencies are:
 
-- Web application: `fastapi`, `uvicorn[standard]`, `jinja2`, and `python-multipart`.
-- Teradata integration: `teradatagenai`, `teradataml`, `teradatasql`, and `teradatasqlalchemy`.
-- Document processing: `unstructured-client`, `pandas`, `openpyxl`, and `pypdf`.
+- Web application: `fastapi`, plain `uvicorn`, `starlette`, `pydantic`, `jinja2`,
+  and `python-multipart`.
+- Teradata integration: `teradatagenai` and `teradataml`. The required
+  `teradatasql` and `teradatasqlalchemy` drivers remain locked transitive
+  dependencies of `teradataml` rather than duplicate direct declarations.
+- Document processing: `unstructured-client` and `pypdf`. Spreadsheet inputs are
+  processed by the hosted Unstructured workflow; there is no separate local Excel engine.
 - Authentication and credential encryption: `argon2-cffi` and `cryptography`; SQLite is supplied by Python's standard library.
-- Version handling: `packaging`.
+
+Ruff is isolated in the development group. Playwright is an explicit `browser`
+extra and is not installed by ordinary development or production syncs. The
+application does not depend on the heavyweight local `unstructured`, machine
+learning, notebook, LangChain, OpenAI, or Google/Vertex AI stacks.
+
+For a deliberate dependency upgrade, update the lock, exact-sync the full test
+environment, and run the acceptance suite before committing both metadata files:
+
+```powershell
+uv lock --upgrade
+uv sync --locked --extra browser
+uv run --locked --no-sync playwright install chromium
+uv pip check
+uv sync --locked --extra browser --check
+uv run --locked --no-sync python scripts/check_dependencies.py
+uv run --locked --no-sync python scripts/check_publication.py
+uv run --locked --no-sync ruff check app tests scripts
+uv run --locked --no-sync python -m compileall -q app scripts
+uv run --locked --no-sync python -m unittest discover -s tests -q
+$env:EVSUI_BROWSER_TESTS = "1"
+uv run --locked --no-sync python -m unittest tests.test_browser_actions tests.test_frontend_parameters -v
+uv build --clear
+uv run --locked --no-sync python scripts/verify_wheel.py
+uv sync --locked --no-dev --no-install-project
+uv pip check
+uv sync --locked --no-dev --no-install-project --check
+uv sync --locked --extra browser
+```
+
+Use `uv lock --upgrade-package <name>` for a targeted upgrade. Do not add
+packages with an ad-hoc `pip install`; add or remove an intentional dependency
+in `pyproject.toml`, regenerate `uv.lock`, and let exact sync remove stale
+packages.
 
 There is no Node.js build step and no TypeScript dependency. Templates, HTMX 2.x behavior, native JavaScript ES Modules, and CSS are served directly by FastAPI. Runtime upload/staging directories under `uploads/` are created automatically and are ignored by Git.
 
@@ -880,7 +926,7 @@ sequenceDiagram
 - Local debug config example: `app/config/local_dev.example.json`
 - Service layer:
   - `app/services/create_config.py` (create form schema/coercion)
-  - `app/services/multi_format.py`, `multi_format_config.py`, `multi_format_excel.py` (multi-format orchestration, configuration, and spreadsheet partitioning)
+  - `app/services/multi_format.py`, `multi_format_config.py` (multi-format orchestration and configuration)
   - `app/services/bookrag_schema.py` (BookRAG table schemas, primary keys, and external relationship contract)
   - `app/services/bookrag_document_relations.py` (`bdrel` suggestion, validation, persistence, and CRUD)
   - `app/services/bookrag_integrity.py` (per-document relationship validation before persistence)
@@ -901,9 +947,10 @@ sequenceDiagram
 - `POST /admin/users/{username}/toggle`, `/role`, `/password`
 - `GET /admin/users/export`, `POST /admin/users/import`
 - `POST /ui/evs/connect`, `POST /ui/evs/reset`
-- `POST /ui/evs/health`, `POST /ui/evs/list`
+- `POST /ui/evs/refresh`, `POST /ui/evs/select`, `POST /ui/evs/destroy`
+- `POST /ui/evs/sessions`, `POST /ui/evs/sessions/disconnect`
+- `POST /ui/evs/health`, `POST /ui/evs/list` (compatibility endpoints)
 - `POST /ui/chat/vs-list`
-- `POST /ui/evs/select`, `POST /ui/evs/destroy`
 - `POST /ui/create/upload-documents`, `POST /ui/create/upload`
 - `POST /ui/chat`, `POST /ui/chat/reset`
 - `POST /admin/unstructured-config`

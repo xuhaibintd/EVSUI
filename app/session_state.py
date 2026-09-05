@@ -8,6 +8,8 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Callable
 
+from app.services.vector_management import empty_management_state
+
 from fastapi import Request
 from starlette.datastructures import State
 
@@ -130,13 +132,12 @@ def default_evs_state(load_defaults: Callable[[], dict[str, str]]) -> dict[str, 
         "list_loaded_by_user": False,
         "selected_vs_name": "",
         "last_created_vs_name": "",
-        "destroy_preview": "",
-        "destroy_status": "neutral",
         "actual_params": {},
         "connect_steps": [],
         "selected_connection_id": None,
         "selected_connection_name": "",
         "params": connect_defaults,
+        **empty_management_state(),
     }
 
 

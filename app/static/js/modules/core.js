@@ -24,4 +24,16 @@
   app.bindAll = function bindAll(scope) {
     app.binders.forEach((binder) => binder(scope || document));
   };
+
+  app.setTopMessage = function setTopMessage(message, kind = "info") {
+    const shell = document.querySelector("#top-op-stack-shell");
+    if (!(shell instanceof HTMLElement)) {
+      return;
+    }
+    const line = document.createElement("p");
+    line.className = `top-op-line ${kind}`;
+    line.textContent = String(message || "");
+    line.title = String(message || "");
+    shell.replaceChildren(line);
+  };
 })(window);

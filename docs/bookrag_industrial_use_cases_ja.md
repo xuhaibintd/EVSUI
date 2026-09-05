@@ -1,6 +1,7 @@
 # BookRAG 産業ユースケース：製品訴求から実証判断まで
 
-> [English version](bookrag_industrial_use_cases.md)
+> **言語:** [English](bookrag_industrial_use_cases.md) | 日本語
+<!-- Source-SHA256: 3f1c3545f768f1d90bd75fbd79bea536eb50279b3811b6ab6f4002c2dad39cef -->
 
 ## 本書の目的
 
@@ -16,7 +17,7 @@ BookRAG が規制、金融、法務、臨床、安全、技術上の判断を自
 
 ## 結論
 
-**BookRAG は、汎用文書チャットや自律判断機能ではなく、統制された根拠検索・審査レイヤーとして位置付けます。** 製品の価値単位は自然な回答文ではなく、意味検索結果に文書 ID、発行情報、章階層、ページ・元要素、文書関係、任意のエンティティ文脈を付加した「追跡可能なエビデンスパッケージ」です。
+**BookRAG は、汎用文書チャットや自律判断機能ではなく、統制された根拠検索・審査レイヤーとして位置付けます。** 製品で有用な単位となるのは、意味検索結果に文書 ID、発行情報、章階層、ページ・元要素、文書関係、任意のエンティティ文脈を付加した「追跡可能なエビデンスパッケージ」です。
 
 最初の商用候補には **定期開示・財務報告レビュー** を推奨します。反復業務であること、長く構造化された文書を扱うこと、発行順序が重要であること、原文位置に戻れる必要があること、財務計算や投資判断を自動化しなくても限定的な実証価値を出せることが理由です。
 
@@ -24,7 +25,7 @@ BookRAG が規制、金融、法務、臨床、安全、技術上の判断を自
 
 この優先順位は市場規模の断定ではなく、検証すべき製品仮説です。背景となる観察事実は次のとおりです。
 
-- [SEC EDGAR](https://www.sec.gov/search-filings) のような公開制度は、企業・日付で特定できる反復的な開示文書を提供しており、再現可能な評価コーパスを作れます。
+- [SEC EDGAR](https://www.sec.gov/search-filings) のような公開提出システムは、日付と企業で範囲を定められる反復的な開示コーパスを提供しており、この業務を再現可能かつテスト可能にします。
 - [NIST AI Risk Management Framework](https://www.nist.gov/itl/ai-risk-management-framework) と [Generative AI Profile](https://www.nist.gov/publications/artificial-intelligence-risk-management-framework-generative-artificial-intelligence) は、AI ライフサイクル全体のリスク管理と評価を重視しています。このため teradataevsui でも、人による審査、測定可能な根拠品質、明示的な本番統制を設計条件とします。
 
 ## 1. 現行製品の契約
@@ -33,15 +34,15 @@ BookRAG が規制、金融、法務、臨床、安全、技術上の判断を自
 
 ```mermaid
 flowchart LR
-    Docs["長く構造化された文書"] --> Parse["Unstructured 解析"]
-    Parse --> Tables["BookRAG テーブル<br/>bdoc / bblk / bnode / bdrel / 任意グラフ"]
-    Tables --> Vector["bnode.content の意味検索"]
-    Vector --> Scope["発行情報と文書スコープの統制"]
-    Scope --> Rebuild["根拠再構成<br/>上位章 / 元ブロック / ページ"]
-    Rebuild --> Package["構造化エビデンスパッケージ"]
-    Package --> Review["審査者または外部アプリケーション"]
-    Package --> Answer["任意の回答生成<br/>エビデンス一覧に基づく citation"]
-    Review --> Decision["正式な業務判断"]
+    Docs["Long, structured documents"] --> Parse["Unstructured parsing"]
+    Parse --> Tables["BookRAG tables<br/>bdoc / bblk / bnode / bdrel / optional graph"]
+    Tables --> Vector["Semantic retrieval<br/>over bnode.content"]
+    Vector --> Scope["Publication and document-scope governance"]
+    Scope --> Rebuild["Evidence reconstruction<br/>ancestor path / source block / page"]
+    Rebuild --> Package["Structured evidence package"]
+    Package --> Review["Human reviewer or downstream application"]
+    Package --> Answer["Optional generated answer<br/>with evidence-list citations"]
+    Review --> Decision["Authoritative business decision"]
     Answer --> Review
 ```
 
@@ -110,7 +111,7 @@ flowchart LR
 - **65～79:** 条件付き。最大のメタデータ・連携依存を先に除去。
 - **65未満:** 延期または `Multi-Format` を使用。初期段階では BookRAG の複雑性を正当化しにくい。
 
-通常チャンクで評価目標を達成でき、chunk より細かい出典追跡が不要な FAQ・低リスク検索には `Multi-Format` を選びます。
+通常チャンクで測定済みの検索目標を満たせる場合、チャンクより細かい出典追跡が不要な場合、または低リスクの FAQ／検索業務である場合は、`Multi-Format` を選びます。
 
 ## 3. 最初の切り口：定期開示レビュー
 
@@ -131,7 +132,7 @@ flowchart LR
 ### 対象文書
 
 - 年次・四半期報告
-- 決算説明資料、prepared remarks
+- 決算説明資料、経営陣による説明原稿
 - 適時開示、重要発表
 - 訂正、補足、修正版
 - 関連する会計方針、リスク、ガバナンス、技術付録
@@ -142,16 +143,16 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    Corpus["限定された開示コーパスを収集"] --> Ingest["解析して BookRAG テーブルへロード"]
-    Ingest --> Metadata["発行日、role、series、logical key、status を確認"]
-    Metadata --> Relations["updates / supplement / summary 関係を登録"]
-    Relations --> Questions["実際のアナリスト質問を実行"]
-    Questions --> Retrieve["統制された意味検索"]
-    Retrieve --> Packet["根拠パック<br/>本文 + 章 + ページ + 元文脈"]
-    Packet --> Review{"アナリスト審査"}
-    Review -->|採用| Memo["審査済みメモ・ブリーフィング"]
-    Review -->|却下| Failure["失敗分類を記録"]
-    Failure --> Improve["コーパス、解析、メタデータ、<br/>検索ポリシー、質問を改善"]
+    Corpus["Collect a bounded disclosure corpus"] --> Ingest["Parse and load BookRAG tables"]
+    Ingest --> Metadata["Review publication date, role, series,<br/>logical key, and metadata status"]
+    Metadata --> Relations["Record updates / supplement / summary relationships"]
+    Relations --> Questions["Run real analyst questions"]
+    Questions --> Retrieve["Governed semantic retrieval"]
+    Retrieve --> Packet["Evidence packet<br/>text + section + page + source context"]
+    Packet --> Review{"Analyst review"}
+    Review -->|Accept| Memo["Reviewed memo or briefing"]
+    Review -->|Reject| Failure["Record failure category"]
+    Failure --> Improve["Improve corpus, parsing, metadata,<br/>retrieval policy, or question design"]
     Improve --> Questions
 ```
 
@@ -194,7 +195,7 @@ flowchart TD
 
 ### Go / 改善 / 中止
 
-- **Go:** 合意した安全・品質閾値を満たし、time-to-evidence が改善し、未使用質問でも審査者の信頼が安定。
+- **Go:** 合意した安全・品質閾値を満たし、time-to-evidence が改善し、検証用に留保した質問でも審査者の信頼が安定。
 - **改善:** 失敗が解析、階層、メタデータ、検索ポリシーなど修正可能な原因に集中。
 - **中止・縮小:** 有用な回答が、欠けているライブデータ、計算、暗黙の専門判断、無制限な文書横断推論に大きく依存。
 
@@ -210,13 +211,13 @@ flowchart TD
 | FIN-03 | 企業財産・利益保険の保険金審査 | 約款、特約、事故根拠を収集 | 保険期間、損害データ、計算、秘匿特権 | 条件付き |
 | MED-01 | 医療機器安全通知レビュー | 型式・版の警告と院内手順を特定 | 機器台帳、臨床ガバナンス | 条件付き |
 | LIFE-01 | バッチ逸脱・CAPA 根拠 | 発効要件と過去調査を収集 | バッチ/設備データ、署名、品質業務 | 根拠準備には強い |
-| LIFE-02 | 臨床試験安全性レビュー準備 | プロトコル、安全性、方法、結果根拠 | 被験者データ、coding、統計、盲検管理 | 条件付き / 高統制 |
+| LIFE-02 | 臨床試験安全性レビュー準備 | プロトコル、参照安全性情報、方法、結果根拠 | 被験者データ、コーディング、統計、盲検管理 | 条件付き / 高統制 |
 | FOOD-01 | 汚染・回収調査 | 限度、方法、手順、過去事例を特定 | ロット系譜、在庫、試験、回収権限 | 条件付き |
 | WATER-01 | 飲料水基準値逸脱 | 限度、方法、運転手順、過去事例を特定 | ライブ測定、許可範囲、対象人口 | 条件付き |
 | ENERGY-01 | 変圧器停止工事パッケージ | OEM 警告、限度、手順、過去保全を特定 | 設備 ID、状態、開閉・作業権限 | 準備業務には強い |
 | CHEM-01 | 変更管理の根拠レビュー | 運転限度、危険、手順、過去変更を特定 | P&ID、計算、工程条件、承認 | 根拠準備には強い |
 | SEMI-01 | 歩留まり異常の根拠収集 | 仕様、故障モード、変更、過去調査を特定 | wafer/lot/SPC/tool telemetry、実験 | 条件付き |
-| AERO-01 | 要求変更の検証根拠 | 要求、前提、検証、認証根拠を特定 | baseline、正式 trace、構成状態 | 条件付き / 高統制 |
+| AERO-01 | 要求変更の検証根拠 | 要求、前提、検証、認証根拠を特定 | ベースライン、正式なトレーサビリティ、構成状態 | 条件付き / 高統制 |
 | SUPPLY-01 | サプライヤー材料・工程変更 | 仕様、認定、監査、約束事項を特定 | supplier/part/BOM/lot ID、承認業務 | 条件付き |
 | CLIMATE-01 | 洪水レジリエンス投資 | ハザード前提、案、方針、過去事例を特定 | GIS、モデル、設備・人口、技術経済計算 | 文書限定業務を分離できなければ延期 |
 
@@ -250,7 +251,7 @@ production_owner:
 | 1. コーパス統制 | stable `doc_id`、発行情報、role、series、`updates` を確認 | 現行版の重複・曖昧さが説明済み |
 | 2. 正解作成 | 実質問を抽出し、専門家が期待原文と重要度を付与 | 原文位置付きの審査可能な質問集合 |
 | 3. 設定・試験 | 解析、階層、検索、根拠再構成、回答を個別評価 | 失敗分類と測定結果を再現可能 |
-| 4. ブラインド実証 | 未使用質問で BookRAG 支援と baseline を比較 | 事前合意した品質・時間基準を達成 |
+| 4. ブラインド実証 | 検証用に留保した質問で BookRAG 支援とベースラインを比較 | 事前合意した品質・時間基準を達成 |
 | 5. 本番設計 | ID、認可、取込、監視、保存、承認を連携 | 業務・統制責任者が残余リスクを受容 |
 
 ### 失敗分類
@@ -273,17 +274,17 @@ production_owner:
 
 | 統制領域 | 現行 teradataevsui | 本番で決めること |
 |---|---|---|
-| 認証 | SQLite user、Argon2 password、期限・失効付き server session、API token | 企業 ID、MFA/SSO、service identity、token lifecycle |
-| 認可 | admin 限定 user 管理と request 単位の UI 分離 | 元権限と一致する corpus/document/row-level access |
-| Session 永続性 | identity/session record は再起動後も保持、connection/form/chat state は process 内 | 複数 replica 用 shared state store と background work の復旧 |
-| 監査 | 認証 event、operation 詳細、local manifest | 検索、metadata 変更、export、承認の永続 log と保持 policy |
-| 文書統制 | metadata・relationship 管理 | 元責任者、取込 SLA、完全性、発効日規則 |
-| データ保護 | Git 除外 secret、upload path | 暗号化、secret manager、malware scan、保存、削除、legal hold |
-| Model governance | 設定可能な検索 policy と評価 output | version、変更承認、回帰試験、drift、rollback |
-| 人的承認 | 審査可能な evidence 表示 | 重大 action 前の正式権限・workflow control |
-| 可用性 | single-process FastAPI | capacity、concurrency、background job、monitor、backup、recovery |
+| 認証 | SQLite ユーザー、Argon2 パスワード、有効期限・失効機能を持つサーバーセッション、API トークン | 企業 ID 基盤、MFA／SSO、サービス ID、トークンのライフサイクル |
+| 認可 | 管理者が実施するユーザー管理とリクエスト単位の UI 分離 | 元システムの権限と一致するコーパス／文書／行レベルのアクセス制御 |
+| セッションの永続性 | ID 情報とセッション記録は再起動後も保持され、接続／フォーム／チャット状態はプロセス内に保持 | 複数レプリカの復旧とバックグラウンド処理に対応する共有状態ストア |
+| 監査 | 認証イベント、操作応答の詳細、ローカルマニフェスト | 検索、メタデータ変更、エクスポート、承認に関する永続ログと保持ポリシー |
+| 文書統制 | メタデータと文書関係の管理 | ソース責任者、取り込み SLA、完全性、発効日規則 |
+| データ保護 | Git 対象外のシークレットとアップロードパス | 暗号化、シークレット管理、マルウェアスキャン、保持、削除、訴訟ホールド |
+| モデルガバナンス | 設定可能な検索ポリシーと測定可能な出力 | バージョン管理、変更承認、回帰試験、ドリフト監視、ロールバック |
+| 人的承認 | レビュアーが確認できるエビデンス | 重大な操作の前に適用する正式な権限とワークフロー統制 |
+| 可用性 | 単一プロセスの FastAPI アプリケーション | 容量、同時実行性、バックグラウンドジョブ、監視、バックアップ、復旧 |
 
-高影響用途では、組織に適用されるガバナンス枠組みに沿って評価・統制を設計します。NIST の [AI Resource Center](https://airc.nist.gov/) は test/evaluation/verification/validation の公開資料の一つですが、業界固有の義務を代替しません。
+高影響用途では、組織に適用されるガバナンス枠組みに沿って評価・統制を設計します。NIST の [AI Resource Center](https://airc.nist.gov/) は、テスト、評価、検証、および妥当性確認に関する公開資料の一つですが、業界固有の義務を代替しません。
 
 ## 7. 製品表現
 
@@ -298,12 +299,12 @@ production_owner:
 
 ## 8. 実装資料
 
-- [teradataevsui 全体設計とセットアップ](../README.md#overall-design)
-- [BookRAG pipeline とデータ構造](bookrag_pipeline_diagram.md)
-- [最新文書の統制](bookrag_latest_document_governance.md)
-- `GET /api/bookrag/schema`: 正式な物理テーブル名・join contract
-- `GET|POST /api/bookrag/retrieve`: 構造化根拠
-- `GET|POST /api/bookrag/answer`: 根拠に基づく回答生成
-- `app/config/bookrag_retrieval_policy.json`: candidate budget、ranking、coverage、diversity、governance policy
+- [teradataevsui 全体設計とセットアップ](../README_ja.md#全体設計)
+- [BookRAG pipeline とデータ構造](bookrag_pipeline_diagram_ja.md)
+- [最新文書の統制](bookrag_latest_document_governance_ja.md)
+- `GET /api/bookrag/schema`: 正式な物理テーブル名と結合契約
+- `GET|POST /api/bookrag/retrieve`: 構造化されたエビデンス
+- `GET|POST /api/bookrag/answer`: エビデンスに基づく回答生成
+- `app/config/bookrag_retrieval_policy.json`: 候補数、順位付け、網羅性、多様性、およびガバナンスポリシー
 
 本番で使用する主張は、測定済みの業務、コーパス、統制が裏付ける最小範囲に限定します。

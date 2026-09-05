@@ -1,6 +1,7 @@
 {% include "partials/evs_connect_panel.html" %}
 
 <div id="section-create-content" hx-swap-oob="innerHTML">
+  {% set suppress_top_status_oob = true %}
   {% include "partials/create_panel.html" %}
 </div>
 

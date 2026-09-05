@@ -12,10 +12,6 @@ def append_multi_format_summary(message: str, summary: dict | None) -> str:
         f"{summary.get('document_count')} file(s))."
     )
 
-    processing_mode_label = str(summary.get('processing_mode_label') or '').strip()
-    if processing_mode_label:
-        message += f" processing_mode={processing_mode_label}."
-
     strategy_label = str(
         summary.get('effective_partition_strategy_label')
         or summary.get('effective_partition_strategy')
@@ -31,13 +27,6 @@ def append_multi_format_summary(message: str, summary: dict | None) -> str:
             languages_label = ",".join(str(item).strip() for item in effective_languages if str(item).strip())
     if languages_label:
         message += f" ocr_languages={languages_label}."
-
-    excel_structured_files = summary.get('excel_structured_files') or []
-    if excel_structured_files:
-        preview = ", ".join(excel_structured_files[:2])
-        if len(excel_structured_files) > 2:
-            preview += f" +{len(excel_structured_files) - 2} more"
-        message += f" excel-structured applied to {preview}."
 
     scan_fallback_files = summary.get('scan_ocr_fallback_files') or []
     if scan_fallback_files:

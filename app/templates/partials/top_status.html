@@ -1,5 +1,5 @@
 {% if evs is defined and evs.last_error %}
-<p class="top-op-line err" title="{{ evs.last_error }}">{{ evs.last_error }}</p>
+<p class="top-op-line err" title="{{ evs.last_error }}">{{ evs.last_error[:180] }}{% if evs.last_error|length > 180 %}…{% endif %}</p>
 {% elif evs is defined and evs.last_success %}
 <p class="top-op-line ok" title="{{ evs.last_success }}">{{ evs.last_success }}</p>
 {% elif evs is defined and evs.last_notice %}

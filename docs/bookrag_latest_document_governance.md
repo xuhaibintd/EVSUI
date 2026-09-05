@@ -1,5 +1,7 @@
 # BookRAG Latest-Document Governance
 
+> **Language:** English | [日本語](bookrag_latest_document_governance_ja.md)
+
 ## Storage contract
 
 The governed retrieval path uses the existing BookRAG tables plus one view:

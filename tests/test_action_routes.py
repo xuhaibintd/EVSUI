@@ -36,6 +36,8 @@ WRITE_ACTIONS = (
     "/ui/create/multi-format/load-csv-table",
     "/ui/create/upload",
     "/ui/evs/destroy",
+    "/ui/evs/sessions",
+    "/ui/evs/sessions/disconnect",
     "/ui/admin/bookrag-section-rules",
     "/ui/admin/document-metadata/autofill",
     "/ui/admin/document-metadata/save",
@@ -55,7 +57,7 @@ ADMIN_ACTIONS = (
     "/admin/users/reader/role",
 )
 READ_ACTIONS = (
-    "/ui/evs/health", "/ui/evs/list", "/ui/chat/vs-list",
+    "/ui/evs/health", "/ui/evs/list", "/ui/evs/refresh", "/ui/chat/vs-list",
     "/ui/evs/select", "/ui/chat", "/ui/chat/reset", "/ui/evs/reset",
 )
 GOVERNANCE_DB_WRITES = tuple(path for path in WRITE_ACTIONS if "/document-" in path)
@@ -230,6 +232,13 @@ class ActionRouteTests(unittest.TestCase):
                 "users_file": ("users.json", b'{"users":[]}', "application/json")
             })
             self.assertEqual(response.status_code, 403)
+
+    def test_session_management_is_admin_only(self):
+        for username in ("operator", "reader"):
+            self.login(username)
+            for path in ("/ui/evs/sessions", "/ui/evs/sessions/disconnect"):
+                with self.subTest(username=username, path=path):
+                    self.assertEqual(self.client.post(path).status_code, 403)
 
     def test_viewer_can_read_and_reset_their_own_session(self):
         self.login("reader")

@@ -1,15 +1,16 @@
 # teradataevsui Operations
 
+> **Language:** English | [日本語](operations_ja.md)
+
 ## Local development
 
 teradataevsui uses one standard Python process instead of project-specific lifecycle
 wrappers or a separately managed job service.
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-.\.venv\Scripts\python.exe -m app.db migrate
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8010
+uv sync --locked
+uv run --locked --no-sync python -m app.db migrate
+uv run --locked --no-sync python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8010
 ```
 
 The application starts its background job runner automatically. Document parsing,
@@ -18,12 +19,14 @@ blocking the HTTP event loop. Stop the application with `Ctrl+C`; shutdown waits
 the current job to finish and does not claim another job. A database-scoped lock
 rejects a second application process using the same SQLite database.
 
-Run the same verification used by CI:
+For complete CI-equivalent verification, including dependency policy, browser
+actions, and package-content checks, follow [testing.md](testing.md). These are
+the quick backend checks:
 
 ```powershell
-.\.venv\Scripts\ruff.exe check app tests
-.\.venv\Scripts\python.exe -m compileall -q app
-.\.venv\Scripts\python.exe -m unittest discover -s tests -q
+uv run --locked --no-sync ruff check app tests scripts
+uv run --locked --no-sync python -m compileall -q app scripts
+uv run --locked --no-sync python -m unittest discover -s tests -q
 ```
 
 ## Database lifecycle

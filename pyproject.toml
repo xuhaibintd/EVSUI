@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=75", "wheel"]
+requires = ["setuptools==84.0.0", "wheel==0.48.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,32 +7,38 @@ name = "teradataevsui"
 version = "0.7.0"
 description = "FastAPI and HTMX interface for Teradata Vector Store workflows"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11,<3.12"
 dependencies = [
-  "argon2-cffi>=23.1.0",
-  "cryptography>=43.0.0",
-  "fastapi>=0.115.0",
-  "httpx>=0.27.0",
-  "jinja2>=3.1.4",
-  "openpyxl>=3.1.0",
-  "packaging>=24.0",
-  "pandas>=2.2.0",
-  "pypdf>=5.0.0",
-  "python-multipart>=0.0.9",
-  "teradatagenai>=20.0.0.7",
-  "teradataml>=20.0.0.10",
-  "teradatasql>=20.0.0.60",
-  "teradatasqlalchemy>=20.0.0.9",
+  "argon2-cffi>=25.1.0,<26",
+  "cryptography>=50.0.1,<51",
+  "fastapi>=0.141.1,<0.142",
+  "httpx>=0.28.1,<0.29",
+  "jinja2>=3.1.6,<4",
+  "pydantic>=2.13.5,<3",
+  "pypdf>=6.17.0,<7",
+  "python-multipart>=0.0.32,<0.1",
+  "starlette>=0.52.1,<0.53",
+  "teradatagenai==20.0.0.9",
+  "teradataml>=20.0.0.11,<20.1",
   "unstructured-client==0.46.2",
-  "uvicorn[standard]>=0.30.0",
+  "uvicorn>=0.52.4,<0.53",
 ]
 
 [project.optional-dependencies]
-browser = ["playwright>=1.50,<2"]
+browser = ["playwright>=1.62,<1.63"]
+
+[dependency-groups]
 dev = [
-  "coverage[toml]>=7.6,<8",
-  "pytest>=8.3,<9",
-  "ruff>=0.16,<0.17",
+  "ruff>=0.16.6,<0.17",
+]
+
+[tool.uv]
+required-version = "==0.12.10"
+no-build = true
+python-downloads = "never"
+required-environments = [
+  "sys_platform == 'win32' and platform_machine == 'AMD64'",
+  "sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 
 [project.scripts]
@@ -55,7 +61,7 @@ app = [
 ]
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py311"
 line-length = 120
 exclude = [
   ".git",
@@ -69,16 +75,3 @@ exclude = [
 # Start with correctness checks. Broader style rules will be enabled one
 # feature package at a time as the legacy modules are split.
 select = ["E9", "F63", "F7", "F82"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = "-q"
-
-[tool.coverage.run]
-branch = true
-source = ["app"]
-omit = ["app/static/*", "app/templates/*"]
-
-[tool.coverage.report]
-show_missing = true
-skip_covered = true

@@ -1,15 +1,25 @@
+FROM ghcr.io/astral-sh/uv:0.12.10 AS uv
+
+FROM python:3.11-slim AS builder
+
+COPY --from=uv /uv /usr/local/bin/uv
+WORKDIR /app
+COPY pyproject.toml uv.lock README.md LICENSE ./
+RUN uv sync --locked --no-dev --no-install-project
+
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     EVSUI_ENVIRONMENT=production \
-    WEB_CONCURRENCY=1
+    WEB_CONCURRENCY=1 \
+    PATH="/app/.venv/bin:$PATH"
 
 WORKDIR /app
-COPY . /app
-RUN python -m pip install --no-cache-dir --upgrade pip \
-    && python -m pip install --no-cache-dir . \
-    && addgroup --system --gid 10001 teradataevsui \
+COPY --from=builder /app/.venv /app/.venv
+COPY app /app/app
+COPY LICENSE /app/LICENSE
+RUN addgroup --system --gid 10001 teradataevsui \
     && adduser --system --uid 10001 --ingroup teradataevsui teradataevsui \
     && mkdir -p /app/data /app/uploads /app/pem_runtime \
     && chown -R teradataevsui:teradataevsui /app
